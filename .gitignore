@@ -78,6 +78,15 @@ web_modules/
 .next
 out
 
+# Vercel
+.vercel
+
+# Local notes containing real credentials — never commit
+SakbinLineBot.txt
+
+# Claude Code local settings (machine-specific)
+.claude/settings.local.json
+
 # Nuxt.js build / generate output
 .nuxt
 dist
