@@ -25,20 +25,32 @@ export interface FeatureSwitches {
 export interface AppConfig {
   botName: string;
   shopName: string;
+  /** เพศบอท (persona) — ใส่ในบทบาทของ system prompt */
+  personaGender: string;
   useEmoji: boolean;
   temperature: number;
   maxOutputTokens: number;
   showTyping: boolean;
   debounceWaitMs: number;
+  /** หน่วง_ระหว่างบอลลูน — อ่านไว้แต่ปัจจุบันยังส่งบอลลูนใน reply เดียว (ยังไม่ได้ใช้หน่วงจริง) */
   delayBetweenBubblesMs: number;
   slipUrlExpiryDays: number;
   orderCutoffTime: string;
   orderNumberResetDaily: boolean;
   handoffKeywords: string[];
-  adminSilenceReturnDays: number;
+  /** คืนสิทธิ์บอท_หลังแชทเงียบ (นาที) — ถ้าลูกค้าเงียบเกินเวลานี้ในโหมดแอดมิน บอทคืนมาดูแลเอง */
+  adminSilenceReturnMinutes: number;
+  /** ประโยคเปลี่ยนมือ_บอทรับต่อ — ข้อความบอกลูกค้าตอนบอทรับช่วงต่อจากแอดมิน */
+  botResumeMessage: string;
+  /** คำสั่งแอดมินในกลุ่มเพื่อคืนสิทธิ์บอทด้วยมือ (ไม่มีในชีต ใช้ค่า default) */
   releaseKeyword: string;
   /** เปิด_คำสั่งเทสต์ — คุม /reset ฯลฯ · default เปิด ปิดตอนขายจริง */
   testCommandsEnabled: boolean;
+  /**
+   * โหมดประหยัดโควตา (hard-logic คุมค่า push LINE) — เปิด = บังคับรวบทุกบอลลูนเป็น reply
+   * เดียว (ไม่แตกบับเบิลเสี่ยงล้นไป push) · ปิด = แตกบับเบิลปกติได้ · default เปิด (money-safe)
+   */
+  quotaSaver: boolean;
   /** สวิตช์ดิบจากชีต (ก่อนเช็ค all-or-nothing กับ env) */
   rawSwitches: {
     tagging: boolean;
@@ -179,7 +191,8 @@ export async function getConfig(): Promise<AppConfig> {
     timing: boolOf(true, "เปิด_จังหวะหน่วงเหมือนคน", "เปิด_จังหวะหน่วง"),
   };
 
-  const debounceRaw = pick("debounce_รวมคำถาม", "debounce_รอรวมคำถาม", "debounce_รอรวมคำถาม_วิ") ?? pickByPrefix("debounce");
+  // ชื่อจริงในชีตคือ "debounce_รวบคำถาม" · เผื่อสะกดเพี้ยนใช้ prefix "debounce" สำรอง
+  const debounceRaw = pick("debounce_รวบคำถาม", "debounce_รวมคำถาม") ?? pickByPrefix("debounce");
   const debounceSec = (() => {
     const n = Number(cleanCell(debounceRaw));
     return Number.isFinite(n) && n > 0 ? n : 6;
@@ -187,13 +200,14 @@ export async function getConfig(): Promise<AppConfig> {
 
   const config: AppConfig = {
     botName: strOf("ปลาทู", "ชื่อบอท"),
-    shopName: strOf("สากบิน", "ชื่อร้าน"),
-    useEmoji: boolOf(false, "ใช้_emoji", "ใช้อีโมจิ", "emoji"),
+    shopName: strOf("สากบิน", "ชื่อร้าน/แบรนด์", "ชื่อร้าน"),
+    personaGender: strOf("หญิง", "เพศบอท"),
+    useEmoji: boolOf(false, "ใช้ emoji", "ใช้_emoji", "emoji"),
     temperature: numOf(1.0, "temperature"),
     maxOutputTokens: Math.max(1024, numOf(1024, "maxOutputTokens", "max_output_tokens")),
-    showTyping: boolOf(true, "แสดง_typing", "แสดงtyping", "typing"),
+    showTyping: boolOf(true, "แสดง_typing", "typing"),
     debounceWaitMs: debounceSec * 1000,
-    delayBetweenBubblesMs: numOf(1, "หน่วง_ก่อนพาไปประตูถัดไป", "หน่วง_ระหว่างข้อความ", "หน่วง_ระหว่างข้อความ_วิ") * 1000,
+    delayBetweenBubblesMs: numOf(1, "หน่วง_ระหว่างบอลลูน", "หน่วง_ระหว่างข้อความ") * 1000,
     slipUrlExpiryDays: numOf(7, "อายุลิงก์สลิป_วัน", "อายุลิงก์สลิป"),
     orderCutoffTime: strOf("12:00", "เวลาตัดรอบออเดอร์", "เวลารอบตัดออเดอร์"),
     orderNumberResetDaily: boolOf(true, "เลขออเดอร์_รีเซ็ตทุกวัน", "เลขออเดอร์รีเซ็ตทุกวัน"),
@@ -201,9 +215,11 @@ export async function getConfig(): Promise<AppConfig> {
       .split(",")
       .map((s) => cleanCell(s))
       .filter(Boolean),
-    adminSilenceReturnDays: numOf(1, "คืนสิทธิ์แอดมิน_หลังเขียน_วัน", "คืนสิทธิ์แอดมิน_หลังเขียน"),
-    releaseKeyword: strOf("คืนบอท", "คำคืนสิทธิ์บอท_จากแอดมิน", "คำคืนสิทธิ์บอท"),
+    adminSilenceReturnMinutes: numOf(45, "คืนสิทธิ์บอท_หลังแชทเงียบ", "คืนสิทธิ์บอท_หลังแชทเงียบ_นาที"),
+    botResumeMessage: strOf("ปลาทูมาดูแลต่อเองนะคะ", "ประโยคเปลี่ยนมือ_บอทรับต่อ"),
+    releaseKeyword: "คืนบอท",
     testCommandsEnabled: boolOf(true, "เปิด_คำสั่งเทสต์", "เปิด_คำสั่งเทส"),
+    quotaSaver: boolOf(true, "โหมดประหยัดโควตา"),
     rawSwitches,
     raw,
     loadFailed,

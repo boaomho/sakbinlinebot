@@ -91,6 +91,7 @@ export async function runSalesTurn(input: GeminiTurnInput): Promise<GeminiTurnOu
   const systemInstruction = buildStaticSystemInstruction({
     botName: input.config.botName,
     shopName: input.config.shopName,
+    personaGender: input.config.personaGender,
     useEmoji: input.config.useEmoji,
   });
 

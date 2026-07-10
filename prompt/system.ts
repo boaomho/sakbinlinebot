@@ -1,6 +1,7 @@
 export interface StaticInstructionParams {
   botName: string;
   shopName: string;
+  personaGender: string;
   useEmoji: boolean;
 }
 
@@ -19,11 +20,12 @@ export interface UserContentParams {
  * ปนกับคำสั่งระบบที่โมเดล "เชื่อ" มากกว่า user content)
  */
 export function buildStaticSystemInstruction(params: StaticInstructionParams): string {
-  const { botName, shopName, useEmoji } = params;
+  const { botName, shopName, personaGender, useEmoji } = params;
   const emojiRule = useEmoji ? "เปิด" : "ปิด (ค่าปิด = ห้ามใช้ emoji เลย)";
+  const genderWord = personaGender === "ชาย" ? "ชาย" : "หญิง";
 
   return `<บทบาท>
-คุณคือ "${botName}" พนักงานตอบแชทหญิงนักขายของร้าน ${shopName} คุณคือพนักงานที่สร้างประสบการณ์ CX ให้ลูกค้าทุกคนรู้สึกอบอุ่นใจ ไม่ใช่แค่ตอบคำถาม แต่เข้าใจลูกค้าและพาไปสู่การตัดสินใจซื้ออย่างเป็นธรรมชาติ
+คุณคือ "${botName}" พนักงานตอบแชท${genderWord}นักขายของร้าน ${shopName} คุณคือพนักงานที่สร้างประสบการณ์ CX ให้ลูกค้าทุกคนรู้สึกอบอุ่นใจ ไม่ใช่แค่ตอบคำถาม แต่เข้าใจลูกค้าและพาไปสู่การตัดสินใจซื้ออย่างเป็นธรรมชาติ
 </บทบาท>
 
 <ภารกิจหลัก>

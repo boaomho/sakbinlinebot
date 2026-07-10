@@ -110,8 +110,8 @@ async function runHandoffFlow(
     await setHumanMode(userId, true);
   }
 
-  const sent = await replyMessages(replyToken, finalReply);
-  if (!sent) await pushMessages(userId, finalReply);
+  const sent = await replyMessages(replyToken, finalReply, config.quotaSaver);
+  if (!sent) await pushMessages(userId, finalReply, config.quotaSaver);
 
   await pushHandoffNotice(userId, userMessage, reason, "keyword-precheck");
 }
@@ -188,15 +188,18 @@ async function processMessage(
   slipPathname?: string,
 ): Promise<void> {
   let customer: CustomerState | null = null;
+  let justResumed = false;
 
   if (switches.memory) {
     customer = await ensureCustomer(userId);
     if (customer.humanMode) {
-      const since = customer.humanModeSince ? customer.humanModeSince.getTime() : Date.now();
-      const daysElapsed = (Date.now() - since) / (1000 * 60 * 60 * 24);
-      if (daysElapsed >= config.adminSilenceReturnDays) {
+      // คืนสิทธิ์บอทเมื่อ "แชทเงียบ" เกิน N นาที — วัดจาก last_seen เดิม (ก่อนข้อความนี้)
+      // ที่ ensureCustomer คืนค่ามาให้ (ยังเป็นเวลาก่อนอัปเดต) ตรงกับ Config `คืนสิทธิ์บอท_หลังแชทเงียบ`
+      const silentMs = Date.now() - customer.lastSeen.getTime();
+      if (silentMs >= config.adminSilenceReturnMinutes * 60 * 1000) {
         await setHumanMode(userId, false);
         customer = { ...customer, humanMode: false, humanModeSince: null };
+        justResumed = true;
       } else {
         await addMessage(userId, "user", userMessage);
         return; // แอดมินกำลังดูแลลูกค้ารายนี้อยู่ ไม่ตอบอัตโนมัติ
@@ -261,6 +264,12 @@ async function processMessage(
   const effectiveHandoff = switches.handoff ? geminiOutput.handoff : false;
   const effectiveOrderAction: OrderAction = switches.orders ? geminiOutput.orderAction : "none";
 
+  // เพิ่งคืนสิทธิ์บอทจากแอดมิน (แชทเงียบครบเวลา) → เกริ่นด้วยประโยคเปลี่ยนมือก่อน 1 บับเบิล
+  const finalReply =
+    justResumed && config.botResumeMessage
+      ? `${config.botResumeMessage}[[เว้น]]${geminiOutput.reply}`
+      : geminiOutput.reply;
+
   if (switches.memory) {
     await addMessage(userId, "user", userMessage);
     await addMessage(userId, "assistant", geminiOutput.reply);
@@ -268,9 +277,9 @@ async function processMessage(
     await logFunnelEvent(userId, previousStage, geminiOutput.stage);
   }
 
-  const sent = await replyMessages(replyToken, geminiOutput.reply);
+  const sent = await replyMessages(replyToken, finalReply, config.quotaSaver);
   if (!sent) {
-    await pushMessages(userId, geminiOutput.reply);
+    await pushMessages(userId, finalReply, config.quotaSaver);
   }
 
   if (switches.orders && effectiveOrderAction !== "none") {

@@ -85,8 +85,12 @@ function enforceTextLast(messages: Message[]): Message[] {
   return result;
 }
 
-export function parseReplyIntoMessages(reply: string): Message[] {
-  const segments = reply.split("[[เว้น]]");
+/**
+ * @param collapseBubbles โหมดประหยัดโควตา: true = ยุบ [[เว้น]] เป็นย่อหน้า (ไม่แตกเป็น
+ *   หลายบับเบิล) เพื่อให้ข้อความรวมอยู่ใน reply เดียว ไม่ล้นจนต้องไป push (คุมค่า LINE)
+ */
+export function parseReplyIntoMessages(reply: string, collapseBubbles = false): Message[] {
+  const segments = collapseBubbles ? [reply.replace(/\[\[เว้น\]\]/g, "\n\n")] : reply.split("[[เว้น]]");
   let messages: Message[] = [];
   for (const seg of segments) {
     messages.push(...parseSegmentToMessages(seg));
@@ -105,8 +109,8 @@ export function parseReplyIntoMessages(reply: string): Message[] {
   return messages;
 }
 
-export async function replyMessages(replyToken: string, reply: string): Promise<boolean> {
-  const messages = parseReplyIntoMessages(reply);
+export async function replyMessages(replyToken: string, reply: string, collapseBubbles = false): Promise<boolean> {
+  const messages = parseReplyIntoMessages(reply, collapseBubbles);
   if (messages.length === 0) return false;
   const result = await withRetry(
     () => getClient().replyMessage({ replyToken, messages }),
@@ -115,8 +119,8 @@ export async function replyMessages(replyToken: string, reply: string): Promise<
   return result !== null;
 }
 
-export async function pushMessages(to: string, reply: string): Promise<boolean> {
-  const messages = parseReplyIntoMessages(reply);
+export async function pushMessages(to: string, reply: string, collapseBubbles = false): Promise<boolean> {
+  const messages = parseReplyIntoMessages(reply, collapseBubbles);
   if (messages.length === 0) return false;
   const result = await withRetry(() => getClient().pushMessage({ to, messages }), "pushMessage");
   return result !== null;
