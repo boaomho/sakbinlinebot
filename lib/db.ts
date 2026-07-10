@@ -283,13 +283,17 @@ export async function collectAndClearPendingMessages(
   return { text, replyToken: lastReplyToken };
 }
 
-export async function getStaleCustomersByStage(stage: string, silentHours: number): Promise<string[]> {
+/**
+ * ลูกค้าที่เงียบเกิน N วัน (นับจาก last_seen) และไม่ได้อยู่ในโหมดแอดมินดูแล
+ * — ใช้กับ Follow ที่ชีตจริงกำหนดเป็น "รอกี่วัน" (ไม่มีคอลัมน์ประตู/stage)
+ */
+export async function getStaleCustomers(days: number): Promise<string[]> {
   await ensureSchema();
   const sql = getSql();
   const rows = await sql`
     SELECT user_id FROM customers
-    WHERE stage = ${stage} AND human_mode = false
-      AND last_seen < now() - (${silentHours}::text || ' hours')::interval
+    WHERE human_mode = false
+      AND last_seen < now() - (${days}::text || ' days')::interval
   `;
   return (rows as Array<Record<string, unknown>>).map((r) => r.user_id as string);
 }

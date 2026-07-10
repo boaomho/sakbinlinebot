@@ -1,29 +1,62 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getConfig, resolveFeatureSwitches } from "@/lib/config";
 import { getFollowCsv, parseCsvRows } from "@/lib/sheets";
-import { getStaleCustomersByStage, hasFollowedRecently, logFollowSent } from "@/lib/db";
+import { getStaleCustomers, hasFollowedRecently, logFollowSent } from "@/lib/db";
 import { pushRawText } from "@/lib/line";
 
 export const maxDuration = 30;
 
 interface FollowRule {
   ruleName: string;
-  stage: string;
-  silentHours: number;
+  waitDays: number;
   message: string;
 }
 
-/** CSV_Follow คอลัมน์: ชื่อกฎ, ประตูที่ตรงเงื่อนไข, ชั่วโมงที่เงียบ, ข้อความที่จะส่ง (แถวแรกเป็นหัวตาราง) */
+/**
+ * โครงชีต CSV_Follow จริง (คอลัมน์ตามลำดับ):
+ *   A=ชื่อกฎ  B=เงื่อนไข(เมื่อ...)  C=เริ่มนับจาก  D=รอกี่วัน  E=ข้อความที่ส่ง
+ *   F=ปิดใช้หลังส่ง  G=หยุดตามเมื่อ
+ * loader อ่านคอลัมน์ตาม "ชื่อ header" ก่อน (ทนต่อการสลับคอลัมน์) แล้ว fallback เป็น index
+ * ตามโครงจริง (ชื่อกฎ=0, รอกี่วัน=3, ข้อความ=4) หา header ไม่เจอ
+ * NB: คอลัมน์ B (เงื่อนไข), F (ปิดใช้หลังส่ง), G (หยุดตามเมื่อ) ยังไม่ถูกประเมินในเวอร์ชันนี้
+ * — Follow ปิดอยู่ (dormant) ตอนนี้ตามลูกค้าจาก "เงียบเกิน D วัน" เป็นหลัก
+ */
+function findFollowCols(headerRow: string[] | undefined): { name: number; days: number; message: number; headerFound: boolean } {
+  const fallback = { name: 0, days: 3, message: 4, headerFound: false };
+  if (!headerRow) return fallback;
+  const cells = headerRow.map((c) => c.replace(/[​-‍﻿ ]/g, "").trim().toLowerCase());
+  let name = -1;
+  let days = -1;
+  let message = -1;
+  for (let j = 0; j < cells.length; j++) {
+    const h = cells[j];
+    if (name === -1 && h.includes("ชื่อกฎ")) name = j;
+    if (days === -1 && (h.includes("รอกี่วัน") || h.includes("กี่วัน"))) days = j;
+    if (message === -1 && h.includes("ข้อความ")) message = j;
+  }
+  if (name !== -1 && days !== -1 && message !== -1) return { name, days, message, headerFound: true };
+  return fallback;
+}
+
+function isHeaderRow(row: string[]): boolean {
+  const first = (row[0] ?? "").replace(/[​-‍﻿ ]/g, "").trim();
+  return first === "ชื่อกฎ";
+}
+
 function parseFollowRules(csv: string): FollowRule[] {
   const rows = parseCsvRows(csv);
+  if (rows.length === 0) return [];
+
+  const cols = findFollowCols(rows[0]);
   const rules: FollowRule[] = [];
 
   for (const row of rows) {
-    const [ruleName, stage, hoursStr, message] = row;
-    if (!ruleName || ruleName.trim().toLowerCase() === "ชื่อกฎ") continue;
-    const hours = Number(hoursStr);
-    if (!stage || !Number.isFinite(hours) || !message) continue;
-    rules.push({ ruleName: ruleName.trim(), stage: stage.trim(), silentHours: hours, message: message.trim() });
+    if (isHeaderRow(row)) continue;
+    const ruleName = (row[cols.name] ?? "").trim();
+    const days = Number((row[cols.days] ?? "").trim());
+    const message = (row[cols.message] ?? "").trim();
+    if (!ruleName || !message || !Number.isFinite(days) || days <= 0) continue;
+    rules.push({ ruleName, waitDays: days, message });
   }
 
   return rules;
@@ -54,15 +87,16 @@ export async function GET(req: NextRequest) {
   for (const rule of rules) {
     let userIds: string[] = [];
     try {
-      userIds = await getStaleCustomersByStage(rule.stage, rule.silentHours);
+      userIds = await getStaleCustomers(rule.waitDays);
     } catch (error) {
-      console.error(JSON.stringify({ scope: "cron-follow", warning: "getStaleCustomersByStage failed", rule: rule.ruleName, error: String(error) }));
+      console.error(JSON.stringify({ scope: "cron-follow", warning: "getStaleCustomers failed", rule: rule.ruleName, error: String(error) }));
       continue;
     }
 
     for (const userId of userIds) {
       try {
-        const already = await hasFollowedRecently(userId, rule.ruleName, rule.silentHours);
+        // กันส่งกฎเดิมซ้ำ: ถ้าเคยส่งภายในกรอบ waitDays แล้ว ข้าม
+        const already = await hasFollowedRecently(userId, rule.ruleName, rule.waitDays * 24);
         if (already) continue;
         const ok = await pushRawText(userId, rule.message);
         if (ok) {

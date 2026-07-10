@@ -90,11 +90,24 @@ function parseSwitch(value: string | undefined, fallback: boolean): boolean {
   return fallback;
 }
 
-function toNumber(value: string | undefined, fallback: number): number {
-  const cleaned = cleanCell(value);
-  if (cleaned === "") return fallback;
-  const n = Number(cleaned);
-  return Number.isFinite(n) ? n : fallback;
+/**
+ * หา index ของคอลัมน์ key และ value จากแถว header จริง แทนการ hardcode ตำแหน่ง
+ * (ทนต่อการสลับ/แทรกคอลัมน์ในชีต) — ชีต Config จริง header คือ
+ * A=หมวด B=ค่า(key) C=ค่าที่ตั้ง D=หน่วย E=คำอธิบาย · fallback = B/C ตามโครงจริง
+ */
+function findKeyValueCols(rows: string[][]): { keyCol: number; valCol: number; headerRowIndex: number } {
+  for (let i = 0; i < Math.min(rows.length, 5); i++) {
+    const cells = rows[i].map((c) => cleanCell(c).toLowerCase());
+    let keyCol = -1;
+    let valCol = -1;
+    for (let j = 0; j < cells.length; j++) {
+      const h = cells[j];
+      if (keyCol === -1 && (h.includes("key") || h === "ค่า")) keyCol = j;
+      if (valCol === -1 && (h.includes("value") || h.includes("ค่าที่ตั้ง") || h === "ค่าตั้ง")) valCol = j;
+    }
+    if (keyCol !== -1 && valCol !== -1) return { keyCol, valCol, headerRowIndex: i };
+  }
+  return { keyCol: 1, valCol: 2, headerRowIndex: 0 };
 }
 
 let cachedConfig: AppConfig | null = null;
@@ -113,15 +126,16 @@ export async function getConfig(): Promise<AppConfig> {
 
   if (csv) {
     const rows = parseCsvRows(csv);
-    for (const row of rows) {
-      // ชีต Config layout: A=หมวด · B=ค่า(key) · C=ค่าที่ตั้ง(value) · D=หน่วย · E=คำอธิบาย
-      // key อยู่คอลัมน์ B (index 1) · value อยู่คอลัมน์ C (index 2)
+    const { keyCol, valCol, headerRowIndex } = findKeyValueCols(rows);
+    for (let i = 0; i < rows.length; i++) {
+      if (i === headerRowIndex) continue; // ข้ามแถวหัวตาราง
+      const row = rows[i];
       // stripKeyAnnotation ตัดวงเล็บกำกับท้ายคีย์ · cleanCell กันอักขระล่องหนทั้งคีย์และค่า
-      const key = stripKeyAnnotation(cleanCell(row[1]));
-      const value = cleanCell(row[2]);
+      const key = stripKeyAnnotation(cleanCell(row[keyCol]));
+      const value = cleanCell(row[valCol]);
       if (!key) continue;
       const keyLower = key.toLowerCase();
-      if (keyLower === "key" || keyLower === "ค่า") continue; // ข้ามแถวหัวตาราง
+      if (keyLower === "key" || keyLower === "ค่า") continue; // กันแถว header ซ้ำ/เผื่อ detect ไม่เจอ
       raw.set(key, value);
     }
   } else {
@@ -129,34 +143,67 @@ export async function getConfig(): Promise<AppConfig> {
     console.warn(JSON.stringify({ scope: "config", warning: "SHEET_CONFIG_URL missing or fetch failed, using defaults" }));
   }
 
-  const rawSwitches = {
-    tagging: parseSwitch(raw.get("เปิด_ติดแท็ก"), true),
-    handoff: parseSwitch(raw.get("เปิด_ส่งต่อแอดมิน"), false),
-    orders: parseSwitch(raw.get("เปิด_ระบบออเดอร์"), false),
-    follow: parseSwitch(raw.get("เปิด_ระบบติดตาม"), false),
-    flexCards: parseSwitch(raw.get("เปิด_การ์ด_flex"), false),
-    timing: parseSwitch(raw.get("เปิด_จังหวะหน่วงเหมือนคน"), true),
+  // lookup แบบรับหลายชื่อ (alias) กันชื่อคีย์ในชีตเพี้ยนจากที่โค้ดคาด (เช่น มี/ไม่มี suffix หน่วย)
+  const pick = (...candidates: string[]): string | undefined => {
+    for (const c of candidates) {
+      const v = raw.get(c);
+      if (v !== undefined) return v;
+    }
+    return undefined;
+  };
+  // เผื่อคีย์เชิงตัวเลขที่หา alias ตรง ๆ ไม่เจอ ให้ค้นด้วย prefix (เช่น "debounce")
+  const pickByPrefix = (prefix: string): string | undefined => {
+    for (const [k, v] of raw.entries()) {
+      if (k.toLowerCase().startsWith(prefix.toLowerCase())) return v;
+    }
+    return undefined;
+  };
+  const numOf = (fallback: number, ...candidates: string[]): number => {
+    const v = pick(...candidates);
+    if (v === undefined) return fallback;
+    const n = Number(cleanCell(v));
+    return Number.isFinite(n) ? n : fallback;
+  };
+  const boolOf = (fallback: boolean, ...candidates: string[]): boolean => parseSwitch(pick(...candidates), fallback);
+  const strOf = (fallback: string, ...candidates: string[]): string => {
+    const v = pick(...candidates);
+    return v && v !== "" ? v : fallback;
   };
 
+  const rawSwitches = {
+    tagging: boolOf(true, "เปิด_ติดแท็ก"),
+    handoff: boolOf(false, "เปิด_ส่งต่อแอดมิน"),
+    orders: boolOf(false, "เปิด_ระบบออเดอร์"),
+    follow: boolOf(false, "เปิด_ระบบติดตาม"),
+    flexCards: boolOf(false, "เปิด_การ์ด_flex", "เปิด_การ์ด flex", "เปิด_flex"),
+    timing: boolOf(true, "เปิด_จังหวะหน่วงเหมือนคน", "เปิด_จังหวะหน่วง"),
+  };
+
+  const debounceRaw = pick("debounce_รวมคำถาม", "debounce_รอรวมคำถาม", "debounce_รอรวมคำถาม_วิ") ?? pickByPrefix("debounce");
+  const debounceSec = (() => {
+    const n = Number(cleanCell(debounceRaw));
+    return Number.isFinite(n) && n > 0 ? n : 6;
+  })();
+
   const config: AppConfig = {
-    botName: raw.get("ชื่อบอท") || "ปลาทู",
-    shopName: raw.get("ชื่อร้าน") || "สากบิน",
-    useEmoji: parseSwitch(raw.get("ใช้_emoji"), false),
-    temperature: toNumber(raw.get("temperature"), 1.0),
-    maxOutputTokens: Math.max(1024, toNumber(raw.get("maxOutputTokens"), 1024)),
-    showTyping: parseSwitch(raw.get("แสดง_typing"), true),
-    debounceWaitMs: toNumber(raw.get("debounce_รอรวมคำถาม_วิ"), 8) * 1000,
-    delayBetweenBubblesMs: toNumber(raw.get("หน่วง_ระหว่างข้อความ_วิ"), 1) * 1000,
-    slipUrlExpiryDays: toNumber(raw.get("อายุลิงก์สลิป_วัน"), 7),
-    orderCutoffTime: raw.get("เวลาตัดรอบออเดอร์") || "12:00",
-    orderNumberResetDaily: parseSwitch(raw.get("เลขออเดอร์_รีเซ็ตทุกวัน"), true),
-    handoffKeywords: (raw.get("คำ_handoff") || "")
+    botName: strOf("ปลาทู", "ชื่อบอท"),
+    shopName: strOf("สากบิน", "ชื่อร้าน"),
+    useEmoji: boolOf(false, "ใช้_emoji", "ใช้อีโมจิ", "emoji"),
+    temperature: numOf(1.0, "temperature"),
+    maxOutputTokens: Math.max(1024, numOf(1024, "maxOutputTokens", "max_output_tokens")),
+    showTyping: boolOf(true, "แสดง_typing", "แสดงtyping", "typing"),
+    debounceWaitMs: debounceSec * 1000,
+    delayBetweenBubblesMs: numOf(1, "หน่วง_ก่อนพาไปประตูถัดไป", "หน่วง_ระหว่างข้อความ", "หน่วง_ระหว่างข้อความ_วิ") * 1000,
+    slipUrlExpiryDays: numOf(7, "อายุลิงก์สลิป_วัน", "อายุลิงก์สลิป"),
+    orderCutoffTime: strOf("12:00", "เวลาตัดรอบออเดอร์", "เวลารอบตัดออเดอร์"),
+    orderNumberResetDaily: boolOf(true, "เลขออเดอร์_รีเซ็ตทุกวัน", "เลขออเดอร์รีเซ็ตทุกวัน"),
+    handoffKeywords: (pick("คำ_handoff", "คำ_ส่งต่อแอดมิน", "keyword_handoff") ?? "")
       .split(",")
       .map((s) => cleanCell(s))
       .filter(Boolean),
-    adminSilenceReturnDays: toNumber(raw.get("คืนสิทธิ์แอดมิน_หลังเขียน_วัน"), 1),
-    releaseKeyword: raw.get("คำคืนสิทธิ์บอท_จากแอดมิน") || "คืนบอท",
-    testCommandsEnabled: parseSwitch(raw.get("เปิด_คำสั่งเทสต์"), true),
+    adminSilenceReturnDays: numOf(1, "คืนสิทธิ์แอดมิน_หลังเขียน_วัน", "คืนสิทธิ์แอดมิน_หลังเขียน"),
+    releaseKeyword: strOf("คืนบอท", "คำคืนสิทธิ์บอท_จากแอดมิน", "คำคืนสิทธิ์บอท"),
+    testCommandsEnabled: boolOf(true, "เปิด_คำสั่งเทสต์", "เปิด_คำสั่งเทส"),
     rawSwitches,
     raw,
     loadFailed,
