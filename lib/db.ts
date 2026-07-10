@@ -188,6 +188,24 @@ export async function setLastSlipPathname(userId: string, pathname: string): Pro
   await sql`UPDATE customers SET last_slip_pathname = ${pathname} WHERE user_id = ${userId}`;
 }
 
+/**
+ * คำสั่งเทสต์ /reset — ล้างความจำเฉพาะ userId ที่พิมพ์เข้ามาเท่านั้น (สถานะ/stage/tags/
+ * last_slip_pathname + ประวัติแชท) รวมถึง pending_messages ค้างของ user นั้น กันข้อความ
+ * เก่าที่ debounce ค้างอยู่มาเขียนทับหลัง reset ไม่แตะ human_mode เพราะเป็นคนละเรื่องกับ
+ * ความจำการขาย (ไม่ควรแย่งสิทธิ์แอดมินคืนเองจากคำสั่งเทสต์)
+ */
+export async function resetCustomerMemory(userId: string): Promise<void> {
+  await ensureSchema();
+  const sql = getSql();
+  await sql`
+    UPDATE customers
+    SET stage = NULL, tags = '{}', last_slip_pathname = NULL
+    WHERE user_id = ${userId}
+  `;
+  await sql`DELETE FROM messages WHERE user_id = ${userId}`;
+  await sql`DELETE FROM pending_messages WHERE user_id = ${userId}`;
+}
+
 export async function addMessage(userId: string, role: "user" | "assistant", text: string): Promise<void> {
   await ensureSchema();
   const sql = getSql();

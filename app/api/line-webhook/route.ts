@@ -14,6 +14,7 @@ import {
   updateCustomerAfterTurn,
   setHumanMode,
   setLastSlipPathname,
+  resetCustomerMemory,
   addMessage,
   getRecentHistory,
   formatHistoryForPrompt,
@@ -332,6 +333,22 @@ async function handleAdminGroupCommand(text: string, config: AppConfig, switches
   await setHumanMode(userId, false);
 }
 
+const RESET_COMMAND = "/reset";
+
+function isResetCommand(text: string): boolean {
+  return text.trim() === RESET_COMMAND;
+}
+
+/** คำสั่งเทสต์ /reset (แชท 1:1 เท่านั้น) — ล้างความจำเฉพาะคนที่พิมพ์ ไม่เข้า engine ขาย */
+async function handleResetCommand(userId: string, replyToken: string, switches: FeatureSwitches): Promise<void> {
+  if (switches.memory) {
+    await resetCustomerMemory(userId);
+  }
+  const reply = "รีเซ็ตความจำแล้ว เริ่มใหม่ได้เลยค่ะ";
+  const sent = await replyMessages(replyToken, reply);
+  if (!sent) await pushMessages(userId, reply);
+}
+
 async function handleEvent(event: webhook.Event, config: AppConfig, switches: FeatureSwitches): Promise<void> {
   try {
     if (event.type !== "message") return;
@@ -341,6 +358,7 @@ async function handleEvent(event: webhook.Event, config: AppConfig, switches: Fe
 
     // TEMP: ลบออกหลังได้ groupId แล้ว
     if (event.source.type === "group") {
+      console.log("GROUP_ID:", event.source.groupId);
       const groupName = await getGroupName(event.source.groupId);
       console.log(JSON.stringify({ scope: "TEMP-group-id", groupId: event.source.groupId, groupName }));
     }
@@ -355,6 +373,11 @@ async function handleEvent(event: webhook.Event, config: AppConfig, switches: Fe
     if (event.source.type !== "user") return;
     const userId = event.source.userId;
     if (!userId) return;
+
+    if (event.message.type === "text" && config.testCommandsEnabled && isResetCommand(event.message.text)) {
+      await handleResetCommand(userId, replyToken, switches);
+      return;
+    }
 
     if (!switches.salesCore) {
       await replyMessages(replyToken, DEFAULT_REPLY);

@@ -37,6 +37,8 @@ export interface AppConfig {
   handoffKeywords: string[];
   adminSilenceReturnDays: number;
   releaseKeyword: string;
+  /** เปิด_คำสั่งเทสต์ — คุม /reset ฯลฯ · default เปิด ปิดตอนขายจริง */
+  testCommandsEnabled: boolean;
   /** สวิตช์ดิบจากชีต (ก่อนเช็ค all-or-nothing กับ env) */
   rawSwitches: {
     tagging: boolean;
@@ -118,6 +120,7 @@ export async function getConfig(): Promise<AppConfig> {
       .filter(Boolean),
     adminSilenceReturnDays: toNumber(raw.get("คืนสิทธิ์แอดมิน_หลังเขียน_วัน"), 1),
     releaseKeyword: raw.get("คำคืนสิทธิ์บอท_จากแอดมิน") || "คืนบอท",
+    testCommandsEnabled: toBoolean(raw.get("เปิด_คำสั่งเทสต์"), true),
     rawSwitches,
     raw,
     loadFailed,
