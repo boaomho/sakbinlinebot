@@ -46,6 +46,7 @@ export interface AppConfig {
     orders: boolean;
     follow: boolean;
     flexCards: boolean;
+    timing: boolean;
   };
   /** ทุก key-value ดิบจากชีต Config, ไว้ใส่ใน <ข้อมูล Config> ของ prompt ตรง ๆ */
   raw: Map<string, string>;
@@ -62,6 +63,14 @@ export interface AppConfig {
 function cleanCell(value: string | undefined): string {
   if (value === undefined) return "";
   return value.replace(/[​-‍﻿ ]/g, "").trim();
+}
+
+/**
+ * ตัดคำอธิบายในวงเล็บท้ายคีย์ออก เช่น "เปิด_ส่งต่อแอดมิน (Handoff)" -> "เปิด_ส่งต่อแอดมิน"
+ * เพราะในชีตจริงคนใส่วงเล็บกำกับภาษาอังกฤษไว้ให้อ่านง่าย แต่โค้ด lookup ด้วยชื่อคีย์ล้วน
+ */
+function stripKeyAnnotation(key: string): string {
+  return key.replace(/\s*\([^)]*\)\s*$/, "").trim();
 }
 
 const SWITCH_TRUE_VALUES = new Set(["เปิด", "true", "on", "1", "ใช่", "yes"]);
@@ -105,10 +114,14 @@ export async function getConfig(): Promise<AppConfig> {
   if (csv) {
     const rows = parseCsvRows(csv);
     for (const row of rows) {
-      // cleanCell ทั้ง key และ value กันอักขระล่องหนทำให้ lookup พลาด
-      const key = cleanCell(row[0]);
-      const value = cleanCell(row[1]);
-      if (!key || key.toLowerCase() === "key") continue;
+      // ชีต Config layout: A=หมวด · B=ค่า(key) · C=ค่าที่ตั้ง(value) · D=หน่วย · E=คำอธิบาย
+      // key อยู่คอลัมน์ B (index 1) · value อยู่คอลัมน์ C (index 2)
+      // stripKeyAnnotation ตัดวงเล็บกำกับท้ายคีย์ · cleanCell กันอักขระล่องหนทั้งคีย์และค่า
+      const key = stripKeyAnnotation(cleanCell(row[1]));
+      const value = cleanCell(row[2]);
+      if (!key) continue;
+      const keyLower = key.toLowerCase();
+      if (keyLower === "key" || keyLower === "ค่า") continue; // ข้ามแถวหัวตาราง
       raw.set(key, value);
     }
   } else {
@@ -122,6 +135,7 @@ export async function getConfig(): Promise<AppConfig> {
     orders: parseSwitch(raw.get("เปิด_ระบบออเดอร์"), false),
     follow: parseSwitch(raw.get("เปิด_ระบบติดตาม"), false),
     flexCards: parseSwitch(raw.get("เปิด_การ์ด_flex"), false),
+    timing: parseSwitch(raw.get("เปิด_จังหวะหน่วงเหมือนคน"), true),
   };
 
   const config: AppConfig = {
@@ -134,7 +148,7 @@ export async function getConfig(): Promise<AppConfig> {
     debounceWaitMs: toNumber(raw.get("debounce_รอรวมคำถาม_วิ"), 8) * 1000,
     delayBetweenBubblesMs: toNumber(raw.get("หน่วง_ระหว่างข้อความ_วิ"), 1) * 1000,
     slipUrlExpiryDays: toNumber(raw.get("อายุลิงก์สลิป_วัน"), 7),
-    orderCutoffTime: raw.get("เวลารอบตัดออเดอร์") || "12:00",
+    orderCutoffTime: raw.get("เวลาตัดรอบออเดอร์") || "12:00",
     orderNumberResetDaily: parseSwitch(raw.get("เลขออเดอร์_รีเซ็ตทุกวัน"), true),
     handoffKeywords: (raw.get("คำ_handoff") || "")
       .split(",")
@@ -189,8 +203,8 @@ export function resolveFeatureSwitches(config: AppConfig): FeatureSwitches {
     warnDisabled("handoff", "ต้องมี ADMIN_GROUP_ID + memory (DATABASE_URL)");
   }
 
-  const humanLikeTiming = memory;
-  if (!humanLikeTiming) {
+  const humanLikeTiming = config.rawSwitches.timing && memory;
+  if (config.rawSwitches.timing && !memory) {
     warnDisabled("humanLikeTiming", "ต้องมี memory (DATABASE_URL) สำหรับ pending_messages — จะ fallback เป็นตอบทันทีไม่หน่วง");
   }
 
