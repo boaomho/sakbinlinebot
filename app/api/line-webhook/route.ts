@@ -76,6 +76,10 @@ async function pushHandoffNotice(
   path: "keyword-precheck" | "ai-semantic",
 ): Promise<void> {
   const adminGroupId = process.env.ADMIN_GROUP_ID;
+
+  // TEMP DEBUG: ก่อน push handoff — ลบออกเมื่อยืนยันแล้ว
+  console.log("HANDOFF_PUSH:", JSON.stringify({ path, adminGroupId, hasAdminGroupId: !!adminGroupId, userId, reason }));
+
   if (!adminGroupId) {
     console.warn(JSON.stringify({ scope: "handoff", path, warning: "ADMIN_GROUP_ID not set — push skipped" }));
     return;
@@ -85,10 +89,12 @@ async function pushHandoffNotice(
     const name = await getProfileName(userId);
     const text = `🔔 ส่งต่อแอดมิน\nลูกค้า: ${name}\nuserId: ${userId}\nเหตุผล: ${reason}\nข้อความล่าสุด: ${userMessage}`;
     const ok = await pushRawText(adminGroupId, text);
+    console.log("HANDOFF_PUSH_RESULT:", JSON.stringify({ path, ok }));
     if (!ok) {
       console.warn(JSON.stringify({ scope: "handoff", path, warning: "push to admin group failed" }));
     }
   } catch (error) {
+    console.error("HANDOFF_PUSH_ERROR:", String(error));
     console.error(JSON.stringify({ scope: "handoff", path, warning: "pushHandoffNotice threw", error: String(error) }));
   }
 }
@@ -211,8 +217,21 @@ async function processMessage(
     }
   }
 
+  // TEMP DEBUG: ตรวจ handoff — ลบออกเมื่อยืนยัน push เข้ากลุ่มได้แล้ว
+  console.log(
+    "HANDOFF_DEBUG:",
+    JSON.stringify({
+      rawSheetValue: config.raw.get("เปิด_ส่งต่อแอดมิน") ?? "(คีย์ไม่มีในชีต)",
+      rawSwitchHandoff: config.rawSwitches.handoff,
+      parsedSwitchHandoff: switches.handoff,
+      switchesMemory: switches.memory,
+      hasAdminGroupId: !!process.env.ADMIN_GROUP_ID,
+    }),
+  );
+
   if (switches.handoff) {
     const preCheck = checkHandoffKeywords(userMessage, config.handoffKeywords);
+    console.log("HANDOFF_KEYWORD_DEBUG:", JSON.stringify({ matched: preCheck.matched, keyword: preCheck.keyword ?? null }));
     if (preCheck.matched) {
       await runHandoffFlow(userId, userMessage, replyToken, config, switches, `เจอคำสำคัญ: ${preCheck.keyword}`);
       return;
@@ -260,6 +279,18 @@ async function processMessage(
   const effectiveTagsAdd = switches.tagging ? geminiOutput.tagsAdd : [];
   const effectiveHandoff = switches.handoff ? geminiOutput.handoff : false;
   const effectiveOrderAction: OrderAction = switches.orders ? geminiOutput.orderAction : "none";
+
+  // TEMP DEBUG: ผลตัดสิน handoff ฝั่ง AI — ลบออกเมื่อยืนยันแล้ว
+  console.log(
+    "HANDOFF_AI_DEBUG:",
+    JSON.stringify({
+      parsedSwitchHandoff: switches.handoff,
+      geminiHandoff: geminiOutput.handoff,
+      geminiHandoffReason: geminiOutput.handoffReason,
+      effectiveHandoff,
+      hasAdminGroupId: !!process.env.ADMIN_GROUP_ID,
+    }),
+  );
 
   if (switches.memory) {
     await addMessage(userId, "user", userMessage);
