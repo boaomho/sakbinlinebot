@@ -69,12 +69,29 @@ function buildStateText(customer: CustomerState | null): string {
   ].join("\n");
 }
 
-async function pushHandoffNotice(userId: string, userMessage: string, reason: string): Promise<void> {
+async function pushHandoffNotice(
+  userId: string,
+  userMessage: string,
+  reason: string,
+  path: "keyword-precheck" | "ai-semantic",
+): Promise<void> {
   const adminGroupId = process.env.ADMIN_GROUP_ID;
-  if (!adminGroupId) return;
-  const name = await getProfileName(userId);
-  const text = `🔔 ส่งต่อแอดมิน\nลูกค้า: ${name}\nuserId: ${userId}\nเหตุผล: ${reason}\nข้อความล่าสุด: ${userMessage}`;
-  await pushRawText(adminGroupId, text);
+
+  console.log("HANDOFF_PUSH:", JSON.stringify({ path, adminGroupId, hasAdminGroupId: Boolean(adminGroupId), userId, reason }));
+
+  if (!adminGroupId) {
+    console.error("HANDOFF_PUSH_ERROR:", JSON.stringify({ path, reason: "ADMIN_GROUP_ID is not set — push skipped" }));
+    return;
+  }
+
+  try {
+    const name = await getProfileName(userId);
+    const text = `🔔 ส่งต่อแอดมิน\nลูกค้า: ${name}\nuserId: ${userId}\nเหตุผล: ${reason}\nข้อความล่าสุด: ${userMessage}`;
+    const ok = await pushRawText(adminGroupId, text);
+    console.log("HANDOFF_PUSH_RESULT:", JSON.stringify({ path, ok, adminGroupId }));
+  } catch (error) {
+    console.error("HANDOFF_PUSH_ERROR:", JSON.stringify({ path, error: String(error) }));
+  }
 }
 
 async function runHandoffFlow(
@@ -97,7 +114,7 @@ async function runHandoffFlow(
   const sent = await replyMessages(replyToken, finalReply);
   if (!sent) await pushMessages(userId, finalReply);
 
-  await pushHandoffNotice(userId, userMessage, reason);
+  await pushHandoffNotice(userId, userMessage, reason, "keyword-precheck");
 }
 
 function formatProductAndQty(orderData: Record<string, string>): string {
@@ -245,6 +262,21 @@ async function processMessage(
   const effectiveHandoff = switches.handoff ? geminiOutput.handoff : false;
   const effectiveOrderAction: OrderAction = switches.orders ? geminiOutput.orderAction : "none";
 
+  // TEMP: debug log สำหรับตรวจ handoff — ลบออกได้เมื่อยืนยันว่า push เข้ากลุ่มทำงานถูกต้องแล้ว
+  console.log(
+    "HANDOFF_DEBUG:",
+    JSON.stringify({
+      userId,
+      rawSwitchHandoff: config.rawSwitches.handoff,
+      switchesMemory: switches.memory,
+      switchesHandoff: switches.handoff,
+      hasAdminGroupId: Boolean(process.env.ADMIN_GROUP_ID),
+      geminiHandoff: geminiOutput.handoff,
+      geminiHandoffReason: geminiOutput.handoffReason,
+      effectiveHandoff,
+    }),
+  );
+
   if (switches.memory) {
     await addMessage(userId, "user", userMessage);
     await addMessage(userId, "assistant", geminiOutput.reply);
@@ -263,7 +295,7 @@ async function processMessage(
   }
 
   if (effectiveHandoff) {
-    await pushHandoffNotice(userId, userMessage, geminiOutput.handoffReason || "AI ประเมินว่าควรส่งต่อ");
+    await pushHandoffNotice(userId, userMessage, geminiOutput.handoffReason || "AI ประเมินว่าควรส่งต่อ", "ai-semantic");
     if (switches.memory) await setHumanMode(userId, true);
   }
 }
