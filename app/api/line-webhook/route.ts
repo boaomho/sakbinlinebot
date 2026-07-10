@@ -76,11 +76,8 @@ async function pushHandoffNotice(
   path: "keyword-precheck" | "ai-semantic",
 ): Promise<void> {
   const adminGroupId = process.env.ADMIN_GROUP_ID;
-
-  console.log("HANDOFF_PUSH:", JSON.stringify({ path, adminGroupId, hasAdminGroupId: Boolean(adminGroupId), userId, reason }));
-
   if (!adminGroupId) {
-    console.error("HANDOFF_PUSH_ERROR:", JSON.stringify({ path, reason: "ADMIN_GROUP_ID is not set — push skipped" }));
+    console.warn(JSON.stringify({ scope: "handoff", path, warning: "ADMIN_GROUP_ID not set — push skipped" }));
     return;
   }
 
@@ -88,9 +85,11 @@ async function pushHandoffNotice(
     const name = await getProfileName(userId);
     const text = `🔔 ส่งต่อแอดมิน\nลูกค้า: ${name}\nuserId: ${userId}\nเหตุผล: ${reason}\nข้อความล่าสุด: ${userMessage}`;
     const ok = await pushRawText(adminGroupId, text);
-    console.log("HANDOFF_PUSH_RESULT:", JSON.stringify({ path, ok, adminGroupId }));
+    if (!ok) {
+      console.warn(JSON.stringify({ scope: "handoff", path, warning: "push to admin group failed" }));
+    }
   } catch (error) {
-    console.error("HANDOFF_PUSH_ERROR:", JSON.stringify({ path, error: String(error) }));
+    console.error(JSON.stringify({ scope: "handoff", path, warning: "pushHandoffNotice threw", error: String(error) }));
   }
 }
 
@@ -261,21 +260,6 @@ async function processMessage(
   const effectiveTagsAdd = switches.tagging ? geminiOutput.tagsAdd : [];
   const effectiveHandoff = switches.handoff ? geminiOutput.handoff : false;
   const effectiveOrderAction: OrderAction = switches.orders ? geminiOutput.orderAction : "none";
-
-  // TEMP: debug log สำหรับตรวจ handoff — ลบออกได้เมื่อยืนยันว่า push เข้ากลุ่มทำงานถูกต้องแล้ว
-  console.log(
-    "HANDOFF_DEBUG:",
-    JSON.stringify({
-      userId,
-      rawSwitchHandoff: config.rawSwitches.handoff,
-      switchesMemory: switches.memory,
-      switchesHandoff: switches.handoff,
-      hasAdminGroupId: Boolean(process.env.ADMIN_GROUP_ID),
-      geminiHandoff: geminiOutput.handoff,
-      geminiHandoffReason: geminiOutput.handoffReason,
-      effectiveHandoff,
-    }),
-  );
 
   if (switches.memory) {
     await addMessage(userId, "user", userMessage);

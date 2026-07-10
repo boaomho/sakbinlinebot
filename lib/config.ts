@@ -53,17 +53,38 @@ export interface AppConfig {
   loadFailed: boolean;
 }
 
-function toBoolean(value: string | undefined, fallback: boolean): boolean {
+/**
+ * ตัดอักขระล่องหนที่ .trim() ปกติจับไม่หมด (zero-width space/joiner U+200B–U+200D,
+ * BOM U+FEFF, non-breaking space U+00A0) แล้ว trim — ใช้กับทั้ง key และ value จากชีต
+ * เพราะบ่อยครั้งเซลล์ Google Sheet มีอักขระพวกนี้ติดมาโดยมองไม่เห็น ทำให้ทั้งการ
+ * lookup คีย์ และการเทียบค่าสวิตช์พลาดแบบเงียบ ๆ
+ */
+function cleanCell(value: string | undefined): string {
+  if (value === undefined) return "";
+  return value.replace(/[​-‍﻿ ]/g, "").trim();
+}
+
+const SWITCH_TRUE_VALUES = new Set(["เปิด", "true", "on", "1", "ใช่", "yes"]);
+const SWITCH_FALSE_VALUES = new Set(["ปิด", "false", "off", "0", "ไม่", "no", ""]);
+
+/**
+ * ตีความค่าสวิตช์จากชีตให้เป็น boolean — ใช้ร่วมทุกสวิตช์เพื่อความสม่ำเสมอ
+ * รองรับทั้งค่าไทย ("เปิด"/"ปิด"/"ใช่"/"ไม่") และค่าสากล ("true"/"on"/"1" ฯลฯ)
+ * ไม่สนตัวพิมพ์เล็กใหญ่ (Thai ไม่มี case อยู่แล้ว) · ค่าที่ไม่รู้จัก = ใช้ fallback
+ */
+function parseSwitch(value: string | undefined, fallback: boolean): boolean {
+  // คีย์ไม่มีในชีตเลย = ใช้ค่า default (ต่างจากเซลล์ว่าง ๆ ที่ตั้งใจ "ปิด")
   if (value === undefined) return fallback;
-  const v = value.trim();
-  if (v === "เปิด") return true;
-  if (v === "ปิด") return false;
+  const v = cleanCell(value).toLowerCase();
+  if (SWITCH_TRUE_VALUES.has(v)) return true;
+  if (SWITCH_FALSE_VALUES.has(v)) return false;
   return fallback;
 }
 
 function toNumber(value: string | undefined, fallback: number): number {
-  if (value === undefined) return fallback;
-  const n = Number(value.trim());
+  const cleaned = cleanCell(value);
+  if (cleaned === "") return fallback;
+  const n = Number(cleaned);
   return Number.isFinite(n) ? n : fallback;
 }
 
@@ -84,8 +105,9 @@ export async function getConfig(): Promise<AppConfig> {
   if (csv) {
     const rows = parseCsvRows(csv);
     for (const row of rows) {
-      const key = (row[0] ?? "").trim();
-      const value = (row[1] ?? "").trim();
+      // cleanCell ทั้ง key และ value กันอักขระล่องหนทำให้ lookup พลาด
+      const key = cleanCell(row[0]);
+      const value = cleanCell(row[1]);
       if (!key || key.toLowerCase() === "key") continue;
       raw.set(key, value);
     }
@@ -95,32 +117,32 @@ export async function getConfig(): Promise<AppConfig> {
   }
 
   const rawSwitches = {
-    tagging: toBoolean(raw.get("เปิด_ติดแท็ก"), true),
-    handoff: toBoolean(raw.get("เปิด_ส่งต่อแอดมิน"), false),
-    orders: toBoolean(raw.get("เปิด_ระบบออเดอร์"), false),
-    follow: toBoolean(raw.get("เปิด_ระบบติดตาม"), false),
-    flexCards: toBoolean(raw.get("เปิด_การ์ด_flex"), false),
+    tagging: parseSwitch(raw.get("เปิด_ติดแท็ก"), true),
+    handoff: parseSwitch(raw.get("เปิด_ส่งต่อแอดมิน"), false),
+    orders: parseSwitch(raw.get("เปิด_ระบบออเดอร์"), false),
+    follow: parseSwitch(raw.get("เปิด_ระบบติดตาม"), false),
+    flexCards: parseSwitch(raw.get("เปิด_การ์ด_flex"), false),
   };
 
   const config: AppConfig = {
     botName: raw.get("ชื่อบอท") || "ปลาทู",
     shopName: raw.get("ชื่อร้าน") || "สากบิน",
-    useEmoji: toBoolean(raw.get("ใช้_emoji"), false),
+    useEmoji: parseSwitch(raw.get("ใช้_emoji"), false),
     temperature: toNumber(raw.get("temperature"), 1.0),
     maxOutputTokens: Math.max(1024, toNumber(raw.get("maxOutputTokens"), 1024)),
-    showTyping: toBoolean(raw.get("แสดง_typing"), true),
+    showTyping: parseSwitch(raw.get("แสดง_typing"), true),
     debounceWaitMs: toNumber(raw.get("debounce_รอรวมคำถาม_วิ"), 8) * 1000,
     delayBetweenBubblesMs: toNumber(raw.get("หน่วง_ระหว่างข้อความ_วิ"), 1) * 1000,
     slipUrlExpiryDays: toNumber(raw.get("อายุลิงก์สลิป_วัน"), 7),
     orderCutoffTime: raw.get("เวลารอบตัดออเดอร์") || "12:00",
-    orderNumberResetDaily: toBoolean(raw.get("เลขออเดอร์_รีเซ็ตทุกวัน"), true),
+    orderNumberResetDaily: parseSwitch(raw.get("เลขออเดอร์_รีเซ็ตทุกวัน"), true),
     handoffKeywords: (raw.get("คำ_handoff") || "")
       .split(",")
-      .map((s) => s.trim())
+      .map((s) => cleanCell(s))
       .filter(Boolean),
     adminSilenceReturnDays: toNumber(raw.get("คืนสิทธิ์แอดมิน_หลังเขียน_วัน"), 1),
     releaseKeyword: raw.get("คำคืนสิทธิ์บอท_จากแอดมิน") || "คืนบอท",
-    testCommandsEnabled: toBoolean(raw.get("เปิด_คำสั่งเทสต์"), true),
+    testCommandsEnabled: parseSwitch(raw.get("เปิด_คำสั่งเทสต์"), true),
     rawSwitches,
     raw,
     loadFailed,
