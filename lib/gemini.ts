@@ -1,27 +1,66 @@
-import { GoogleGenAI, ThinkingLevel } from "@google/genai";
-
-export const DEFAULT_REPLY =
-  "ขออภัยค่ะ คำถามนี้ปลาทูยังตอบไม่ได้ค่ะ รอซักครู่นะคะ ปลาทูตามแอดมินมาให้เลยค่ะ";
+import { GoogleGenAI, ThinkingLevel, Type } from "@google/genai";
+import { buildStaticSystemInstruction, buildUserContent } from "@/prompt/system";
+import { AppConfig, DEFAULT_REPLY } from "./config";
 
 const MODEL = "gemini-3.5-flash";
 
-const SYSTEM_INSTRUCTION = `<role>
-คุณคือ "ปลาทู" พนักงานตอบแชทของร้านสากบิน ผู้ขายน้ำพริกปลาทูฟรีซดราย ขนาด 10 กรัม
-</role>
+export interface GeminiImageInput {
+  mimeType: string;
+  base64Data: string;
+}
 
-<constraints>
-- ตอบโดยใช้ข้อมูลใน <faq> เท่านั้น
-- ห้ามแต่งหรือเดา ราคา เวลา ที่ตั้ง ส่วนผสม หรือเงื่อนไขการจัดส่ง หากไม่มีระบุใน <faq>
-- ถ้าคำถามไม่มีคำตอบใน <faq> ให้ตอบข้อความนี้เป๊ะๆ โดยห้ามต่อเติมหรือดัดแปลง:
-  "${DEFAULT_REPLY}"
-- โทน: สุภาพเป็นทางการ ลงท้ายด้วย ค่ะ หรือ นะคะ เสมอ ห้ามใช้ emoji
-- แทนตัวเองว่า "ปลาทู" และพูดกับลูกค้าอย่างสุภาพ
-- ความยาว: กระชับเข้าใจง่าย ปกติ 1–3 ประโยค ขยายได้เฉพาะเมื่อคำถามซับซ้อนจริง
-</constraints>
+export interface GeminiTurnInput {
+  config: AppConfig;
+  configText: string;
+  stepText: string;
+  faqText: string;
+  stateText: string;
+  historyText: string;
+  userMessage: string;
+  currentStage: string;
+  image?: GeminiImageInput;
+}
 
-<output_format>
-ตอบเป็นภาษาไทย เป็นข้อความล้วน ห้ามใช้ markdown ห้ามใช้ bullet ห้ามใช้ emoji
-</output_format>`;
+export type OrderAction = "none" | "slip_received" | "cod_confirmed" | "address_collected";
+
+export interface GeminiTurnOutput {
+  reply: string;
+  stage: string;
+  tagsAdd: string[];
+  handoff: boolean;
+  handoffReason: string;
+  orderAction: OrderAction;
+  orderData: Record<string, string>;
+}
+
+const RESPONSE_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    reply: { type: Type.STRING },
+    stage: { type: Type.STRING },
+    tags_add: { type: Type.ARRAY, items: { type: Type.STRING } },
+    handoff: { type: Type.BOOLEAN },
+    handoff_reason: { type: Type.STRING },
+    order_action: { type: Type.STRING },
+    order_data: {
+      type: Type.OBJECT,
+      properties: {
+        ชื่อ: { type: Type.STRING },
+        เบอร์: { type: Type.STRING },
+        ที่อยู่: { type: Type.STRING },
+        ตำบล: { type: Type.STRING },
+        อำเภอ: { type: Type.STRING },
+        จังหวัด: { type: Type.STRING },
+        รหัสไปรษณีย์: { type: Type.STRING },
+        สินค้า: { type: Type.STRING },
+        จำนวน: { type: Type.STRING },
+        ยอด: { type: Type.STRING },
+        การชำระเงิน: { type: Type.STRING },
+      },
+    },
+  },
+  required: ["reply", "stage", "tags_add", "handoff", "handoff_reason", "order_action", "order_data"],
+};
 
 let client: GoogleGenAI | null = null;
 
@@ -32,44 +71,94 @@ function getClient(): GoogleGenAI {
   return client;
 }
 
-export async function askPlatoo(
-  faqCsv: string,
-  userMessage: string,
-): Promise<string> {
-  const userContent = `<faq>\n${faqCsv}\n</faq>\n\n<question>\n${userMessage}\n</question>`;
+function fallback(stage: string): GeminiTurnOutput {
+  return {
+    reply: DEFAULT_REPLY,
+    stage,
+    tagsAdd: [],
+    handoff: false,
+    handoffReason: "",
+    orderAction: "none",
+    orderData: {},
+  };
+}
+
+function isValidOrderAction(value: unknown): value is OrderAction {
+  return value === "none" || value === "slip_received" || value === "cod_confirmed" || value === "address_collected";
+}
+
+export async function runSalesTurn(input: GeminiTurnInput): Promise<GeminiTurnOutput> {
+  const systemInstruction = buildStaticSystemInstruction({
+    botName: input.config.botName,
+    shopName: input.config.shopName,
+    useEmoji: input.config.useEmoji,
+  });
+
+  const userText = buildUserContent({
+    configText: input.configText,
+    stepText: input.stepText,
+    faqText: input.faqText,
+    stateText: input.stateText,
+    historyText: input.historyText,
+    userMessage: input.userMessage,
+  });
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const parts: any[] = [{ text: userText }];
+  if (input.image) {
+    parts.push({ inlineData: { mimeType: input.image.mimeType, data: input.image.base64Data } });
+  }
 
   try {
     const response = await getClient().models.generateContent({
       model: MODEL,
-      contents: userContent,
+      contents: parts,
       config: {
-        systemInstruction: SYSTEM_INSTRUCTION,
-        temperature: 1.0,
-        maxOutputTokens: 1024,
+        systemInstruction,
+        temperature: input.config.temperature,
+        maxOutputTokens: input.config.maxOutputTokens,
         thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+        responseMimeType: "application/json",
+        responseSchema: RESPONSE_SCHEMA,
       },
     });
 
     const finishReason = response.candidates?.[0]?.finishReason;
     const usage = response.usageMetadata;
-    console.log("[gemini]", {
-      finishReason,
-      thoughtsTokenCount: usage?.thoughtsTokenCount,
-      candidatesTokenCount: usage?.candidatesTokenCount,
-    });
+    console.log(
+      JSON.stringify({
+        scope: "gemini",
+        finishReason,
+        thoughtsTokenCount: usage?.thoughtsTokenCount,
+        candidatesTokenCount: usage?.candidatesTokenCount,
+      }),
+    );
 
     if (finishReason === "MAX_TOKENS") {
-      return DEFAULT_REPLY;
+      return fallback(input.currentStage);
     }
 
     const text = response.text;
     if (!text) {
-      return DEFAULT_REPLY;
+      return fallback(input.currentStage);
     }
 
-    return text.trim();
+    const parsed = JSON.parse(text);
+
+    return {
+      reply: typeof parsed.reply === "string" && parsed.reply.trim() ? parsed.reply.trim() : DEFAULT_REPLY,
+      stage: typeof parsed.stage === "string" && parsed.stage ? parsed.stage : input.currentStage,
+      tagsAdd: Array.isArray(parsed.tags_add) ? parsed.tags_add.filter((t: unknown) => typeof t === "string") : [],
+      handoff: Boolean(parsed.handoff),
+      handoffReason: typeof parsed.handoff_reason === "string" ? parsed.handoff_reason : "",
+      orderAction: isValidOrderAction(parsed.order_action) ? parsed.order_action : "none",
+      orderData:
+        parsed.order_data && typeof parsed.order_data === "object" && !Array.isArray(parsed.order_data)
+          ? (parsed.order_data as Record<string, string>)
+          : {},
+    };
   } catch (error) {
-    console.error("[gemini] request failed", error);
-    return DEFAULT_REPLY;
+    console.error(JSON.stringify({ scope: "gemini", warning: "request failed", error: String(error) }));
+    return fallback(input.currentStage);
   }
 }
