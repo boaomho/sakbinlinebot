@@ -153,6 +153,12 @@ export async function getProfileName(userId: string): Promise<string> {
   return result?.displayName || userId;
 }
 
+/** ใช้คู่กับ log ชั่วคราวไว้ดักหา groupId — bot ต้องเป็นสมาชิกกลุ่มนั้นอยู่ก่อนถึงจะดึงชื่อได้ */
+export async function getGroupName(groupId: string): Promise<string | null> {
+  const result = await withRetry(() => getClient().getGroupSummary(groupId), "getGroupSummary", 1);
+  return result?.groupName ?? null;
+}
+
 export interface DownloadedContent {
   buffer: Buffer;
   contentType: string;

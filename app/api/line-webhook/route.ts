@@ -32,6 +32,7 @@ import {
   startLoadingIndicator,
   downloadMessageContent,
   getProfileName,
+  getGroupName,
 } from "@/lib/line";
 import { checkHandoffKeywords } from "@/lib/handoff";
 import { uploadSlip, getSlipSignedUrl } from "@/lib/blob";
@@ -337,6 +338,12 @@ async function handleEvent(event: webhook.Event, config: AppConfig, switches: Fe
     const replyToken = event.replyToken;
     if (!replyToken) return;
     if (!event.source) return;
+
+    // TEMP: ลบออกหลังได้ groupId แล้ว
+    if (event.source.type === "group") {
+      const groupName = await getGroupName(event.source.groupId);
+      console.log(JSON.stringify({ scope: "TEMP-group-id", groupId: event.source.groupId, groupName }));
+    }
 
     if (event.source.type === "group" && event.source.groupId === process.env.ADMIN_GROUP_ID) {
       if (event.message.type === "text") {
