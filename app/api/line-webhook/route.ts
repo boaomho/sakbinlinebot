@@ -35,7 +35,7 @@ import {
   CustomerBrief,
   PendingChoice,
 } from "@/lib/db";
-import { runSalesTurn, GeminiImageInput, OrderAction } from "@/lib/gemini";
+import { runSalesTurn, OrderAction, ImageIntent } from "@/lib/gemini";
 import {
   replyMessages,
   pushMessages,
@@ -44,6 +44,7 @@ import {
   startLoadingIndicator,
   downloadMessageContent,
   getProfileName,
+  DownloadedContent,
 } from "@/lib/line";
 import { checkHandoffKeywords } from "@/lib/handoff";
 import {
@@ -148,23 +149,35 @@ function formatProductAndQty(orderData: Record<string, string>): string {
   return [orderData["สินค้า"], orderData["จำนวน"]].filter(Boolean).join(" x");
 }
 
-async function handleOrderAction(
+/**
+ * จัดการรูปตาม image_intent ที่ AI ตัดสิน (เรียกเฉพาะเทิร์นที่มีรูปจริง):
+ * - slip   → อัปโหลด slips store (private) + signed URL → push ADMIN_GROUP_ID พร้อม image_note · จำ pathname ไว้ผูกออเดอร์
+ * - damage → อัปโหลดรูปเป็นหลักฐาน + push ADMIN_GROUP_ID + เข้า human_mode (เคลมต้องใช้คน)
+ * - other  → ไม่ทำอะไร (บอทตอบไปแล้วตามที่ AI คิด = บทสนทนาปกติ)
+ */
+async function handleImageIntent(
   userId: string,
-  action: OrderAction,
-  orderData: Record<string, string>,
+  intent: ImageIntent,
+  imageNote: string,
+  content: DownloadedContent,
   config: AppConfig,
-  slipPathname: string | undefined,
+  switches: FeatureSwitches,
 ): Promise<void> {
-  // สลิป/CF COD = ขอเช็คยอด → เข้ากลุ่มแอดมิน (ADMIN_GROUP_ID) ไม่ใช่กลุ่มแพ็คของ
-  // (ORDER_GROUP_ID รับเฉพาะออเดอร์ที่คอนเฟิร์มแล้วจาก cron/orders)
-  const adminGroupId = process.env.ADMIN_GROUP_ID;
-  const productAndQty = formatProductAndQty(orderData);
+  if (intent === "other") return;
 
-  if (action === "slip_received") {
+  const adminGroupId = process.env.ADMIN_GROUP_ID;
+  const noteLine = imageNote ? `\n${imageNote}` : "";
+
+  if (intent === "slip") {
+    // เรื่องเงิน — อัปโหลดเก็บเสมอถ้ามี token (uploadSlip คืน null ถ้าไม่มี) แล้ว push เข้ากลุ่มเช็คยอด
+    const uploaded = await uploadSlip(userId, content.buffer, content.contentType);
+    if (uploaded && switches.memory) {
+      await setLastSlipPathname(userId, uploaded.pathname); // เผื่อ address_collected เทิร์นถัดไป
+    }
     if (!adminGroupId) return;
     const name = await getProfileName(userId);
-    const text = `💰 มีลูกค้าส่งสลิปมาค่ะ\n${productAndQty}\n\nLineOA: ${name}`;
-    const signedUrl = slipPathname ? await getSlipSignedUrl(slipPathname, config.slipUrlExpiryDays) : null;
+    const text = `💰 มีลูกค้าส่งสลิปมาค่ะ${noteLine}\n\nLineOA: ${name}`;
+    const signedUrl = uploaded ? await getSlipSignedUrl(uploaded.pathname, config.slipUrlExpiryDays) : null;
     if (signedUrl) {
       await pushRawMessages(adminGroupId, [
         { type: "text", text },
@@ -176,6 +189,36 @@ async function handleOrderAction(
     }
     return;
   }
+
+  if (intent === "damage") {
+    const uploaded = await uploadSlip(userId, content.buffer, content.contentType); // เก็บเป็นหลักฐานเคลม
+    if (adminGroupId) {
+      const name = await getProfileName(userId);
+      const text = `⚠️ ลูกค้าแจ้งปัญหา/เคลมค่ะ${noteLine}\n\nLineOA: ${name}`;
+      const signedUrl = uploaded ? await getSlipSignedUrl(uploaded.pathname, config.slipUrlExpiryDays) : null;
+      if (signedUrl) {
+        await pushRawMessages(adminGroupId, [
+          { type: "text", text },
+          { type: "image", originalContentUrl: signedUrl, previewImageUrl: signedUrl },
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ] as any);
+      } else {
+        await pushRawText(adminGroupId, text);
+      }
+    }
+    if (switches.memory) await setHumanMode(userId, true); // เคลม = ส่งต่อคน
+  }
+}
+
+async function handleOrderAction(
+  userId: string,
+  action: OrderAction,
+  orderData: Record<string, string>,
+  slipPathname: string | undefined,
+): Promise<void> {
+  // CF COD = ขอเช็คยอด → เข้ากลุ่มแอดมิน (ADMIN_GROUP_ID) · สลิปจัดการใน handleImageIntent แล้ว
+  const adminGroupId = process.env.ADMIN_GROUP_ID;
+  const productAndQty = formatProductAndQty(orderData);
 
   if (action === "cod_confirmed") {
     if (!adminGroupId) return;
@@ -214,10 +257,14 @@ async function processMessage(
   replyToken: string,
   config: AppConfig,
   switches: FeatureSwitches,
-  image?: GeminiImageInput,
-  slipPathname?: string,
+  imageContent?: DownloadedContent,
 ): Promise<void> {
   let customer: CustomerState | null = null;
+
+  // รูป(ถ้ามี) ส่งให้ Gemini เสมอ พร้อมบริบทเหมือนข้อความตัวอักษร — ยังไม่อัปโหลด/ยิงกลุ่ม
+  const imageForGemini = imageContent
+    ? { mimeType: imageContent.contentType, base64Data: imageContent.buffer.toString("base64") }
+    : undefined;
 
   if (switches.memory) {
     customer = await ensureCustomer(userId);
@@ -247,12 +294,6 @@ async function processMessage(
       }
     }
 
-    // จำ pathname สลิปล่าสุดไว้กับลูกค้า เผื่อ order_action="address_collected" มาถึงในเทิร์นถัดไป
-    // (ลูกค้าส่งสลิปเทิร์นนี้ แล้วค่อยพิมพ์ที่อยู่เทิร์นหลัง)
-    if (slipPathname) {
-      await setLastSlipPathname(userId, slipPathname);
-      customer = { ...customer, lastSlipPathname: slipPathname };
-    }
   }
 
   if (switches.handoff) {
@@ -287,7 +328,7 @@ async function processMessage(
       historyText,
       userMessage,
       currentStage: previousStage ?? "1",
-      image,
+      image: imageForGemini,
     }),
     GEMINI_TIMEOUT_MS,
     {
@@ -298,12 +339,23 @@ async function processMessage(
       handoffReason: "",
       orderAction: "none" as OrderAction,
       orderData: {} as Record<string, string>,
+      imageIntent: "other" as ImageIntent,
+      imageNote: "",
     },
   );
 
+  // AI จัดหมวดรูป → log เก็บสถิติจริง (ไม่ log ตัวรูป · image_note เป็นสรุปสั้นจาก AI ไม่ใช่ raw PII)
+  if (imageContent) {
+    console.log(
+      JSON.stringify({ scope: "image", intent: geminiOutput.imageIntent, note: geminiOutput.imageNote.slice(0, 120) }),
+    );
+  }
+
   const effectiveTagsAdd = switches.tagging ? geminiOutput.tagsAdd : [];
-  const effectiveHandoff = switches.handoff ? geminiOutput.handoff : false;
   const effectiveOrderAction: OrderAction = switches.orders ? geminiOutput.orderAction : "none";
+  // damage = เคลม/ของเสียหาย → จัดการเป็น handoff ผ่าน image-intent handler (กันยิงซ้ำกับ handoff ทั่วไป)
+  const damageHandled = Boolean(imageContent && geminiOutput.imageIntent === "damage");
+  const effectiveHandoff = switches.handoff && geminiOutput.handoff && !damageHandled;
 
   // บอทเพิ่งกลับมาดูแล (auto-timeout หรือแอดมินสั่งเปิดบอท) → เกริ่นประโยคเปลี่ยนมือก่อน 1 บับเบิล
   // ส่งครั้งเดียว: flag arm ตอนเข้า human_mode, ล้างหลังส่ง (ข้อความถัดไปไม่ส่งซ้ำ)
@@ -325,9 +377,13 @@ async function processMessage(
     await pushMessages(userId, finalReply, config.quotaSaver);
   }
 
+  // จัดการรูปตาม image_intent ที่ AI ตัดสิน (โค้ดลงมือเฉพาะ slip/damage · other = ปล่อยตามที่ AI ตอบ)
+  if (imageContent) {
+    await handleImageIntent(userId, geminiOutput.imageIntent, geminiOutput.imageNote, imageContent, config, switches);
+  }
+
   if (switches.orders && effectiveOrderAction !== "none") {
-    const effectiveSlipPathname = slipPathname ?? customer?.lastSlipPathname ?? undefined;
-    await handleOrderAction(userId, effectiveOrderAction, geminiOutput.orderData, config, effectiveSlipPathname);
+    await handleOrderAction(userId, effectiveOrderAction, geminiOutput.orderData, customer?.lastSlipPathname ?? undefined);
   }
 
   if (effectiveHandoff) {
@@ -375,20 +431,11 @@ async function handleImageMessage(
   config: AppConfig,
   switches: FeatureSwitches,
 ): Promise<void> {
-  let slipPathname: string | undefined;
-  let imageForGemini: GeminiImageInput | undefined;
-
-  if (switches.orders) {
-    const content = await downloadMessageContent(messageId);
-    if (content) {
-      const uploaded = await uploadSlip(userId, content.buffer, content.contentType);
-      slipPathname = uploaded?.pathname;
-      imageForGemini = { mimeType: content.contentType, base64Data: content.buffer.toString("base64") };
-    }
-  }
-
-  const placeholderText = switches.orders ? "[ลูกค้าส่งรูปสลิป/หลักฐานการโอนมา]" : "[ลูกค้าส่งรูปมา]";
-  await processMessage(userId, placeholderText, replyToken, config, switches, imageForGemini, slipPathname);
+  // รูปคือ "ข้อความอีกรูปแบบ" — โหลดเสมอ (ไม่ผูกกับสวิตช์ orders) แล้วส่งให้ Gemini พร้อมบริบทครบชุด
+  // ไม่อัปโหลด/ยิงกลุ่มตรงนี้ — รอ AI ตัดสิน image_intent ก่อน (โค้ดค่อยลงมือเฉพาะ slip/damage)
+  const content = await downloadMessageContent(messageId);
+  const placeholderText = content ? "[ลูกค้าส่งรูปมา]" : "[ลูกค้าส่งรูปมาแต่โหลดรูปไม่สำเร็จ]";
+  await processMessage(userId, placeholderText, replyToken, config, switches, content ?? undefined);
 }
 
 // ---- คำสั่งในกลุ่มแอดมิน (ปิด/เปิดบอท ต่อคน · ทั้งหมด · รายชื่อล่าสุด) ----

@@ -23,6 +23,9 @@ export interface GeminiTurnInput {
 
 export type OrderAction = "none" | "slip_received" | "cod_confirmed" | "address_collected";
 
+/** เจตนาของรูปที่ลูกค้าส่งมา (AI ตีความจาก stage+บริบท) — code ลงมือเฉพาะ slip/damage */
+export type ImageIntent = "slip" | "damage" | "other";
+
 export interface GeminiTurnOutput {
   reply: string;
   stage: string;
@@ -31,6 +34,10 @@ export interface GeminiTurnOutput {
   handoffReason: string;
   orderAction: OrderAction;
   orderData: Record<string, string>;
+  /** ใช้เฉพาะเทิร์นที่มีรูป · เทิร์นข้อความล้วน AI จะตอบ "other" */
+  imageIntent: ImageIntent;
+  /** สิ่งที่ AI อ่านได้จากรูป (สลิป: ยอด/ธนาคาร/เวลา · อื่นๆ: สรุปสั้นๆ) */
+  imageNote: string;
 }
 
 const RESPONSE_SCHEMA = {
@@ -58,8 +65,20 @@ const RESPONSE_SCHEMA = {
         การชำระเงิน: { type: Type.STRING },
       },
     },
+    image_intent: { type: Type.STRING },
+    image_note: { type: Type.STRING },
   },
-  required: ["reply", "stage", "tags_add", "handoff", "handoff_reason", "order_action", "order_data"],
+  required: [
+    "reply",
+    "stage",
+    "tags_add",
+    "handoff",
+    "handoff_reason",
+    "order_action",
+    "order_data",
+    "image_intent",
+    "image_note",
+  ],
 };
 
 let client: GoogleGenAI | null = null;
@@ -80,11 +99,17 @@ function fallback(stage: string): GeminiTurnOutput {
     handoffReason: "",
     orderAction: "none",
     orderData: {},
+    imageIntent: "other",
+    imageNote: "",
   };
 }
 
 function isValidOrderAction(value: unknown): value is OrderAction {
   return value === "none" || value === "slip_received" || value === "cod_confirmed" || value === "address_collected";
+}
+
+function isValidImageIntent(value: unknown): value is ImageIntent {
+  return value === "slip" || value === "damage" || value === "other";
 }
 
 export async function runSalesTurn(input: GeminiTurnInput): Promise<GeminiTurnOutput> {
@@ -157,6 +182,8 @@ export async function runSalesTurn(input: GeminiTurnInput): Promise<GeminiTurnOu
         parsed.order_data && typeof parsed.order_data === "object" && !Array.isArray(parsed.order_data)
           ? (parsed.order_data as Record<string, string>)
           : {},
+      imageIntent: isValidImageIntent(parsed.image_intent) ? parsed.image_intent : "other",
+      imageNote: typeof parsed.image_note === "string" ? parsed.image_note : "",
     };
   } catch (error) {
     console.error(JSON.stringify({ scope: "gemini", warning: "request failed", error: String(error) }));
