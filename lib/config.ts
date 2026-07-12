@@ -42,8 +42,6 @@ export interface AppConfig {
   adminSilenceReturnMinutes: number;
   /** ประโยคเปลี่ยนมือ_บอทรับต่อ — ข้อความบอกลูกค้าตอนบอทรับช่วงต่อจากแอดมิน */
   botResumeMessage: string;
-  /** คำสั่งแอดมินในกลุ่มเพื่อคืนสิทธิ์บอทด้วยมือ (ไม่มีในชีต ใช้ค่า default) */
-  releaseKeyword: string;
   /** เปิด_คำสั่งเทสต์ — คุม /reset ฯลฯ · default เปิด ปิดตอนขายจริง */
   testCommandsEnabled: boolean;
   /**
@@ -217,7 +215,6 @@ export async function getConfig(): Promise<AppConfig> {
       .filter(Boolean),
     adminSilenceReturnMinutes: numOf(45, "คืนสิทธิ์บอท_หลังแชทเงียบ", "คืนสิทธิ์บอท_หลังแชทเงียบ_นาที"),
     botResumeMessage: strOf("ปลาทูมาดูแลต่อเองนะคะ", "ประโยคเปลี่ยนมือ_บอทรับต่อ"),
-    releaseKeyword: "คืนบอท",
     testCommandsEnabled: boolOf(true, "เปิด_คำสั่งเทสต์", "เปิด_คำสั่งเทส"),
     quotaSaver: boolOf(true, "โหมดประหยัดโควตา"),
     rawSwitches,

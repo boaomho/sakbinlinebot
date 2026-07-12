@@ -155,31 +155,33 @@ async function handleOrderAction(
   config: AppConfig,
   slipPathname: string | undefined,
 ): Promise<void> {
-  const orderGroupId = process.env.ORDER_GROUP_ID;
+  // สลิป/CF COD = ขอเช็คยอด → เข้ากลุ่มแอดมิน (ADMIN_GROUP_ID) ไม่ใช่กลุ่มแพ็คของ
+  // (ORDER_GROUP_ID รับเฉพาะออเดอร์ที่คอนเฟิร์มแล้วจาก cron/orders)
+  const adminGroupId = process.env.ADMIN_GROUP_ID;
   const productAndQty = formatProductAndQty(orderData);
 
   if (action === "slip_received") {
-    if (!orderGroupId) return;
+    if (!adminGroupId) return;
     const name = await getProfileName(userId);
     const text = `💰 มีลูกค้าส่งสลิปมาค่ะ\n${productAndQty}\n\nLineOA: ${name}`;
     const signedUrl = slipPathname ? await getSlipSignedUrl(slipPathname, config.slipUrlExpiryDays) : null;
     if (signedUrl) {
-      await pushRawMessages(orderGroupId, [
+      await pushRawMessages(adminGroupId, [
         { type: "text", text },
         { type: "image", originalContentUrl: signedUrl, previewImageUrl: signedUrl },
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ] as any);
     } else {
-      await pushRawText(orderGroupId, text);
+      await pushRawText(adminGroupId, text);
     }
     return;
   }
 
   if (action === "cod_confirmed") {
-    if (!orderGroupId) return;
+    if (!adminGroupId) return;
     const name = await getProfileName(userId);
     const text = `📦 ขอ CF COD ค่ะ\n${productAndQty}\n\nLineOA: ${name}`;
-    await pushRawText(orderGroupId, text);
+    await pushRawText(adminGroupId, text);
     return;
   }
 
@@ -232,6 +234,8 @@ async function processMessage(
     if (customer.humanMode) {
       // คืนสิทธิ์บอทเมื่อ "แชทเงียบ" เกิน N นาที — วัดจาก last_seen เดิม (ก่อนข้อความนี้)
       // ที่ ensureCustomer คืนค่ามาให้ (ยังเป็นเวลาก่อนอัปเดต) ตรงกับ Config `คืนสิทธิ์บอท_หลังแชทเงียบ`
+      // ใช้ last_seen ไม่ใช่ human_mode_since: ให้แอดมินคุยกับลูกค้าได้ไม่จำกัดเวลา พอเงียบจริง 45 นาที
+      // (จบเคสแล้ว) บอทค่อยกลับมา — กันบอทเด้งแทรกกลางวงสนทนาที่แอดมินยังคุยอยู่
       const silentMs = Date.now() - customer.lastSeen.getTime();
       if (silentMs >= config.adminSilenceReturnMinutes * 60 * 1000) {
         await setHumanMode(userId, false);
