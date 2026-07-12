@@ -74,6 +74,7 @@ async function pushHandoffNotice(
   userMessage: string,
   reason: string,
   path: "keyword-precheck" | "ai-semantic",
+  releaseKeyword: string,
 ): Promise<void> {
   const adminGroupId = process.env.ADMIN_GROUP_ID;
   if (!adminGroupId) {
@@ -83,7 +84,14 @@ async function pushHandoffNotice(
 
   try {
     const name = await getProfileName(userId);
-    const text = `🔔 ส่งต่อแอดมิน\nลูกค้า: ${name}\nuserId: ${userId}\nเหตุผล: ${reason}\nข้อความล่าสุด: ${userMessage}`;
+    // userId อยู่บรรทัดล่างสุดในรูปคำสั่งพร้อมก๊อป (แอดมินพิมพ์คืนบอทกลับ) แยกด้วยเส้นคั่น
+    const text =
+      `🔔 ส่งต่อแอดมิน\n` +
+      `ลูกค้า: ${name}\n` +
+      `เหตุผล: ${reason}\n` +
+      `ข้อความล่าสุด: ${userMessage}\n` +
+      `———\n` +
+      `คืนบอท: ${releaseKeyword} ${userId}`;
     const ok = await pushRawText(adminGroupId, text);
     if (!ok) {
       console.warn(JSON.stringify({ scope: "handoff", path, warning: "push to admin group failed" }));
@@ -113,7 +121,7 @@ async function runHandoffFlow(
   const sent = await replyMessages(replyToken, finalReply, config.quotaSaver);
   if (!sent) await pushMessages(userId, finalReply, config.quotaSaver);
 
-  await pushHandoffNotice(userId, userMessage, reason, "keyword-precheck");
+  await pushHandoffNotice(userId, userMessage, reason, "keyword-precheck", config.releaseKeyword);
 }
 
 function formatProductAndQty(orderData: Record<string, string>): string {
@@ -288,7 +296,13 @@ async function processMessage(
   }
 
   if (effectiveHandoff) {
-    await pushHandoffNotice(userId, userMessage, geminiOutput.handoffReason || "AI ประเมินว่าควรส่งต่อ", "ai-semantic");
+    await pushHandoffNotice(
+      userId,
+      userMessage,
+      geminiOutput.handoffReason || "AI ประเมินว่าควรส่งต่อ",
+      "ai-semantic",
+      config.releaseKeyword,
+    );
     if (switches.memory) await setHumanMode(userId, true);
   }
 }
