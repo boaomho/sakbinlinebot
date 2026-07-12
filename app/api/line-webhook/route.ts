@@ -389,6 +389,17 @@ async function handleResetCommand(userId: string, replyToken: string, switches: 
 
 async function handleEvent(event: webhook.Event, config: AppConfig, switches: FeatureSwitches): Promise<void> {
   try {
+    // TEMP DEBUG: ดูว่าแอดมินแทรกตอบจากหน้า OA Manager แล้ว webhook ได้ event/mode อะไร — ลบออกหลังสรุปผล
+    console.log(
+      "MODE_DEBUG:",
+      JSON.stringify({
+        mode: (event as { mode?: string }).mode,
+        type: event.type,
+        source: event.source,
+        hasReplyToken: !!(event as { replyToken?: string }).replyToken,
+      }),
+    );
+
     if (event.type !== "message") return;
     const replyToken = event.replyToken;
     if (!replyToken) return;
