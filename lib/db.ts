@@ -27,10 +27,15 @@ export async function ensureSchema(): Promise<void> {
       human_mode_since TIMESTAMPTZ,
       is_returning BOOLEAN NOT NULL DEFAULT false,
       last_slip_pathname TEXT,
+      display_name TEXT,
+      resume_notice_pending BOOLEAN NOT NULL DEFAULT false,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `;
   await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS last_slip_pathname TEXT`;
+  await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS display_name TEXT`;
+  await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS resume_notice_pending BOOLEAN NOT NULL DEFAULT false`;
+  await sql`CREATE INDEX IF NOT EXISTS customers_last_seen_idx ON customers (last_seen DESC)`;
   await sql`
     CREATE TABLE IF NOT EXISTS messages (
       id BIGSERIAL PRIMARY KEY,
@@ -79,6 +84,15 @@ export async function ensureSchema(): Promise<void> {
   `;
   await sql`CREATE INDEX IF NOT EXISTS pending_messages_user_id_idx ON pending_messages (user_id, id)`;
 
+  // รายการตัวเลือกชั่วคราวของคำสั่งแอดมิน (ชื่อซ้ำ/รายชื่อล่าสุด) — 1 แถวต่อ 1 กลุ่ม
+  await sql`
+    CREATE TABLE IF NOT EXISTS admin_pending_choices (
+      group_id TEXT PRIMARY KEY,
+      choices JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+
   schemaReady = true;
 }
 
@@ -91,6 +105,8 @@ export interface CustomerState {
   humanModeSince: Date | null;
   isReturning: boolean;
   lastSlipPathname: string | null;
+  displayName: string | null;
+  resumeNoticePending: boolean;
   createdAt: Date;
 }
 
@@ -101,6 +117,8 @@ function rowToCustomer(r: Record<string, unknown>): CustomerState {
     tags: (r.tags as string[] | null) ?? [],
     lastSeen: r.last_seen as Date,
     lastSlipPathname: (r.last_slip_pathname as string | null) ?? null,
+    displayName: (r.display_name as string | null) ?? null,
+    resumeNoticePending: Boolean(r.resume_notice_pending),
     humanMode: Boolean(r.human_mode),
     humanModeSince: (r.human_mode_since as Date | null) ?? null,
     isReturning: Boolean(r.is_returning),
@@ -146,6 +164,8 @@ function emptyCustomer(userId: string): CustomerState {
     humanModeSince: null,
     isReturning: false,
     lastSlipPathname: null,
+    displayName: null,
+    resumeNoticePending: false,
     createdAt: new Date(),
   };
 }
@@ -172,14 +192,136 @@ export async function updateCustomerAfterTurn(
   }
 }
 
+/**
+ * เข้า/ออกโหมดแอดมินดูแลเอง (human_mode) ต่อ 1 ลูกค้า
+ * on=true → arm resume_notice_pending ด้วย (ให้บอทเกริ่นประโยคเปลี่ยนมือ 1 ครั้งตอนกลับมา)
+ * on=false → ไม่แตะ flag (คงไว้ให้ส่งประโยคตอนลูกค้าพิมพ์ครั้งถัดไป)
+ */
 export async function setHumanMode(userId: string, on: boolean): Promise<void> {
   await ensureSchema();
   const sql = getSql();
   if (on) {
-    await sql`UPDATE customers SET human_mode = true, human_mode_since = now() WHERE user_id = ${userId}`;
+    await sql`
+      UPDATE customers
+      SET human_mode = true, human_mode_since = now(), resume_notice_pending = true
+      WHERE user_id = ${userId}
+    `;
   } else {
     await sql`UPDATE customers SET human_mode = false, human_mode_since = NULL WHERE user_id = ${userId}`;
   }
+}
+
+/** ปิด/เปิดบอทยกกลุ่ม (ทุกลูกค้า) — คืนจำนวนที่เปลี่ยนสถานะจริง */
+export async function setHumanModeAll(on: boolean): Promise<number> {
+  await ensureSchema();
+  const sql = getSql();
+  if (on) {
+    const rows = await sql`
+      UPDATE customers
+      SET human_mode = true, human_mode_since = now(), resume_notice_pending = true
+      WHERE human_mode = false
+      RETURNING user_id
+    `;
+    return rows.length;
+  }
+  const rows = await sql`
+    UPDATE customers
+    SET human_mode = false, human_mode_since = NULL
+    WHERE human_mode = true
+    RETURNING user_id
+  `;
+  return rows.length;
+}
+
+export async function clearResumeNotice(userId: string): Promise<void> {
+  await ensureSchema();
+  const sql = getSql();
+  await sql`UPDATE customers SET resume_notice_pending = false WHERE user_id = ${userId}`;
+}
+
+/** อัปเดตชื่อ LINE ที่เก็บไว้ (ใช้ค้นหาในคำสั่งแอดมิน) — เรียกเมื่อได้ชื่อจริงจาก LINE profile */
+export async function updateDisplayName(userId: string, displayName: string): Promise<void> {
+  await ensureSchema();
+  const sql = getSql();
+  await sql`UPDATE customers SET display_name = ${displayName} WHERE user_id = ${userId}`;
+}
+
+export interface CustomerBrief {
+  userId: string;
+  displayName: string | null;
+  lastSeen: Date;
+  humanMode: boolean;
+}
+
+function rowToBrief(r: Record<string, unknown>): CustomerBrief {
+  return {
+    userId: r.user_id as string,
+    displayName: (r.display_name as string | null) ?? null,
+    lastSeen: r.last_seen as Date,
+    humanMode: Boolean(r.human_mode),
+  };
+}
+
+/** ดึงลูกค้าที่มีชื่อ (ไว้ค้นแบบยืดหยุ่นในโค้ด) เรียงคุยล่าสุดก่อน จำกัดจำนวนกันดึงเยอะเกิน */
+export async function getCustomersWithName(limit = 500): Promise<CustomerBrief[]> {
+  await ensureSchema();
+  const sql = getSql();
+  const rows = await sql`
+    SELECT user_id, display_name, last_seen, human_mode FROM customers
+    WHERE display_name IS NOT NULL AND display_name <> ''
+    ORDER BY last_seen DESC
+    LIMIT ${limit}
+  `;
+  return (rows as Array<Record<string, unknown>>).map(rowToBrief);
+}
+
+/** ลูกค้าที่คุยล่าสุด N คน (คำสั่ง "รายชื่อล่าสุด") */
+export async function getRecentCustomers(limit = 10): Promise<CustomerBrief[]> {
+  await ensureSchema();
+  const sql = getSql();
+  const rows = await sql`
+    SELECT user_id, display_name, last_seen, human_mode FROM customers
+    ORDER BY last_seen DESC
+    LIMIT ${limit}
+  `;
+  return (rows as Array<Record<string, unknown>>).map(rowToBrief);
+}
+
+// ---- admin pending choices (ชื่อซ้ำ / รายชื่อล่าสุด · หมดอายุ 1 นาที) ----
+
+export interface PendingChoice {
+  n: number;
+  userId: string;
+  name: string;
+}
+
+export async function savePendingChoices(groupId: string, choices: PendingChoice[]): Promise<void> {
+  await ensureSchema();
+  const sql = getSql();
+  await sql`
+    INSERT INTO admin_pending_choices (group_id, choices, created_at)
+    VALUES (${groupId}, ${JSON.stringify(choices)}::jsonb, now())
+    ON CONFLICT (group_id) DO UPDATE SET choices = EXCLUDED.choices, created_at = now()
+  `;
+}
+
+/** คืนรายการตัวเลือกถ้ายังไม่หมดอายุ (ภายใน maxAgeMs) · หมดอายุ/ไม่มี → null */
+export async function getPendingChoices(groupId: string, maxAgeMs: number): Promise<PendingChoice[] | null> {
+  await ensureSchema();
+  const sql = getSql();
+  const rows = await sql`SELECT choices, created_at FROM admin_pending_choices WHERE group_id = ${groupId}`;
+  if (rows.length === 0) return null;
+  const row = rows[0] as Record<string, unknown>;
+  const createdAt = new Date(row.created_at as string).getTime();
+  if (Date.now() - createdAt > maxAgeMs) return null;
+  const choices = row.choices as PendingChoice[];
+  return Array.isArray(choices) ? choices : null;
+}
+
+export async function clearPendingChoices(groupId: string): Promise<void> {
+  await ensureSchema();
+  const sql = getSql();
+  await sql`DELETE FROM admin_pending_choices WHERE group_id = ${groupId}`;
 }
 
 export async function setLastSlipPathname(userId: string, pathname: string): Promise<void> {

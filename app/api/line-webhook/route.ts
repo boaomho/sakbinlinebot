@@ -13,6 +13,9 @@ import {
   ensureCustomer,
   updateCustomerAfterTurn,
   setHumanMode,
+  setHumanModeAll,
+  clearResumeNotice,
+  updateDisplayName,
   setLastSlipPathname,
   resetCustomerMemory,
   addMessage,
@@ -22,7 +25,15 @@ import {
   getLatestPendingId,
   collectAndClearPendingMessages,
   logFunnelEvent,
+  getCustomer,
+  getCustomersWithName,
+  getRecentCustomers,
+  savePendingChoices,
+  getPendingChoices,
+  clearPendingChoices,
   CustomerState,
+  CustomerBrief,
+  PendingChoice,
 } from "@/lib/db";
 import { runSalesTurn, GeminiImageInput, OrderAction } from "@/lib/gemini";
 import {
@@ -35,6 +46,14 @@ import {
   getProfileName,
 } from "@/lib/line";
 import { checkHandoffKeywords } from "@/lib/handoff";
+import {
+  parseAdminCommand,
+  matchCustomersByName,
+  formatThaiRelative,
+  isUserId,
+  isChoiceNumber,
+  PENDING_CHOICES_TTL_MS,
+} from "@/lib/admin-commands";
 import { uploadSlip, getSlipSignedUrl } from "@/lib/blob";
 import { appendOrderRow } from "@/lib/orders";
 
@@ -74,7 +93,6 @@ async function pushHandoffNotice(
   userMessage: string,
   reason: string,
   path: "keyword-precheck" | "ai-semantic",
-  releaseKeyword: string,
 ): Promise<void> {
   const adminGroupId = process.env.ADMIN_GROUP_ID;
   if (!adminGroupId) {
@@ -84,14 +102,16 @@ async function pushHandoffNotice(
 
   try {
     const name = await getProfileName(userId);
-    // userId อยู่บรรทัดล่างสุดในรูปคำสั่งพร้อมก๊อป (แอดมินพิมพ์คืนบอทกลับ) แยกด้วยเส้นคั่น
+    // เก็บชื่อลง Neon ด้วย เพื่อให้คำสั่ง ปิดบอท/เปิดบอท <ชื่อ> หาเจอ (userId อยู่เบื้องหลัง ไม่โชว์)
+    if (name && name !== userId) await updateDisplayName(userId, name);
     const text =
       `🔔 ส่งต่อแอดมิน\n` +
       `ลูกค้า: ${name}\n` +
       `เหตุผล: ${reason}\n` +
       `ข้อความล่าสุด: ${userMessage}\n` +
       `———\n` +
-      `คืนบอท: ${releaseKeyword} ${userId}`;
+      `ปิดบอท: ปิดบอท ${name}\n` +
+      `เปิดบอท: เปิดบอท ${name}`;
     const ok = await pushRawText(adminGroupId, text);
     if (!ok) {
       console.warn(JSON.stringify({ scope: "handoff", path, warning: "push to admin group failed" }));
@@ -121,7 +141,7 @@ async function runHandoffFlow(
   const sent = await replyMessages(replyToken, finalReply, config.quotaSaver);
   if (!sent) await pushMessages(userId, finalReply, config.quotaSaver);
 
-  await pushHandoffNotice(userId, userMessage, reason, "keyword-precheck", config.releaseKeyword);
+  await pushHandoffNotice(userId, userMessage, reason, "keyword-precheck");
 }
 
 function formatProductAndQty(orderData: Record<string, string>): string {
@@ -196,10 +216,19 @@ async function processMessage(
   slipPathname?: string,
 ): Promise<void> {
   let customer: CustomerState | null = null;
-  let justResumed = false;
 
   if (switches.memory) {
     customer = await ensureCustomer(userId);
+
+    // เก็บชื่อ LINE ไว้ค้นในคำสั่งแอดมิน (ครั้งแรกที่ยังไม่มีชื่อ) — getProfile ไม่คิดค่า push
+    if (!customer.displayName) {
+      const name = await getProfileName(userId);
+      if (name && name !== userId) {
+        await updateDisplayName(userId, name);
+        customer = { ...customer, displayName: name };
+      }
+    }
+
     if (customer.humanMode) {
       // คืนสิทธิ์บอทเมื่อ "แชทเงียบ" เกิน N นาที — วัดจาก last_seen เดิม (ก่อนข้อความนี้)
       // ที่ ensureCustomer คืนค่ามาให้ (ยังเป็นเวลาก่อนอัปเดต) ตรงกับ Config `คืนสิทธิ์บอท_หลังแชทเงียบ`
@@ -207,7 +236,7 @@ async function processMessage(
       if (silentMs >= config.adminSilenceReturnMinutes * 60 * 1000) {
         await setHumanMode(userId, false);
         customer = { ...customer, humanMode: false, humanModeSince: null };
-        justResumed = true;
+        // resume_notice_pending ยัง true (arm ตอนเข้า human_mode) → จะไปเกริ่นประโยคเปลี่ยนมือตอนสร้าง reply
       } else {
         await addMessage(userId, "user", userMessage);
         return; // แอดมินกำลังดูแลลูกค้ารายนี้อยู่ ไม่ตอบอัตโนมัติ
@@ -272,17 +301,19 @@ async function processMessage(
   const effectiveHandoff = switches.handoff ? geminiOutput.handoff : false;
   const effectiveOrderAction: OrderAction = switches.orders ? geminiOutput.orderAction : "none";
 
-  // เพิ่งคืนสิทธิ์บอทจากแอดมิน (แชทเงียบครบเวลา) → เกริ่นด้วยประโยคเปลี่ยนมือก่อน 1 บับเบิล
-  const finalReply =
-    justResumed && config.botResumeMessage
-      ? `${config.botResumeMessage}[[เว้น]]${geminiOutput.reply}`
-      : geminiOutput.reply;
+  // บอทเพิ่งกลับมาดูแล (auto-timeout หรือแอดมินสั่งเปิดบอท) → เกริ่นประโยคเปลี่ยนมือก่อน 1 บับเบิล
+  // ส่งครั้งเดียว: flag arm ตอนเข้า human_mode, ล้างหลังส่ง (ข้อความถัดไปไม่ส่งซ้ำ)
+  const shouldNotifyResume = Boolean(switches.memory && customer?.resumeNoticePending && config.botResumeMessage);
+  const finalReply = shouldNotifyResume
+    ? `${config.botResumeMessage}[[เว้น]]${geminiOutput.reply}`
+    : geminiOutput.reply;
 
   if (switches.memory) {
     await addMessage(userId, "user", userMessage);
     await addMessage(userId, "assistant", geminiOutput.reply);
     await updateCustomerAfterTurn(userId, { stage: geminiOutput.stage, tagsAdd: effectiveTagsAdd });
     await logFunnelEvent(userId, previousStage, geminiOutput.stage);
+    if (shouldNotifyResume) await clearResumeNotice(userId);
   }
 
   const sent = await replyMessages(replyToken, finalReply, config.quotaSaver);
@@ -296,13 +327,7 @@ async function processMessage(
   }
 
   if (effectiveHandoff) {
-    await pushHandoffNotice(
-      userId,
-      userMessage,
-      geminiOutput.handoffReason || "AI ประเมินว่าควรส่งต่อ",
-      "ai-semantic",
-      config.releaseKeyword,
-    );
+    await pushHandoffNotice(userId, userMessage, geminiOutput.handoffReason || "AI ประเมินว่าควรส่งต่อ", "ai-semantic");
     if (switches.memory) await setHumanMode(userId, true);
   }
 }
@@ -362,13 +387,163 @@ async function handleImageMessage(
   await processMessage(userId, placeholderText, replyToken, config, switches, imageForGemini, slipPathname);
 }
 
-async function handleAdminGroupCommand(text: string, config: AppConfig, switches: FeatureSwitches): Promise<void> {
-  if (!switches.memory) return;
-  const trimmed = text.trim();
-  if (!trimmed.startsWith(config.releaseKeyword)) return;
-  const userId = trimmed.slice(config.releaseKeyword.length).trim();
-  if (!userId) return;
-  await setHumanMode(userId, false);
+// ---- คำสั่งในกลุ่มแอดมิน (ปิด/เปิดบอท ต่อคน · ทั้งหมด · รายชื่อล่าสุด) ----
+
+/** ตอบกลับในกลุ่มแอดมิน — ใช้ reply token (ฟรี) ก่อน ถ้าหมดอายุค่อย push */
+async function replyToAdmin(replyToken: string, groupId: string, text: string): Promise<void> {
+  const sent = await replyMessages(replyToken, text);
+  if (!sent) await pushRawText(groupId, text);
+}
+
+async function applyBotMode(
+  userId: string,
+  name: string,
+  close: boolean,
+  replyToken: string,
+  groupId: string,
+  config: AppConfig,
+): Promise<void> {
+  await setHumanMode(userId, close);
+  if (close) {
+    await replyToAdmin(
+      replyToken,
+      groupId,
+      `🔴 ปิดบอทให้ "${name}" แล้ว\nบอทจะกลับมาเองเมื่อลูกค้าเงียบครบ ${config.adminSilenceReturnMinutes} นาที หรือพิมพ์: เปิดบอท ${name}`,
+    );
+  } else {
+    await replyToAdmin(replyToken, groupId, `🟢 เปิดบอทให้ "${name}" แล้ว`);
+  }
+}
+
+function buildDisambigMessage(query: string, matches: CustomerBrief[], verb: string): string {
+  const lines = matches.map((m, i) => `${i + 1}) ${m.displayName ?? "(ไม่มีชื่อ)"} — คุยล่าสุด ${formatThaiRelative(m.lastSeen)}`);
+  return (
+    `⚠️ เจอลูกค้าชื่อ "${query}" ${matches.length} คน — เลือกคนที่ต้องการ\n\n` +
+    `${lines.join("\n")}\n\n` +
+    `พิมพ์เลขข้อต่อท้ายคำสั่ง เช่น: ${verb} 1\n` +
+    `(รายการนี้มีอายุ 1 นาที หลังจากนั้นต้องพิมพ์คำสั่งใหม่)`
+  );
+}
+
+function buildNotFoundMessage(query: string): string {
+  return (
+    `❌ ไม่พบลูกค้าชื่อ "${query}" ในระบบ\n\n` +
+    `อาจเป็นเพราะลูกค้าเปลี่ยนชื่อ LINE หรือยังไม่เคยคุยกับปลาทู\n\n` +
+    `ลองวิธีนี้:\n` +
+    `• พิมพ์แค่บางส่วนของชื่อ เช่น: ปิดบอท Bee\n` +
+    `• หรือดูรายชื่อลูกค้าที่คุยล่าสุด: พิมพ์ "รายชื่อล่าสุด"`
+  );
+}
+
+async function handleCloseOpenCommand(
+  arg: string,
+  verb: string,
+  close: boolean,
+  replyToken: string,
+  groupId: string,
+  config: AppConfig,
+): Promise<void> {
+  if (!arg) {
+    await replyToAdmin(replyToken, groupId, `พิมพ์: ${verb} <ชื่อลูกค้า>\nหรือดูรายชื่อก่อน: รายชื่อล่าสุด`);
+    return;
+  }
+
+  // เลขข้อ → เลือกจากรายการที่ค้างไว้ (ชื่อซ้ำ/รายชื่อล่าสุด)
+  if (isChoiceNumber(arg)) {
+    const choices = await getPendingChoices(groupId, PENDING_CHOICES_TTL_MS);
+    if (!choices) {
+      await replyToAdmin(replyToken, groupId, "รายการหมดอายุแล้ว พิมพ์คำสั่งใหม่อีกครั้ง");
+      return;
+    }
+    const pick = choices.find((c) => c.n === Number(arg));
+    if (!pick) {
+      await replyToAdmin(replyToken, groupId, `ไม่มีข้อ ${arg} ในรายการ พิมพ์คำสั่งใหม่อีกครั้ง`);
+      return;
+    }
+    await applyBotMode(pick.userId, pick.name || "(ไม่มีชื่อ)", close, replyToken, groupId, config);
+    await clearPendingChoices(groupId);
+    return;
+  }
+
+  // userId เต็ม → ทำเลย (fallback สำหรับก๊อปจาก log)
+  if (isUserId(arg)) {
+    const c = await getCustomer(arg);
+    await applyBotMode(arg, c?.displayName ?? arg, close, replyToken, groupId, config);
+    return;
+  }
+
+  // ชื่อ → ค้นแบบยืดหยุ่น
+  const candidates = await getCustomersWithName();
+  const matches = matchCustomersByName(candidates, arg);
+  if (matches.length === 0) {
+    await replyToAdmin(replyToken, groupId, buildNotFoundMessage(arg));
+    return;
+  }
+  if (matches.length === 1) {
+    await applyBotMode(matches[0].userId, matches[0].displayName ?? arg, close, replyToken, groupId, config);
+    return;
+  }
+  const choices: PendingChoice[] = matches.slice(0, 10).map((m, i) => ({ n: i + 1, userId: m.userId, name: m.displayName ?? "" }));
+  await savePendingChoices(groupId, choices);
+  await replyToAdmin(replyToken, groupId, buildDisambigMessage(arg, matches.slice(0, 10), verb));
+}
+
+async function handleListRecentCommand(replyToken: string, groupId: string): Promise<void> {
+  const recent = await getRecentCustomers(10);
+  if (recent.length === 0) {
+    await replyToAdmin(replyToken, groupId, "ยังไม่มีลูกค้าในระบบ");
+    return;
+  }
+  const choices: PendingChoice[] = recent.map((m, i) => ({ n: i + 1, userId: m.userId, name: m.displayName ?? "" }));
+  await savePendingChoices(groupId, choices);
+  const lines = recent.map((m, i) => {
+    const status = m.humanMode ? "🔴" : "🟢";
+    return `${i + 1}) ${status} ${m.displayName ?? "(ไม่มีชื่อ)"} — คุยล่าสุด ${formatThaiRelative(m.lastSeen)}`;
+  });
+  await replyToAdmin(
+    replyToken,
+    groupId,
+    `รายชื่อลูกค้าที่คุยล่าสุด (🔴=บอทปิดอยู่ · 🟢=บอทดูแลอยู่)\n\n${lines.join("\n")}\n\nพิมพ์: ปิดบอท 1 หรือ เปิดบอท 1 (รายการมีอายุ 1 นาที)`,
+  );
+}
+
+async function handleAdminGroupCommand(
+  text: string,
+  replyToken: string,
+  groupId: string,
+  config: AppConfig,
+  switches: FeatureSwitches,
+): Promise<void> {
+  if (!switches.memory) return; // ต้องมี Neon ถึงจะจัดการ human_mode ได้
+  const cmd = parseAdminCommand(text);
+
+  switch (cmd.kind) {
+    case "none":
+      return; // ไม่ใช่คำสั่ง เพิกเฉย (ไม่รบกวนการแชทในกลุ่ม)
+    case "close_all": {
+      const n = await setHumanModeAll(true);
+      await replyToAdmin(
+        replyToken,
+        groupId,
+        `🔴 ปิดบอททั้งหมดแล้ว (${n} คน)\nบอทจะกลับมาเองเมื่อลูกค้าแต่ละคนเงียบครบ ${config.adminSilenceReturnMinutes} นาที หรือพิมพ์: เปิดบอททั้งหมด`,
+      );
+      return;
+    }
+    case "open_all": {
+      const n = await setHumanModeAll(false);
+      await replyToAdmin(replyToken, groupId, `🟢 เปิดบอททั้งหมดแล้ว (${n} คน)`);
+      return;
+    }
+    case "list":
+      await handleListRecentCommand(replyToken, groupId);
+      return;
+    case "close":
+      await handleCloseOpenCommand(cmd.arg, cmd.verb, true, replyToken, groupId, config);
+      return;
+    case "open":
+      await handleCloseOpenCommand(cmd.arg, cmd.verb, false, replyToken, groupId, config);
+      return;
+  }
 }
 
 const RESET_COMMAND = "/reset";
@@ -389,27 +564,17 @@ async function handleResetCommand(userId: string, replyToken: string, switches: 
 
 async function handleEvent(event: webhook.Event, config: AppConfig, switches: FeatureSwitches): Promise<void> {
   try {
-    // TEMP DEBUG: ดูว่าแอดมินแทรกตอบจากหน้า OA Manager แล้ว webhook ได้ event/mode อะไร — ลบออกหลังสรุปผล
-    console.log(
-      "MODE_DEBUG:",
-      JSON.stringify({
-        mode: (event as { mode?: string }).mode,
-        type: event.type,
-        source: event.source,
-        hasReplyToken: !!(event as { replyToken?: string }).replyToken,
-      }),
-    );
-
     if (event.type !== "message") return;
     const replyToken = event.replyToken;
     if (!replyToken) return;
     if (!event.source) return;
 
-    if (event.source.type === "group" && event.source.groupId === process.env.ADMIN_GROUP_ID) {
-      if (event.message.type === "text") {
-        await handleAdminGroupCommand(event.message.text, config, switches);
+    // คำสั่งแอดมินรับเฉพาะจากกลุ่ม ADMIN_GROUP_ID เท่านั้น (กันคนนอก/กลุ่มอื่นสั่งปิดบอท)
+    if (event.source.type === "group") {
+      if (event.source.groupId === process.env.ADMIN_GROUP_ID && event.message.type === "text") {
+        await handleAdminGroupCommand(event.message.text, replyToken, event.source.groupId, config, switches);
       }
-      return;
+      return; // กลุ่มอื่น (เช่น ORDER_GROUP_ID) เพิกเฉย
     }
 
     if (event.source.type !== "user") return;
