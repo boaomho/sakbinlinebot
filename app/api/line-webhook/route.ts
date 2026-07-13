@@ -17,6 +17,7 @@ import {
   clearResumeNotice,
   updateDisplayName,
   setLastSlipPathname,
+  clearLastSlipPathname,
   resetCustomerMemory,
   addMessage,
   getRecentHistory,
@@ -251,6 +252,8 @@ async function handleOrderAction(
         paymentMethod: orderData["การชำระเงิน"],
         slipPathname,
       });
+      // เขียนแถวสำเร็จ → ล้าง pathname ที่จำไว้ (อยู่ในชีตแล้ว) · ถ้า throw จะไม่ถึงบรรทัดนี้ = ไม่ล้าง (retry ได้)
+      await clearLastSlipPathname(userId);
     } catch (error) {
       console.error(JSON.stringify({ scope: "orders", warning: "appendOrderRow failed", error: String(error) }));
     }

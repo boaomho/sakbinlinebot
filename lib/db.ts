@@ -337,6 +337,13 @@ export async function setLastSlipPathname(userId: string, pathname: string): Pro
   `;
 }
 
+/** ล้าง pathname สลิปที่จำไว้ — เรียกเมื่อเขียนแถวออเดอร์ลงชีตสำเร็จแล้ว (pathname อยู่ในชีตแล้ว ไม่ต้องจำต่อ) */
+export async function clearLastSlipPathname(userId: string): Promise<void> {
+  await ensureSchema();
+  const sql = getSql();
+  await sql`UPDATE customers SET last_slip_pathname = NULL WHERE user_id = ${userId}`;
+}
+
 /**
  * คำสั่งเทสต์ /reset — ล้างความจำเฉพาะ userId ที่พิมพ์เข้ามาเท่านั้น (สถานะ/stage/tags/
  * last_slip_pathname + ประวัติแชท) รวมถึง pending_messages ค้างของ user นั้น กันข้อความ
