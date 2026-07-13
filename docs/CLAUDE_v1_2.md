@@ -12,7 +12,7 @@
 ## หัวใจของบอท — ห้ามทำหลุด
 
 - **กฎเหล็กการตอบ 9 ข้อ** ใน System Prompt คือ DNA การขาย (ตอบครบก่อนขาย · เข้าใจก่อนนำพา · จบทุกเทิร์นด้วยทางเลือก · ห้าม "รับมั้ยคะ" · ห้าม "รบกวน" · เกริ่นก่อนส่งของ · FAQ แล้ววกกลับ funnel · เข้าประตูไหนก็ได้ · **ปิดท้ายด้วยข้อความเสมอ ห้ามจบด้วยรูป**)
-- บอทตอบเป็น **JSON** `{reply, stage, tags_add, handoff, handoff_reason, order_action, order_data}` เท่านั้น (บังคับด้วย responseSchema)
+- บอทตอบเป็น **JSON** `{reply, stage, tags_add, handoff, handoff_reason, order_action, order_data, image_intent, image_note}` เท่านั้น (บังคับด้วย responseSchema)
 - System Prompt แยก 2 ส่วน: **systemInstruction** (กฎ คงที่) + **user content** (ข้อมูล+ข้อความลูกค้า) — ห้ามเอาข้อความลูกค้าไปต่อใน systemInstruction (กัน injection)
 
 ## ฟีเจอร์ที่ build จริง (ทุกตัวอ่านสวิตช์จาก Config + all-or-nothing กับ env)
@@ -24,6 +24,7 @@
 - **จังหวะเหมือนคน** — debounce รวบข้อความผ่าน pending_messages + loading indicator
 - **คำสั่ง human_mode ในกลุ่มแอดมิน** — ปิดบอท/เปิดบอท `<ชื่อ LINE/เลข/userId>` · ปิด/เปิดบอททั้งหมด · รายชื่อล่าสุด (ค้นชื่อ flexible, ชื่อซ้ำ→เลือกเลขข้อ, resume notice)
 - **ระบบออเดอร์ + สลิป** — รับสลิป→Blob private→signed URL→ยิง ADMIN_GROUP_ID (เช็คยอด) · เขียนชีต Orders · cron แจกเลข atomic→ยิง ORDER_GROUP_ID (แพ็ค)
+- **อ่านรูปลูกค้า** — รูปคือ "ข้อความอีกรูปแบบ" ส่งเข้า Gemini พร้อมบริบทครบ (stage/ประวัติ/Step/FAQ) ให้ AI ตัดสิน `image_intent` (slip/damage/other) เอง · โค้ดลงมือเฉพาะ slip (เก็บ+ยิง ADMIN เช็คยอด) / damage (handoff) · other = บทสนทนาปกติ · ไม่ hardcode ลิสต์เคสรูป
 - **ตามลูกค้า (Follow)** — cron ตามลูกค้าเงียบเกิน N วัน (สวิตช์ปิด default)
 - **กัน prompt injection** — แยก user content, sanitize order_data
 - **(dormant) Flex Cards** — builder มีในโค้ดแต่ยังไม่มี call site
@@ -72,6 +73,7 @@ follow/cron: `SHEET_FOLLOW_URL` `CRON_SECRET`
 6. **serverless หลาย invocation** — state ชั่วคราว (debounce, รายการเลือกเลขข้อ) ต้องเก็บ Neon ไม่ใช่ in-memory
 7. **push = เงินจริง** — reply ฟรี, push คิดเงิน · resume notice ใช้ arm-flag ส่งตอนลูกค้าพิมพ์ (reply) ไม่ push เชิงรุก · `quotaSaver` ยุบบับเบิลเป็น reply เดียวกันล้นไป push
 8. **`human_mode` คืนสิทธิ์วัดจาก `last_seen` (แชทเงียบ) หน่วยนาที ไม่ใช่ human_mode_since** — จงใจ: ให้แอดมินคุยได้ไม่จำกัดเวลา พอเงียบจริง 45 นาที (จบเคส) บอทค่อยกลับ · ถ้านับจาก human_mode_since บอทอาจเด้งแทรกกลางวงสนทนา
+9. **รูป = ข้อความอีกรูปแบบ ไม่ใช่ "ทุกรูป=สลิป"** — โค้ดเดิมอัปโหลดทุกรูปเข้า slips store ทันที + placeholder bias ว่าเป็นสลิป + ถ้า orders ปิดก็ไม่ส่งรูปให้ AI (บอทตาบอด) · แก้: ส่งรูปเข้า Gemini **เสมอ**พร้อมบริบท ให้ AI ตัดสิน `image_intent` ก่อน แล้วค่อยอัปโหลด/ยิงกลุ่มเฉพาะ slip/damage · ไม่ hardcode ลิสต์เคสรูป (แจกแจงไม่มีวันครบ) · ไม่แน่ใจ → AI ถามลูกค้า (ไม่เดา ไม่โยนแอดมิน) · สลิปอ่านไม่ชัด → ถือเป็น slip ไว้ก่อน (เรื่องเงินห้ามพลาด)
 
 ## หน้าที่ 2 กลุ่ม (แยกชัดเจน)
 
