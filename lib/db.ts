@@ -327,7 +327,14 @@ export async function clearPendingChoices(groupId: string): Promise<void> {
 export async function setLastSlipPathname(userId: string, pathname: string): Promise<void> {
   await ensureSchema();
   const sql = getSql();
-  await sql`UPDATE customers SET last_slip_pathname = ${pathname} WHERE user_id = ${userId}`;
+  // deterministic เมื่อลูกค้าส่งสลิปหลายใบพร้อมกัน (หลาย invocation แข่งเขียน):
+  // GREATEST เก็บ pathname ที่มากกว่า = ใบล่าสุด (timestamp ในชื่อไฟล์สูงกว่า → string สูงกว่า)
+  // GREATEST ข้าม NULL ให้เอง (ค่าเดิม NULL → ได้ pathname ใหม่)
+  await sql`
+    UPDATE customers
+    SET last_slip_pathname = GREATEST(last_slip_pathname, ${pathname})
+    WHERE user_id = ${userId}
+  `;
 }
 
 /**

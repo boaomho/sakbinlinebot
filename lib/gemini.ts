@@ -38,6 +38,9 @@ export interface GeminiTurnOutput {
   imageIntent: ImageIntent;
   /** สิ่งที่ AI อ่านได้จากรูป (สลิป: ยอด/ธนาคาร/เวลา · อื่นๆ: สรุปสั้นๆ) */
   imageNote: string;
+  /** true = ผลนี้มาจาก fallback (timeout/MAX_TOKENS/parse fail/error) ไม่ใช่คำตอบจริงจาก AI
+   *  ใช้ให้โค้ดรู้ว่า image_intent/order ไม่น่าเชื่อ ต้องปกป้องเรื่องเงินเอง (ถือรูปเป็นสลิปไว้ก่อน) */
+  degraded: boolean;
 }
 
 const RESPONSE_SCHEMA = {
@@ -101,6 +104,7 @@ function fallback(stage: string): GeminiTurnOutput {
     orderData: {},
     imageIntent: "other",
     imageNote: "",
+    degraded: true,
   };
 }
 
@@ -184,6 +188,7 @@ export async function runSalesTurn(input: GeminiTurnInput): Promise<GeminiTurnOu
           : {},
       imageIntent: isValidImageIntent(parsed.image_intent) ? parsed.image_intent : "other",
       imageNote: typeof parsed.image_note === "string" ? parsed.image_note : "",
+      degraded: false,
     };
   } catch (error) {
     console.error(JSON.stringify({ scope: "gemini", warning: "request failed", error: String(error) }));

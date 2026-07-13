@@ -149,6 +149,12 @@ function formatProductAndQty(orderData: Record<string, string>): string {
   return [orderData["สินค้า"], orderData["จำนวน"]].filter(Boolean).join(" x");
 }
 
+/** ข้อความสบายใจตอน AI อ่านรูปไม่สำเร็จ — รับรูปแล้ว กำลังตรวจสอบ (ไม่ทำให้ลูกค้ากังวล) */
+function imageReceivedReply(config: AppConfig): string {
+  const base = `ได้รับรูปแล้วนะคะ ${config.botName}กำลังตรวจสอบให้ค่ะ ขอสักครู่นะคะ`;
+  return config.useEmoji ? `${base} 🙏` : base;
+}
+
 /**
  * จัดการรูปตาม image_intent ที่ AI ตัดสิน (เรียกเฉพาะเทิร์นที่มีรูปจริง):
  * - slip   → อัปโหลด slips store (private) + signed URL → push ADMIN_GROUP_ID พร้อม image_note · จำ pathname ไว้ผูกออเดอร์
@@ -341,32 +347,43 @@ async function processMessage(
       orderData: {} as Record<string, string>,
       imageIntent: "other" as ImageIntent,
       imageNote: "",
+      degraded: true, // withTimeout กินเวลาเกิน 8s = Gemini ล้ม
     },
   );
+
+  // เรื่องเงินห้ามพลาด: ถ้าเทิร์นนี้มีรูป แต่ Gemini ล้ม (degraded) → image_intent เชื่อไม่ได้
+  // ถือรูปเป็น "สลิป" ไว้ก่อน (เก็บเกินดีกว่าทำหาย) แล้วตอบลูกค้าแบบไม่ทำให้กังวล
+  const imageFallback = Boolean(imageContent && geminiOutput.degraded);
 
   // AI จัดหมวดรูป → log เก็บสถิติจริง (ไม่ log ตัวรูป · image_note เป็นสรุปสั้นจาก AI ไม่ใช่ raw PII)
   if (imageContent) {
     console.log(
-      JSON.stringify({ scope: "image", intent: geminiOutput.imageIntent, note: geminiOutput.imageNote.slice(0, 120) }),
+      JSON.stringify({
+        scope: "image",
+        intent: imageFallback ? "slip(fallback)" : geminiOutput.imageIntent,
+        note: geminiOutput.imageNote.slice(0, 120),
+        degraded: geminiOutput.degraded,
+      }),
     );
   }
 
   const effectiveTagsAdd = switches.tagging ? geminiOutput.tagsAdd : [];
   const effectiveOrderAction: OrderAction = switches.orders ? geminiOutput.orderAction : "none";
   // damage = เคลม/ของเสียหาย → จัดการเป็น handoff ผ่าน image-intent handler (กันยิงซ้ำกับ handoff ทั่วไป)
-  const damageHandled = Boolean(imageContent && geminiOutput.imageIntent === "damage");
+  const damageHandled = Boolean(imageContent && !imageFallback && geminiOutput.imageIntent === "damage");
   const effectiveHandoff = switches.handoff && geminiOutput.handoff && !damageHandled;
+
+  // ข้อความถึงลูกค้า: ถ้า image-fallback ใช้ข้อความสบายใจ (รับรูปแล้ว กำลังตรวจสอบ) แทน DEFAULT_REPLY
+  const baseReply = imageFallback ? imageReceivedReply(config) : geminiOutput.reply;
 
   // บอทเพิ่งกลับมาดูแล (auto-timeout หรือแอดมินสั่งเปิดบอท) → เกริ่นประโยคเปลี่ยนมือก่อน 1 บับเบิล
   // ส่งครั้งเดียว: flag arm ตอนเข้า human_mode, ล้างหลังส่ง (ข้อความถัดไปไม่ส่งซ้ำ)
   const shouldNotifyResume = Boolean(switches.memory && customer?.resumeNoticePending && config.botResumeMessage);
-  const finalReply = shouldNotifyResume
-    ? `${config.botResumeMessage}[[เว้น]]${geminiOutput.reply}`
-    : geminiOutput.reply;
+  const finalReply = shouldNotifyResume ? `${config.botResumeMessage}[[เว้น]]${baseReply}` : baseReply;
 
   if (switches.memory) {
     await addMessage(userId, "user", userMessage);
-    await addMessage(userId, "assistant", geminiOutput.reply);
+    await addMessage(userId, "assistant", baseReply);
     await updateCustomerAfterTurn(userId, { stage: geminiOutput.stage, tagsAdd: effectiveTagsAdd });
     await logFunnelEvent(userId, previousStage, geminiOutput.stage);
     if (shouldNotifyResume) await clearResumeNotice(userId);
@@ -377,9 +394,20 @@ async function processMessage(
     await pushMessages(userId, finalReply, config.quotaSaver);
   }
 
-  // จัดการรูปตาม image_intent ที่ AI ตัดสิน (โค้ดลงมือเฉพาะ slip/damage · other = ปล่อยตามที่ AI ตอบ)
+  // จัดการรูป: ปกติตาม image_intent ที่ AI ตัดสิน · ถ้า Gemini ล้ม → บังคับเป็น slip พร้อมโน้ตเตือน (โค้ดลงมือเฉพาะ slip/damage)
   if (imageContent) {
-    await handleImageIntent(userId, geminiOutput.imageIntent, geminiOutput.imageNote, imageContent, config, switches);
+    if (imageFallback) {
+      await handleImageIntent(
+        userId,
+        "slip",
+        "⚠️ AI อ่านรูปไม่สำเร็จ (timeout/error) ช่วยเช็คให้ด้วยค่ะ",
+        imageContent,
+        config,
+        switches,
+      );
+    } else {
+      await handleImageIntent(userId, geminiOutput.imageIntent, geminiOutput.imageNote, imageContent, config, switches);
+    }
   }
 
   if (switches.orders && effectiveOrderAction !== "none") {

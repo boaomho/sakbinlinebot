@@ -202,7 +202,7 @@ export async function getConfig(): Promise<AppConfig> {
     personaGender: strOf("หญิง", "เพศบอท"),
     useEmoji: boolOf(false, "ใช้ emoji", "ใช้_emoji", "emoji"),
     temperature: numOf(1.0, "temperature"),
-    maxOutputTokens: Math.max(1024, numOf(1024, "maxOutputTokens", "max_output_tokens")),
+    maxOutputTokens: Math.max(2048, numOf(2048, "maxOutputTokens", "max_output_tokens")),
     showTyping: boolOf(true, "แสดง_typing", "typing"),
     debounceWaitMs: debounceSec * 1000,
     delayBetweenBubblesMs: numOf(1, "หน่วง_ระหว่างบอลลูน", "หน่วง_ระหว่างข้อความ") * 1000,

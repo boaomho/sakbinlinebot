@@ -51,7 +51,7 @@ follow/cron: `SHEET_FOLLOW_URL` `CRON_SECRET`
 - ❌ เอาข้อความลูกค้าไปต่อใน systemInstruction — ใส่ user content ครอบ tag `<ข้อความลูกค้า>`
 - ❌ ข้าม verify signature → 401
 - ❌ ข้าม timeout Gemini (8s) · cache ชีตเกิน 60 วิ · log ข้อความเต็มลูกค้า (PII)
-- ❌ hardcode `maxOutputTokens` < 1024 (gemini-3.x นับ thinking+output รวม)
+- ❌ hardcode `maxOutputTokens` < 2048 (gemini-3.x นับ thinking+output รวม · เทิร์นสรุปออเดอร์ 4b เคยชน 1024 แล้วตกไป DEFAULT_REPLY = ออเดอร์ไม่ถูกเขียน)
 - ❌ ทำฟีเจอร์ครึ่งๆ ตอน env/สวิตช์ไม่ครบ — ปิดทั้งฟีเจอร์ + log (all-or-nothing)
 - ❌ แจกเลขออเดอร์แบบไม่ atomic
 - ❌ push หาลูกค้าเชิงรุกโดยไม่จำเป็น — เปลือง push quota (เงินจริง) ใช้ reply/arm-flag แทน
@@ -74,6 +74,7 @@ follow/cron: `SHEET_FOLLOW_URL` `CRON_SECRET`
 7. **push = เงินจริง** — reply ฟรี, push คิดเงิน · resume notice ใช้ arm-flag ส่งตอนลูกค้าพิมพ์ (reply) ไม่ push เชิงรุก · `quotaSaver` ยุบบับเบิลเป็น reply เดียวกันล้นไป push
 8. **`human_mode` คืนสิทธิ์วัดจาก `last_seen` (แชทเงียบ) หน่วยนาที ไม่ใช่ human_mode_since** — จงใจ: ให้แอดมินคุยได้ไม่จำกัดเวลา พอเงียบจริง 45 นาที (จบเคส) บอทค่อยกลับ · ถ้านับจาก human_mode_since บอทอาจเด้งแทรกกลางวงสนทนา
 9. **รูป = ข้อความอีกรูปแบบ ไม่ใช่ "ทุกรูป=สลิป"** — โค้ดเดิมอัปโหลดทุกรูปเข้า slips store ทันที + placeholder bias ว่าเป็นสลิป + ถ้า orders ปิดก็ไม่ส่งรูปให้ AI (บอทตาบอด) · แก้: ส่งรูปเข้า Gemini **เสมอ**พร้อมบริบท ให้ AI ตัดสิน `image_intent` ก่อน แล้วค่อยอัปโหลด/ยิงกลุ่มเฉพาะ slip/damage · ไม่ hardcode ลิสต์เคสรูป (แจกแจงไม่มีวันครบ) · ไม่แน่ใจ → AI ถามลูกค้า (ไม่เดา ไม่โยนแอดมิน) · สลิปอ่านไม่ชัด → ถือเป็น slip ไว้ก่อน (เรื่องเงินห้ามพลาด)
+10. **สลิปห้ามหายตอน Gemini ล้ม** — fallback (timeout/MAX_TOKENS/parse fail/error) ตั้ง `degraded=true` และ image_intent จะกลายเป็น "other" → ถ้าไม่ดัก สลิปจะไม่ถูกเก็บ · แก้: เทิร์นมีรูป + degraded → บังคับถือเป็น slip (อัปโหลด+ยิง ADMIN พร้อมโน้ตเตือน) + ตอบลูกค้าว่ารับรูปแล้วกำลังตรวจสอบ · ส่งสลิปหลายใบพร้อมกัน → `last_slip_pathname` ใช้ `GREATEST` เก็บใบล่าสุด deterministic
 
 ## หน้าที่ 2 กลุ่ม (แยกชัดเจน)
 

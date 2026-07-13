@@ -185,7 +185,7 @@ systemInstruction: <ส่วนที่ 1>
 contents:          [{ text: <ส่วนที่ 2> }, (ถ้ามีรูป) { inlineData: { mimeType, data(base64) } }]
 config:
   temperature:      Config `temperature` (default 1.0)
-  maxOutputTokens:  Config `maxOutputTokens` (default 1024, บังคับขั้นต่ำด้วย Math.max(1024, ...))
+  maxOutputTokens:  Config `maxOutputTokens` (default 2048, บังคับขั้นต่ำด้วย Math.max(2048, ...)) — gemini-3.x นับ thinking+output รวม ต้องพอสำหรับเทิร์นสรุปออเดอร์
   thinkingConfig:   { thinkingLevel: ThinkingLevel.LOW }
   responseMimeType: "application/json"
   responseSchema:   RESPONSE_SCHEMA (ดูด้านล่าง)
