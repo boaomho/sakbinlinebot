@@ -16,7 +16,7 @@
   จบทุกเทิร์นด้วยทางเลือกที่พาไปประตูถัดไป · ห้าม "รับมั้ยคะ" · ห้าม "รบกวน" · เกริ่นก่อนส่งของ ·
   FAQ แล้ววกกลับ funnel · เข้าประตูไหนก็ได้ · **ปิดท้ายด้วยข้อความเสมอ ห้ามจบด้วยรูป**)
 - **ประตูการขาย (Step)** = เส้นทางหลัก บอทอ่านสถานะลูกค้า→รู้ว่าอยู่ประตูไหน→ทำตามเป้าหมายประตูนั้น→พาไปต่อ
-- บอทตอบเป็น **JSON** `{reply, stage, tags_add, handoff, handoff_reason, order_action, order_data}` เท่านั้น
+- บอทตอบเป็น **JSON** `{reply, stage, tags_add, handoff, handoff_reason, order_data, payment_method, order_edit_request, image_intent, image_note}` เท่านั้น
 
 ## ฟีเจอร์ที่บอทมี (ทุกตัวเป็นโมดูล · อ่านสวิตช์จาก CSV_Config ก่อนทำงาน)
 

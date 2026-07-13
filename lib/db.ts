@@ -29,12 +29,18 @@ export async function ensureSchema(): Promise<void> {
       last_slip_pathname TEXT,
       display_name TEXT,
       resume_notice_pending BOOLEAN NOT NULL DEFAULT false,
+      pending_order JSONB,
+      has_written_order BOOLEAN NOT NULL DEFAULT false,
+      paid_no_address_notified BOOLEAN NOT NULL DEFAULT false,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `;
   await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS last_slip_pathname TEXT`;
   await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS display_name TEXT`;
   await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS resume_notice_pending BOOLEAN NOT NULL DEFAULT false`;
+  await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS pending_order JSONB`;
+  await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS has_written_order BOOLEAN NOT NULL DEFAULT false`;
+  await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS paid_no_address_notified BOOLEAN NOT NULL DEFAULT false`;
   await sql`CREATE INDEX IF NOT EXISTS customers_last_seen_idx ON customers (last_seen DESC)`;
   await sql`
     CREATE TABLE IF NOT EXISTS messages (
@@ -107,6 +113,9 @@ export interface CustomerState {
   lastSlipPathname: string | null;
   displayName: string | null;
   resumeNoticePending: boolean;
+  pendingOrder: Record<string, string>;
+  hasWrittenOrder: boolean;
+  paidNoAddressNotified: boolean;
   createdAt: Date;
 }
 
@@ -119,6 +128,9 @@ function rowToCustomer(r: Record<string, unknown>): CustomerState {
     lastSlipPathname: (r.last_slip_pathname as string | null) ?? null,
     displayName: (r.display_name as string | null) ?? null,
     resumeNoticePending: Boolean(r.resume_notice_pending),
+    pendingOrder: (r.pending_order as Record<string, string> | null) ?? {},
+    hasWrittenOrder: Boolean(r.has_written_order),
+    paidNoAddressNotified: Boolean(r.paid_no_address_notified),
     humanMode: Boolean(r.human_mode),
     humanModeSince: (r.human_mode_since as Date | null) ?? null,
     isReturning: Boolean(r.is_returning),
@@ -166,6 +178,9 @@ function emptyCustomer(userId: string): CustomerState {
     lastSlipPathname: null,
     displayName: null,
     resumeNoticePending: false,
+    pendingOrder: {},
+    hasWrittenOrder: false,
+    paidNoAddressNotified: false,
     createdAt: new Date(),
   };
 }
@@ -337,11 +352,54 @@ export async function setLastSlipPathname(userId: string, pathname: string): Pro
   `;
 }
 
-/** ล้าง pathname สลิปที่จำไว้ — เรียกเมื่อเขียนแถวออเดอร์ลงชีตสำเร็จแล้ว (pathname อยู่ในชีตแล้ว ไม่ต้องจำต่อ) */
-export async function clearLastSlipPathname(userId: string): Promise<void> {
+// ---- ออเดอร์: pending_order (สะสมข้ามเทิร์น) + gate flags + waiting tags ----
+
+/**
+ * merge ฟิลด์ใหม่ลง pending_order — ทับเฉพาะ field ที่มีค่า (ไม่ว่าง) · field ที่ไม่ได้ส่ง = คงของเดิม
+ * (ลูกค้าให้ข้อมูลทีละเทิร์นได้ ห้ามให้ของเดิมหาย) · คืน pending_order หลัง merge
+ */
+export async function mergePendingOrder(userId: string, fields: Record<string, string>): Promise<Record<string, string>> {
   await ensureSchema();
   const sql = getSql();
-  await sql`UPDATE customers SET last_slip_pathname = NULL WHERE user_id = ${userId}`;
+  const rows = await sql`SELECT pending_order FROM customers WHERE user_id = ${userId}`;
+  const existing = ((rows[0] as Record<string, unknown> | undefined)?.pending_order as Record<string, string> | null) ?? {};
+  const merged: Record<string, string> = { ...existing };
+  for (const [k, v] of Object.entries(fields)) {
+    if (typeof v === "string" && v.trim() !== "") merged[k] = v.trim();
+  }
+  await sql`UPDATE customers SET pending_order = ${JSON.stringify(merged)}::jsonb WHERE user_id = ${userId}`;
+  return merged;
+}
+
+/** ออเดอร์สมบูรณ์ขึ้นชีตแล้ว → ล้าง pending_order + สลิป พร้อมกัน (ทั้งคู่อยู่ในชีตแล้ว) */
+export async function clearPendingOrderAndSlip(userId: string): Promise<void> {
+  await ensureSchema();
+  const sql = getSql();
+  await sql`UPDATE customers SET pending_order = NULL, last_slip_pathname = NULL WHERE user_id = ${userId}`;
+}
+
+export async function setHasWrittenOrder(userId: string): Promise<void> {
+  await ensureSchema();
+  const sql = getSql();
+  await sql`UPDATE customers SET has_written_order = true WHERE user_id = ${userId}`;
+}
+
+export async function setPaidNoAddressNotified(userId: string, value: boolean): Promise<void> {
+  await ensureSchema();
+  const sql = getSql();
+  await sql`UPDATE customers SET paid_no_address_notified = ${value} WHERE user_id = ${userId}`;
+}
+
+/** ปรับแท็กรอ: ลบ "รอโอน"/"รอที่อยู่" เดิมออกทั้งคู่ แล้วใส่ตัวที่ต้องมี (keep) · keep=null = ไม่มีแท็กรอ */
+export async function reconcileWaitTags(userId: string, keep: "รอโอน" | "รอที่อยู่" | null): Promise<void> {
+  await ensureSchema();
+  const sql = getSql();
+  const keepArr = keep ? [keep] : [];
+  await sql`
+    UPDATE customers
+    SET tags = ARRAY(SELECT DISTINCT unnest(array_remove(array_remove(tags, 'รอโอน'), 'รอที่อยู่') || ${keepArr}::text[]))
+    WHERE user_id = ${userId}
+  `;
 }
 
 /**
@@ -355,7 +413,8 @@ export async function resetCustomerMemory(userId: string): Promise<void> {
   const sql = getSql();
   await sql`
     UPDATE customers
-    SET stage = NULL, tags = '{}', last_slip_pathname = NULL
+    SET stage = NULL, tags = '{}', last_slip_pathname = NULL,
+        pending_order = NULL, has_written_order = false, paid_no_address_notified = false
     WHERE user_id = ${userId}
   `;
   await sql`DELETE FROM messages WHERE user_id = ${userId}`;

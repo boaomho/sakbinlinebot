@@ -21,7 +21,8 @@ export interface GeminiTurnInput {
   image?: GeminiImageInput;
 }
 
-export type OrderAction = "none" | "slip_received" | "cod_confirmed" | "address_collected";
+/** ช่องทางชำระเงินที่ AI ประเมินใหม่ทุกเทิร์นจากบทสนทนาล่าสุด · "" = ยังไม่ตัดสิน */
+export type PaymentMethod = "โอน" | "COD" | "";
 
 /** เจตนาของรูปที่ลูกค้าส่งมา (AI ตีความจาก stage+บริบท) — code ลงมือเฉพาะ slip/damage */
 export type ImageIntent = "slip" | "damage" | "other";
@@ -32,8 +33,12 @@ export interface GeminiTurnOutput {
   tagsAdd: string[];
   handoff: boolean;
   handoffReason: string;
-  orderAction: OrderAction;
+  /** ข้อมูลจัดส่งที่ AI จับได้เทิร์นนี้ (โค้ด merge ลง pending_order · ไม่รวมช่องทางชำระ) */
   orderData: Record<string, string>;
+  /** ช่องทางชำระ "ล่าสุด" — AI ประเมินใหม่ทุกเทิร์น (โค้ดใช้ตัดสิน gate) */
+  paymentMethod: PaymentMethod;
+  /** true = ลูกค้าขอแก้ออเดอร์ที่ "บันทึกลงชีตแล้ว" (เปลี่ยนที่อยู่/COD↔โอน/เพิ่มลด/ยกเลิก) → โค้ด handoff */
+  orderEditRequest: boolean;
   /** ใช้เฉพาะเทิร์นที่มีรูป · เทิร์นข้อความล้วน AI จะตอบ "other" */
   imageIntent: ImageIntent;
   /** สิ่งที่ AI อ่านได้จากรูป (สลิป: ยอด/ธนาคาร/เวลา · อื่นๆ: สรุปสั้นๆ) */
@@ -51,7 +56,6 @@ const RESPONSE_SCHEMA = {
     tags_add: { type: Type.ARRAY, items: { type: Type.STRING } },
     handoff: { type: Type.BOOLEAN },
     handoff_reason: { type: Type.STRING },
-    order_action: { type: Type.STRING },
     order_data: {
       type: Type.OBJECT,
       properties: {
@@ -65,9 +69,10 @@ const RESPONSE_SCHEMA = {
         สินค้า: { type: Type.STRING },
         จำนวน: { type: Type.STRING },
         ยอด: { type: Type.STRING },
-        การชำระเงิน: { type: Type.STRING },
       },
     },
+    payment_method: { type: Type.STRING },
+    order_edit_request: { type: Type.BOOLEAN },
     image_intent: { type: Type.STRING },
     image_note: { type: Type.STRING },
   },
@@ -77,8 +82,9 @@ const RESPONSE_SCHEMA = {
     "tags_add",
     "handoff",
     "handoff_reason",
-    "order_action",
     "order_data",
+    "payment_method",
+    "order_edit_request",
     "image_intent",
     "image_note",
   ],
@@ -100,16 +106,17 @@ function fallback(stage: string): GeminiTurnOutput {
     tagsAdd: [],
     handoff: false,
     handoffReason: "",
-    orderAction: "none",
     orderData: {},
+    paymentMethod: "",
+    orderEditRequest: false,
     imageIntent: "other",
     imageNote: "",
     degraded: true,
   };
 }
 
-function isValidOrderAction(value: unknown): value is OrderAction {
-  return value === "none" || value === "slip_received" || value === "cod_confirmed" || value === "address_collected";
+function toPaymentMethod(value: unknown): PaymentMethod {
+  return value === "โอน" || value === "COD" ? value : "";
 }
 
 function isValidImageIntent(value: unknown): value is ImageIntent {
@@ -181,11 +188,12 @@ export async function runSalesTurn(input: GeminiTurnInput): Promise<GeminiTurnOu
       tagsAdd: Array.isArray(parsed.tags_add) ? parsed.tags_add.filter((t: unknown) => typeof t === "string") : [],
       handoff: Boolean(parsed.handoff),
       handoffReason: typeof parsed.handoff_reason === "string" ? parsed.handoff_reason : "",
-      orderAction: isValidOrderAction(parsed.order_action) ? parsed.order_action : "none",
       orderData:
         parsed.order_data && typeof parsed.order_data === "object" && !Array.isArray(parsed.order_data)
           ? (parsed.order_data as Record<string, string>)
           : {},
+      paymentMethod: toPaymentMethod(parsed.payment_method),
+      orderEditRequest: Boolean(parsed.order_edit_request),
       imageIntent: isValidImageIntent(parsed.image_intent) ? parsed.image_intent : "other",
       imageNote: typeof parsed.image_note === "string" ? parsed.image_note : "",
       degraded: false,

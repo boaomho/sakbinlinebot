@@ -17,7 +17,11 @@ import {
   clearResumeNotice,
   updateDisplayName,
   setLastSlipPathname,
-  clearLastSlipPathname,
+  mergePendingOrder,
+  clearPendingOrderAndSlip,
+  setHasWrittenOrder,
+  setPaidNoAddressNotified,
+  reconcileWaitTags,
   resetCustomerMemory,
   addMessage,
   getRecentHistory,
@@ -36,7 +40,7 @@ import {
   CustomerBrief,
   PendingChoice,
 } from "@/lib/db";
-import { runSalesTurn, OrderAction, ImageIntent } from "@/lib/gemini";
+import { runSalesTurn, ImageIntent } from "@/lib/gemini";
 import {
   replyMessages,
   pushMessages,
@@ -57,7 +61,7 @@ import {
   PENDING_CHOICES_TTL_MS,
 } from "@/lib/admin-commands";
 import { uploadSlip, getSlipSignedUrl } from "@/lib/blob";
-import { appendOrderRow } from "@/lib/orders";
+import { appendOrderRow, sanitizePhone } from "@/lib/orders";
 
 export const maxDuration = 30;
 
@@ -83,10 +87,16 @@ function buildStateText(customer: CustomerState | null): string {
   if (!customer) {
     return "(ไม่มีความจำลูกค้า ระบบความจำปิดอยู่ ถือว่าเป็นการเริ่มบทสนทนาใหม่ทุกครั้ง)";
   }
+  const pendingKeys = Object.entries(customer.pendingOrder)
+    .filter(([, v]) => (v ?? "").trim() !== "")
+    .map(([k, v]) => `${k}=${v}`);
   return [
     `ประตูปัจจุบัน: ${customer.stage ?? "(ยังไม่เคยเข้าประตูไหน)"}`,
     `แท็ก: ${customer.tags.length > 0 ? customer.tags.join(", ") : "(ยังไม่มีแท็ก)"}`,
     `สถานะ: ${customer.isReturning ? "ลูกค้าเก่า (เคยคุยมาก่อน)" : "ลูกค้าใหม่ (ทักครั้งแรก)"}`,
+    `ข้อมูลออเดอร์ที่เก็บแล้ว: ${pendingKeys.length ? pendingKeys.join(", ") : "(ยังไม่มี)"}`,
+    `มีสลิปที่ยังไม่ผูกออเดอร์: ${customer.lastSlipPathname ? "มี" : "ไม่มี"}`,
+    `มีออเดอร์บันทึกลงระบบแล้ว: ${customer.hasWrittenOrder ? "ใช่ (ถ้าลูกค้าขอแก้ออเดอร์เดิม ให้ตั้ง order_edit_request=true)" : "ยัง"}`,
   ].join("\n");
 }
 
@@ -158,9 +168,10 @@ function imageReceivedReply(config: AppConfig): string {
 
 /**
  * จัดการรูปตาม image_intent ที่ AI ตัดสิน (เรียกเฉพาะเทิร์นที่มีรูปจริง):
- * - slip   → อัปโหลด slips store (private) + signed URL → push ADMIN_GROUP_ID พร้อม image_note · จำ pathname ไว้ผูกออเดอร์
- * - damage → อัปโหลดรูปเป็นหลักฐาน + push ADMIN_GROUP_ID + เข้า human_mode (เคลมต้องใช้คน)
- * - other  → ไม่ทำอะไร (บอทตอบไปแล้วตามที่ AI คิด = บทสนทนาปกติ)
+ * - slip   → อัปโหลด slips store (private) + signed URL → push ADMIN (💰 สลิป ทันที) · จำ pathname · คืน pathname
+ * - damage → อัปโหลดหลักฐาน + push ADMIN + เข้า human_mode (เคลมต้องใช้คน) · คืน null
+ * - other  → ไม่ทำอะไร (คืน null)
+ * คืน pathname สลิปของเทิร์นนี้ (ถ้าเป็น slip) เพื่อให้ order gate รู้ว่ามีสลิปแล้ว
  */
 async function handleImageIntent(
   userId: string,
@@ -169,32 +180,33 @@ async function handleImageIntent(
   content: DownloadedContent,
   config: AppConfig,
   switches: FeatureSwitches,
-): Promise<void> {
-  if (intent === "other") return;
+): Promise<string | null> {
+  if (intent === "other") return null;
 
   const adminGroupId = process.env.ADMIN_GROUP_ID;
   const noteLine = imageNote ? `\n${imageNote}` : "";
 
   if (intent === "slip") {
-    // เรื่องเงิน — อัปโหลดเก็บเสมอถ้ามี token (uploadSlip คืน null ถ้าไม่มี) แล้ว push เข้ากลุ่มเช็คยอด
+    // เรื่องเงิน — อัปโหลดเก็บเสมอถ้ามี token (uploadSlip คืน null ถ้าไม่มี) แล้ว push เข้ากลุ่มเช็คยอดทันที (push จุดที่ 1)
     const uploaded = await uploadSlip(userId, content.buffer, content.contentType);
     if (uploaded && switches.memory) {
-      await setLastSlipPathname(userId, uploaded.pathname); // เผื่อ address_collected เทิร์นถัดไป
+      await setLastSlipPathname(userId, uploaded.pathname); // จำไว้ผูกออเดอร์ตอน gate
     }
-    if (!adminGroupId) return;
-    const name = await getProfileName(userId);
-    const text = `💰 มีลูกค้าส่งสลิปมาค่ะ${noteLine}\n\nLineOA: ${name}`;
-    const signedUrl = uploaded ? await getSlipSignedUrl(uploaded.pathname, config.slipUrlExpiryDays) : null;
-    if (signedUrl) {
-      await pushRawMessages(adminGroupId, [
-        { type: "text", text },
-        { type: "image", originalContentUrl: signedUrl, previewImageUrl: signedUrl },
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ] as any);
-    } else {
-      await pushRawText(adminGroupId, text);
+    if (adminGroupId) {
+      const name = await getProfileName(userId);
+      const text = `💰 มีลูกค้าส่งสลิปมาค่ะ${noteLine}\n\nLineOA: ${name}`;
+      const signedUrl = uploaded ? await getSlipSignedUrl(uploaded.pathname, config.slipUrlExpiryDays) : null;
+      if (signedUrl) {
+        await pushRawMessages(adminGroupId, [
+          { type: "text", text },
+          { type: "image", originalContentUrl: signedUrl, previewImageUrl: signedUrl },
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ] as any);
+      } else {
+        await pushRawText(adminGroupId, text);
+      }
     }
-    return;
+    return uploaded?.pathname ?? null;
   }
 
   if (intent === "damage") {
@@ -215,48 +227,119 @@ async function handleImageIntent(
     }
     if (switches.memory) await setHumanMode(userId, true); // เคลม = ส่งต่อคน
   }
+  return null;
 }
 
-async function handleOrderAction(
-  userId: string,
-  action: OrderAction,
-  orderData: Record<string, string>,
-  slipPathname: string | undefined,
-): Promise<void> {
-  // CF COD = ขอเช็คยอด → เข้ากลุ่มแอดมิน (ADMIN_GROUP_ID) · สลิปจัดการใน handleImageIntent แล้ว
-  const adminGroupId = process.env.ADMIN_GROUP_ID;
-  const productAndQty = formatProductAndQty(orderData);
+/** "ที่อยู่ครบ" = ชื่อ-นามสกุล + ที่อยู่เต็ม (ที่อยู่/ตำบล/อำเภอ/จังหวัด/รหัสไปรษณีย์) + เบอร์ 10 หลัก */
+function addressComplete(p: Record<string, string>): boolean {
+  const has = (k: string) => (p[k] ?? "").trim() !== "";
+  return (
+    has("ชื่อ") &&
+    has("ที่อยู่") &&
+    has("ตำบล") &&
+    has("อำเภอ") &&
+    has("จังหวัด") &&
+    has("รหัสไปรษณีย์") &&
+    sanitizePhone(p["เบอร์"]) !== ""
+  );
+}
 
-  if (action === "cod_confirmed") {
-    if (!adminGroupId) return;
+/** ข้อความแจ้งกลุ่มแอดมินเมื่อออเดอร์สมบูรณ์ขึ้นชีต (push จุดที่ 2) */
+function buildNewOrderAdminText(pending: Record<string, string>, payment: string, name: string): string {
+  const icon = payment === "COD" ? "📦" : "💰";
+  const loc = [pending["อำเภอ"], pending["จังหวัด"]].filter(Boolean).join(" ");
+  return (
+    `${icon} ออเดอร์ใหม่ (${payment})\n` +
+    `${formatProductAndQty(pending)}\n` +
+    `${pending["ยอด"] ?? ""}\n` +
+    `${pending["ชื่อ"] ?? ""} ${sanitizePhone(pending["เบอร์"])}\n` +
+    `${loc}`
+  );
+}
+
+/**
+ * gate ออเดอร์ (โค้ดตัดสินจาก pending_order ที่มีจริงเท่านั้น): merge → ประเมินครบ/ไม่ครบ ตาม payment ปัจจุบัน
+ * COD ครบเมื่อที่อยู่ครบ · โอน ครบเมื่อที่อยู่ครบ+มีสลิป · ครบ = เขียนชีตทีเดียว + push ADMIN + ล้าง pending
+ * ไม่ครบ = สภาพปกติ (ไม่เขียนชีต ไม่รบกวนแอดมิน ยกเว้นโอนแล้วยังไม่มีที่อยู่) แค่ติดแท็กรอ
+ */
+async function runOrderGate(
+  userId: string,
+  customer: CustomerState,
+  gemini: { orderData: Record<string, string>; paymentMethod: string; imageNote: string },
+  slipThisTurn: string | null,
+  config: AppConfig,
+): Promise<void> {
+  const fields: Record<string, string> = { ...gemini.orderData };
+  if (gemini.paymentMethod) fields["การชำระเงิน"] = gemini.paymentMethod; // "" = คงของเดิม
+  const pending = await mergePendingOrder(userId, fields);
+
+  const payment = (pending["การชำระเงิน"] ?? "").trim();
+  const slipPathname = slipThisTurn ?? customer.lastSlipPathname ?? null;
+  const slipPresent = Boolean(slipPathname);
+  const addr = addressComplete(pending);
+  const complete = (payment === "COD" && addr) || (payment === "โอน" && addr && slipPresent);
+  const adminGroupId = process.env.ADMIN_GROUP_ID;
+
+  if (complete) {
     const name = await getProfileName(userId);
-    const text = `📦 ขอ CF COD ค่ะ\n${productAndQty}\n\nLineOA: ${name}`;
-    await pushRawText(adminGroupId, text);
+    try {
+      await appendOrderRow({
+        lineDisplayName: name,
+        productAndQty: formatProductAndQty(pending),
+        total: pending["ยอด"],
+        customerName: pending["ชื่อ"],
+        phone: pending["เบอร์"],
+        address: pending["ที่อยู่"],
+        subdistrict: pending["ตำบล"],
+        district: pending["อำเภอ"],
+        province: pending["จังหวัด"],
+        postalCode: pending["รหัสไปรษณีย์"],
+        paymentMethod: payment,
+        slipPathname: payment === "โอน" ? slipPathname ?? undefined : undefined,
+      });
+    } catch (error) {
+      console.error(JSON.stringify({ scope: "orders", warning: "appendOrderRow failed", error: String(error) }));
+      return; // เขียนไม่สำเร็จ = ไม่ล้าง ไม่ push (retry เทิร์นหน้าได้)
+    }
+    // สำเร็จ → ล้าง pending+สลิป, ลบแท็กรอ, mark เขียนแล้ว, reset flag แจ้งเตือน
+    await clearPendingOrderAndSlip(userId);
+    await reconcileWaitTags(userId, null);
+    await setHasWrittenOrder(userId);
+    await setPaidNoAddressNotified(userId, false);
+    // push จุดที่ 2 — ออเดอร์ใหม่ (โอน แนบรูปสลิป)
+    if (adminGroupId) {
+      const text = buildNewOrderAdminText(pending, payment, name);
+      const signedUrl = payment === "โอน" && slipPathname ? await getSlipSignedUrl(slipPathname, config.slipUrlExpiryDays) : null;
+      if (signedUrl) {
+        await pushRawMessages(adminGroupId, [
+          { type: "text", text },
+          { type: "image", originalContentUrl: signedUrl, previewImageUrl: signedUrl },
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ] as any);
+      } else {
+        await pushRawText(adminGroupId, text);
+      }
+    }
     return;
   }
 
-  if (action === "address_collected") {
-    try {
-      const name = await getProfileName(userId);
-      await appendOrderRow({
-        lineDisplayName: name,
-        productAndQty,
-        total: orderData["ยอด"],
-        customerName: orderData["ชื่อ"],
-        phone: orderData["เบอร์"],
-        address: orderData["ที่อยู่"],
-        subdistrict: orderData["ตำบล"],
-        district: orderData["อำเภอ"],
-        province: orderData["จังหวัด"],
-        postalCode: orderData["รหัสไปรษณีย์"],
-        paymentMethod: orderData["การชำระเงิน"],
-        slipPathname,
-      });
-      // เขียนแถวสำเร็จ → ล้าง pathname ที่จำไว้ (อยู่ในชีตแล้ว) · ถ้า throw จะไม่ถึงบรรทัดนี้ = ไม่ล้าง (retry ได้)
-      await clearLastSlipPathname(userId);
-    } catch (error) {
-      console.error(JSON.stringify({ scope: "orders", warning: "appendOrderRow failed", error: String(error) }));
+  // ยังไม่ครบ = สภาพปกติ → ติดแท็กรอตามสถานะ (+ เคสพิเศษ โอนแล้วยังไม่มีที่อยู่)
+  if (payment === "โอน" && addr && !slipPresent) {
+    await reconcileWaitTags(userId, "รอโอน");
+  } else if (payment === "โอน" && slipPresent && !addr) {
+    await reconcileWaitTags(userId, "รอที่อยู่");
+    if (!customer.paidNoAddressNotified) {
+      if (adminGroupId) {
+        const name = await getProfileName(userId);
+        const note = gemini.imageNote ? `\n${gemini.imageNote}` : "";
+        await pushRawText(adminGroupId, `💰 ลูกค้าโอนแล้ว แต่ยังไม่ได้ที่อยู่${note}\n\nLineOA: ${name}`);
+      }
+      await setPaidNoAddressNotified(userId, true); // แจ้งครั้งเดียว
     }
+  } else if (payment === "COD" && !addr) {
+    await reconcileWaitTags(userId, "รอที่อยู่");
+  } else {
+    await reconcileWaitTags(userId, null); // payment ยังไม่ตัดสิน / สถานะกลาง → ไม่มีแท็กรอ
   }
 }
 
@@ -346,8 +429,9 @@ async function processMessage(
       tagsAdd: [] as string[],
       handoff: false,
       handoffReason: "",
-      orderAction: "none" as OrderAction,
       orderData: {} as Record<string, string>,
+      paymentMethod: "" as const,
+      orderEditRequest: false,
       imageIntent: "other" as ImageIntent,
       imageNote: "",
       degraded: true, // withTimeout กินเวลาเกิน 8s = Gemini ล้ม
@@ -371,10 +455,8 @@ async function processMessage(
   }
 
   const effectiveTagsAdd = switches.tagging ? geminiOutput.tagsAdd : [];
-  const effectiveOrderAction: OrderAction = switches.orders ? geminiOutput.orderAction : "none";
   // damage = เคลม/ของเสียหาย → จัดการเป็น handoff ผ่าน image-intent handler (กันยิงซ้ำกับ handoff ทั่วไป)
   const damageHandled = Boolean(imageContent && !imageFallback && geminiOutput.imageIntent === "damage");
-  const effectiveHandoff = switches.handoff && geminiOutput.handoff && !damageHandled;
 
   // ข้อความถึงลูกค้า: ถ้า image-fallback ใช้ข้อความสบายใจ (รับรูปแล้ว กำลังตรวจสอบ) แทน DEFAULT_REPLY
   const baseReply = imageFallback ? imageReceivedReply(config) : geminiOutput.reply;
@@ -397,27 +479,34 @@ async function processMessage(
     await pushMessages(userId, finalReply, config.quotaSaver);
   }
 
-  // จัดการรูป: ปกติตาม image_intent ที่ AI ตัดสิน · ถ้า Gemini ล้ม → บังคับเป็น slip พร้อมโน้ตเตือน (โค้ดลงมือเฉพาะ slip/damage)
+  // จัดการรูป: ปกติตาม image_intent · ถ้า Gemini ล้ม → บังคับ slip พร้อมโน้ตเตือน · คืน pathname สลิปเทิร์นนี้
+  let slipThisTurn: string | null = null;
   if (imageContent) {
-    if (imageFallback) {
-      await handleImageIntent(
-        userId,
-        "slip",
-        "⚠️ AI อ่านรูปไม่สำเร็จ (timeout/error) ช่วยเช็คให้ด้วยค่ะ",
-        imageContent,
-        config,
-        switches,
-      );
-    } else {
-      await handleImageIntent(userId, geminiOutput.imageIntent, geminiOutput.imageNote, imageContent, config, switches);
+    slipThisTurn = imageFallback
+      ? await handleImageIntent(userId, "slip", "⚠️ AI อ่านรูปไม่สำเร็จ (timeout/error) ช่วยเช็คให้ด้วยค่ะ", imageContent, config, switches)
+      : await handleImageIntent(userId, geminiOutput.imageIntent, geminiOutput.imageNote, imageContent, config, switches);
+  }
+
+  // ลูกค้าขอแก้ออเดอร์ที่ "บันทึกลงชีตแล้ว" → handoff ให้แอดมิน (ห้ามเขียน/แก้แถวอัตโนมัติ) · push จุดพิเศษ ✏️
+  let editHandled = false;
+  if (geminiOutput.orderEditRequest && customer?.hasWrittenOrder) {
+    const adminGroupId = process.env.ADMIN_GROUP_ID;
+    if (adminGroupId) {
+      const name = await getProfileName(userId);
+      const what = geminiOutput.handoffReason || "ลูกค้าขอแก้ไข";
+      await pushRawText(adminGroupId, `✏️ ลูกค้าขอแก้ออเดอร์ที่บันทึกแล้ว: ${what}\n\nLineOA: ${name}`);
     }
+    if (switches.memory) await setHumanMode(userId, true);
+    editHandled = true;
   }
 
-  if (switches.orders && effectiveOrderAction !== "none") {
-    await handleOrderAction(userId, effectiveOrderAction, geminiOutput.orderData, customer?.lastSlipPathname ?? undefined);
+  // order gate — โค้ดตัดสินจาก pending_order (merge → ครบ/ไม่ครบ) · ข้ามถ้าเป็นการขอแก้ออเดอร์เดิม
+  if (switches.orders && switches.memory && customer && !editHandled) {
+    await runOrderGate(userId, customer, geminiOutput, slipThisTurn, config);
   }
 
-  if (effectiveHandoff) {
+  // handoff ทั่วไป (AI-semantic) · ข้ามถ้าจัดการเป็น damage หรือ edit ไปแล้ว (กันยิงซ้ำ)
+  if (switches.handoff && geminiOutput.handoff && !damageHandled && !editHandled) {
     await pushHandoffNotice(userId, userMessage, geminiOutput.handoffReason || "AI ประเมินว่าควรส่งต่อ", "ai-semantic");
     if (switches.memory) await setHumanMode(userId, true);
   }
