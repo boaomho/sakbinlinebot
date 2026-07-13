@@ -82,7 +82,7 @@ vercel.json                     # cron follow (schedule) + framework config
 17. ถ้ามี memory: `ensureCustomer` (สร้าง/อัปเดต last_seen) → ถ้า `display_name` ยังว่าง เรียก `getProfileName` เก็บลง Neon (ไว้ค้นในคำสั่งแอดมิน)
 18. **เช็ค human_mode:** ถ้า `human_mode=true` → ดู "แชทเงียบ" = `now - last_seen(เดิม)` ≥ `adminSilenceReturnMinutes` นาที? → ถ้าใช่ ปลดล็อก (`setHumanMode false`) และดำเนินต่อ · ถ้าไม่ใช่ → บันทึกข้อความลูกค้า แล้ว **return เงียบ** (แอดมินดูแลอยู่ บอทไม่ตอบ)
 19. **handoff keyword pre-check:** ถ้าสวิตช์ handoff เปิด → `checkHandoffKeywords` เจอคำ → `runHandoffFlow` (ตอบลูกค้าอบอุ่น + push กลุ่มแอดมิน + `setHumanMode true`) แล้ว return (ไม่เรียก Gemini — ประหยัด token)
-20. โหลด Step/FAQ CSV, `formatConfigForPrompt`, `buildStateText`, `getRecentHistory(20)`
+20. โหลด Step/FAQ CSV, `formatConfigForPrompt`, `buildStateText`, `getRecentHistory(20)` · `buildUserContent` แทรกบล็อก `<เวลาปัจจุบัน>` (`formatThaiNow()` เวลาไทย UTC+7) ให้ AI คำนวณวันจัดส่งเทียบเวลาตัดรอบ
 21. `runSalesTurn(Gemini, image=imageForGemini)` หุ้ม `withTimeout(8000ms)` → เกิน = fallback DEFAULT_REPLY · ถ้ามีรูป log `{scope:"image", intent, note}`
 22. gate ด้วยสวิตช์: `effectiveTagsAdd` · `damageHandled = มีรูป && image_intent="damage"` · `imageFallback = มีรูป && degraded`
 23. **resume notice:** ถ้า `resume_notice_pending=true` → เติม `botResumeMessage[[เว้น]]` หน้า reply
@@ -178,7 +178,7 @@ index: `messages(user_id, created_at)`, `pending_messages(user_id, id)`, `custom
 | `debounceWaitMs` | `debounce_รวบคำถาม` | prefix `debounce` | 6 วิ | **hard** (เวลา debounce) |
 | `delayBetweenBubblesMs` | `หน่วง_ระหว่างบอลลูน` | `หน่วง_ระหว่างข้อความ` | 1 วิ | อ่านแต่**ยังไม่ได้ใช้จริง** (ส่งบอลลูนใน reply เดียว) |
 | `slipUrlExpiryDays` | `อายุลิงก์สลิป_วัน` | `อายุลิงก์สลิป` | 7 | **hard** (อายุ signed URL สลิป) |
-| `orderCutoffTime` | `เวลาตัดรอบออเดอร์` | `เวลารอบตัดออเดอร์` | "12:00" | **hard** (cron แจกเลข) |
+| `orderCutoffTime` | `เวลาตัดรอบออเดอร์` | `เวลารอบตัดออเดอร์` | "12:00" | **hard** (cron แจกเลข `resolveOrderDay` **และ** AI เทียบ `<เวลาปัจจุบัน>` คำนวณวันจัดส่ง — มาตรฐานเดียวกัน) |
 | `orderNumberResetDaily` | `เลขออเดอร์_รีเซ็ตทุกวัน` | `เลขออเดอร์รีเซ็ตทุกวัน` | เปิด(true) | **hard** (รูปแบบเลขออเดอร์) |
 | `handoffKeywords` | `คำ_handoff` | `คำ_ส่งต่อแอดมิน`, `keyword_handoff` | [] → ใช้ DEFAULT list | **hard** (keyword pre-check) |
 | `adminSilenceReturnMinutes` | `คืนสิทธิ์บอท_หลังแชทเงียบ` | `..._นาที` | 45 (นาที) | **hard** (คืน human_mode) |
