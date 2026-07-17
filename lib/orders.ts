@@ -1,4 +1,8 @@
 import { google, sheets_v4 } from "googleapis";
+import { sanitizePhone, sanitizeAmount, sanitizeShortText } from "./core/orders";
+
+// sanitizers ย้ายไปอยู่ lib/core/orders.ts (โดเมนล้วน) — re-export ไว้เพื่อไม่ให้ import เดิมพัง
+export { sanitizePhone, sanitizeAmount, sanitizeShortText };
 
 const SHEET_NAME = "Orders";
 /**
@@ -57,24 +61,6 @@ function getSheets(): sheets_v4.Sheets {
   });
   sheetsClient = google.sheets({ version: "v4", auth });
   return sheetsClient;
-}
-
-// ---- sanitizers: กัน order_data จาก AI มีคำสั่งแฝง/ข้อมูลผิดรูปแบบก่อนเขียนลงชีต ----
-
-export function sanitizePhone(phone: string | undefined): string {
-  if (!phone) return "";
-  const digits = phone.replace(/\D/g, "");
-  return /^\d{10}$/.test(digits) ? digits : "";
-}
-
-export function sanitizeAmount(amount: string | undefined): string {
-  if (!amount) return "";
-  return amount.replace(/[^\d.]/g, "");
-}
-
-export function sanitizeShortText(text: string | undefined, maxLen = 200): string {
-  if (!text) return "";
-  return text.replace(/[\r\n]+/g, " ").trim().slice(0, maxLen);
 }
 
 export interface NewOrderInput {

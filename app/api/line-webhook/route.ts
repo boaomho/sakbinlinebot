@@ -61,7 +61,8 @@ import {
   PENDING_CHOICES_TTL_MS,
 } from "@/lib/admin-commands";
 import { uploadSlip, getSlipSignedUrl } from "@/lib/blob";
-import { appendOrderRow, sanitizePhone } from "@/lib/orders";
+import { appendOrderRow } from "@/lib/orders";
+import { evaluateOrderGate, formatProductAndQty, buildNewOrderAdminText } from "@/lib/core/orders";
 
 export const maxDuration = 30;
 
@@ -156,10 +157,6 @@ async function runHandoffFlow(
   await pushHandoffNotice(userId, userMessage, reason, "keyword-precheck");
 }
 
-function formatProductAndQty(orderData: Record<string, string>): string {
-  return [orderData["สินค้า"], orderData["จำนวน"]].filter(Boolean).join(" x");
-}
-
 /** ข้อความสบายใจตอน AI อ่านรูปไม่สำเร็จ — รับรูปแล้ว กำลังตรวจสอบ (ไม่ทำให้ลูกค้ากังวล) */
 function imageReceivedReply(config: AppConfig): string {
   const base = `ได้รับรูปแล้วนะคะ ${config.botName}กำลังตรวจสอบให้ค่ะ ขอสักครู่นะคะ`;
@@ -230,37 +227,10 @@ async function handleImageIntent(
   return null;
 }
 
-/** "ที่อยู่ครบ" = ชื่อ-นามสกุล + ที่อยู่เต็ม (ที่อยู่/ตำบล/อำเภอ/จังหวัด/รหัสไปรษณีย์) + เบอร์ 10 หลัก */
-function addressComplete(p: Record<string, string>): boolean {
-  const has = (k: string) => (p[k] ?? "").trim() !== "";
-  return (
-    has("ชื่อ") &&
-    has("ที่อยู่") &&
-    has("ตำบล") &&
-    has("อำเภอ") &&
-    has("จังหวัด") &&
-    has("รหัสไปรษณีย์") &&
-    sanitizePhone(p["เบอร์"]) !== ""
-  );
-}
-
-/** ข้อความแจ้งกลุ่มแอดมินเมื่อออเดอร์สมบูรณ์ขึ้นชีต (push จุดที่ 2) */
-function buildNewOrderAdminText(pending: Record<string, string>, payment: string, name: string): string {
-  const icon = payment === "COD" ? "📦" : "💰";
-  const loc = [pending["อำเภอ"], pending["จังหวัด"]].filter(Boolean).join(" ");
-  return (
-    `${icon} ออเดอร์ใหม่ (${payment})\n` +
-    `${formatProductAndQty(pending)}\n` +
-    `${pending["ยอด"] ?? ""}\n` +
-    `${pending["ชื่อ"] ?? ""} ${sanitizePhone(pending["เบอร์"])}\n` +
-    `${loc}`
-  );
-}
-
 /**
- * gate ออเดอร์ (โค้ดตัดสินจาก pending_order ที่มีจริงเท่านั้น): merge → ประเมินครบ/ไม่ครบ ตาม payment ปัจจุบัน
- * COD ครบเมื่อที่อยู่ครบ · โอน ครบเมื่อที่อยู่ครบ+มีสลิป · ครบ = เขียนชีตทีเดียว + push ADMIN + ล้าง pending
- * ไม่ครบ = สภาพปกติ (ไม่เขียนชีต ไม่รบกวนแอดมิน ยกเว้นโอนแล้วยังไม่มีที่อยู่) แค่ติดแท็กรอ
+ * gate ออเดอร์: merge ข้อมูลเทิร์นนี้ลง pending_order → ให้ core ตัดสิน → ลงมือตามผล
+ * การ "ตัดสิน" อยู่ที่ lib/core/orders.ts (evaluateOrderGate) เพื่อให้ช่องทางอื่น (Salepage)
+ * ใช้กติกาเดียวกันได้ · ฟังก์ชันนี้เหลือแค่ I/O: DB / ชีต / Blob / push
  */
 async function runOrderGate(
   userId: string,
@@ -273,14 +243,12 @@ async function runOrderGate(
   if (gemini.paymentMethod) fields["การชำระเงิน"] = gemini.paymentMethod; // "" = คงของเดิม
   const pending = await mergePendingOrder(userId, fields);
 
-  const payment = (pending["การชำระเงิน"] ?? "").trim();
   const slipPathname = slipThisTurn ?? customer.lastSlipPathname ?? null;
-  const slipPresent = Boolean(slipPathname);
-  const addr = addressComplete(pending);
-  const complete = (payment === "COD" && addr) || (payment === "โอน" && addr && slipPresent);
+  const gate = evaluateOrderGate({ pending, slipPresent: Boolean(slipPathname) });
+  const payment = gate.payment;
   const adminGroupId = process.env.ADMIN_GROUP_ID;
 
-  if (complete) {
+  if (gate.complete) {
     const name = await getProfileName(userId);
     try {
       await appendOrderRow({
@@ -323,23 +291,16 @@ async function runOrderGate(
     return;
   }
 
-  // ยังไม่ครบ = สภาพปกติ → ติดแท็กรอตามสถานะ (+ เคสพิเศษ โอนแล้วยังไม่มีที่อยู่)
-  if (payment === "โอน" && addr && !slipPresent) {
-    await reconcileWaitTags(userId, "รอโอน");
-  } else if (payment === "โอน" && slipPresent && !addr) {
-    await reconcileWaitTags(userId, "รอที่อยู่");
-    if (!customer.paidNoAddressNotified) {
-      if (adminGroupId) {
-        const name = await getProfileName(userId);
-        const note = gemini.imageNote ? `\n${gemini.imageNote}` : "";
-        await pushRawText(adminGroupId, `💰 ลูกค้าโอนแล้ว แต่ยังไม่ได้ที่อยู่${note}\n\nLineOA: ${name}`);
-      }
-      await setPaidNoAddressNotified(userId, true); // แจ้งครั้งเดียว
+  // ยังไม่ครบ = สภาพปกติ → ติดแท็กรอตามที่ core ตัดสิน (+ เคสพิเศษ โอนแล้วยังไม่มีที่อยู่)
+  await reconcileWaitTags(userId, gate.waitTag);
+
+  if (gate.paidNoAddress && !customer.paidNoAddressNotified) {
+    if (adminGroupId) {
+      const name = await getProfileName(userId);
+      const note = gemini.imageNote ? `\n${gemini.imageNote}` : "";
+      await pushRawText(adminGroupId, `💰 ลูกค้าโอนแล้ว แต่ยังไม่ได้ที่อยู่${note}\n\nLineOA: ${name}`);
     }
-  } else if (payment === "COD" && !addr) {
-    await reconcileWaitTags(userId, "รอที่อยู่");
-  } else {
-    await reconcileWaitTags(userId, null); // payment ยังไม่ตัดสิน / สถานะกลาง → ไม่มีแท็กรอ
+    await setPaidNoAddressNotified(userId, true); // แจ้งครั้งเดียว
   }
 }
 
