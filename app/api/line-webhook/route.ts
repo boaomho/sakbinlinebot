@@ -265,7 +265,6 @@ async function runOrderGate(
       complete: gate.complete,
       missing: gate.missing,
       incompleteWithIntent: gate.incompleteWithIntent,
-      codPhoneBlocked: gate.codPhoneBlocked,
       waitTag: gate.waitTag,
       slipPresent: Boolean(slipPathname),
     }),

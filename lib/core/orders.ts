@@ -13,17 +13,15 @@
 // (ย้ายมาจาก lib/orders.ts — pure ไม่เกี่ยวกับ I/O)
 
 /**
- * ตัดอักขระที่ไม่ใช่ตัวเลขออก แล้วรับเฉพาะความยาวที่เป็นเบอร์ไทยจริง
- *   มือถือ = 10 หลัก (06/08/09) · เบอร์บ้าน/ออฟฟิศ = 9 หลัก (เช่น 02 + 7 ตัว)
- * "081-112 2334" → "0811122334" · "02-1234567" → "021234567"
+ * ตัดอักขระที่ไม่ใช่ตัวเลขออก — "081-112 2334" → "0811122334"
  *
- * 🔴 เดิมบังคับ 10 หลักเป๊ะ → เบอร์บ้านทุกเบอร์ในประเทศตกหมด (9 หลักเสมอ)
- *    ทำให้ลูกค้าที่โอนเงินมาแล้วปิดออเดอร์ไม่ได้
+ * 🔴 ไม่เช็คจำนวนหลัก ไม่เช็คมือถือ ไม่แยก COD/โอน — "มีตัวเลข = ผ่าน" จบ
+ *    เคยบังคับ 10 หลัก → เบอร์บ้าน (9 หลัก) ตกหมด · เคยบังคับมือถือกับ COD → เคสเยอะ เทสบาน
+ *    โดยไม่สร้างมูลค่า เพราะแอดมินโทรถามเบอร์เอาเองได้อยู่แล้ว
  */
 export function sanitizePhone(phone: string | undefined): string {
   if (!phone) return "";
-  const digits = phone.replace(/\D/g, "");
-  return /^\d{9,10}$/.test(digits) ? digits : "";
+  return phone.replace(/\D/g, "");
 }
 
 export function sanitizeAmount(amount: string | undefined): string {
@@ -36,14 +34,6 @@ export function sanitizeShortText(text: string | undefined, maxLen = 200): strin
   return text.replace(/[\r\n]+/g, " ").trim().slice(0, maxLen);
 }
 
-/**
- * เบอร์มือถือไทย: 10 หลัก ขึ้นต้น 06/08/09
- * ใช้เฉพาะ COD (ต้องโทรหาลูกค้าตอนส่งของ) · โอนไม่บังคับ (เบอร์บ้าน/ออฟฟิศผ่าน)
- */
-export function isMobilePhone(phone: string | undefined): boolean {
-  const digits = sanitizePhone(phone);
-  return digits.length === 10 && /^0[689]/.test(digits);
-}
 
 // ---- โดเมนออเดอร์ ----
 
@@ -96,11 +86,6 @@ export interface OrderGateResult {
    * 🔴 คนที่มาถึงขั้นนี้ = จ่ายแล้ว(โอน)/ตกลงแล้ว(COD) — ห้ามเงียบเด็ดขาด
    */
   incompleteWithIntent: boolean;
-  /**
-   * COD + เบอร์ไม่ใช่มือถือ = เงื่อนไขเดียวที่ block COD
-   * บอทถามขอเบอร์มือถือเอง → ยังไม่ปิด และ "ยังไม่ push" (บอทกำลังจัดการอยู่ ไม่ต้องกวนแอดมิน)
-   */
-  codPhoneBlocked: boolean;
   /** อะไรขาดบ้าง — เอาไปประกอบข้อความ push ⚠️ ให้แอดมินรู้ว่าต้องตามอะไร */
   missing: string[];
 }
@@ -108,8 +93,8 @@ export interface OrderGateResult {
 /**
  * gate ออเดอร์ 2 ระดับ — โค้ดตัดสินจาก pending_order ที่มีจริงเท่านั้น ไม่พึ่ง AI signal
  *
- *   COD ปิด = ชื่อ + เบอร์มือถือ 10 หลัก + ที่อยู่(ก้อนไม่ว่าง)
- *   โอน ปิด = ชื่อ + เบอร์ 10 หลัก + ที่อยู่(ก้อนไม่ว่าง) + สลิป
+ *   COD ปิด = ชื่อ + เบอร์(มีตัวเลข) + ที่อยู่(ก้อนไม่ว่าง)
+ *   โอน ปิด = เหมือน COD + สลิป
  *   ครบ           → เขียนชีต + push 📦
  *   ไม่ครบ+สั่งแล้ว → push ⚠️ อย่างเดียว (ยังไม่เขียนแถว — ยังไม่มี order_id ให้เติมทีหลังจน Step 2)
  *   ยังไม่สั่ง      → เงียบได้ (ยังไม่ใช่ลูกค้าที่จ่ายเงิน)
@@ -120,27 +105,23 @@ export function evaluateOrderGate({ pending, slipPresent }: OrderGateInput): Ord
   const payment = (pending["การชำระเงิน"] ?? "").trim();
   const name = nameComplete(pending);
   const addr = addressComplete(pending);
-  const phone10 = sanitizePhone(pending["เบอร์"]) !== "";
-  const mobile = isMobilePhone(pending["เบอร์"]);
+  const phone = sanitizePhone(pending["เบอร์"]) !== ""; // มีตัวเลข = ผ่าน (แอดมินตรวจเบอร์เอง)
+  const base = name && addr && phone;
 
-  const complete =
-    (payment === "COD" && name && addr && mobile) ||
-    (payment === "โอน" && name && addr && phone10 && slipPresent);
+  const complete = (payment === "COD" && base) || (payment === "โอน" && base && slipPresent);
 
   const hasIntent = payment !== ""; // เลือกวิธีจ่ายแล้ว = สั่งแล้ว
-  const codPhoneBlocked = !complete && payment === "COD" && !mobile;
 
   const missing: string[] = [];
   if (!complete) {
     if (!name) missing.push("ชื่อ");
     if (!addr) missing.push("ที่อยู่");
-    if (payment === "COD" && !mobile) missing.push("เบอร์มือถือ");
-    else if (payment === "โอน" && !phone10) missing.push("เบอร์");
+    if (!phone) missing.push("เบอร์");
     if (payment === "โอน" && !slipPresent) missing.push("สลิป");
   }
 
-  // ไม่ครบ + สั่งแล้ว → กวนแอดมิน ยกเว้นเคส COD เบอร์ไม่ใช่มือถือ (บอทถามเองอยู่)
-  const incompleteWithIntent = !complete && hasIntent && !codPhoneBlocked;
+  // ไม่ครบ + สั่งแล้ว → แจ้งแอดมินให้ตามเก็บ ห้ามเงียบ
+  const incompleteWithIntent = !complete && hasIntent;
 
   let waitTag: WaitTag = null;
   if (!complete) {
@@ -155,7 +136,7 @@ export function evaluateOrderGate({ pending, slipPresent }: OrderGateInput): Ord
     }
   }
 
-  return { payment, complete, waitTag, incompleteWithIntent, codPhoneBlocked, missing };
+  return { payment, complete, waitTag, incompleteWithIntent, missing };
 }
 
 /** ข้อความแจ้งกลุ่มแอดมินเมื่อออเดอร์สมบูรณ์ขึ้นชีต (push จุดที่ 2) */

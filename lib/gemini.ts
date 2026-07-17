@@ -162,18 +162,24 @@ export async function runSalesTurn(input: GeminiTurnInput): Promise<GeminiTurnOu
 
     const finishReason = response.candidates?.[0]?.finishReason;
     const usage = response.usageMetadata;
-    console.log(
-      JSON.stringify({
-        scope: "gemini",
-        finishReason,
-        thoughtsTokenCount: usage?.thoughtsTokenCount,
-        candidatesTokenCount: usage?.candidatesTokenCount,
-      }),
-    );
+    // thinking+output ใช้เพดานร่วมกัน → ต้องเห็นสัดส่วนถึงจะรู้ว่าใครกิน budget
+    const budget = {
+      finishReason,
+      maxOutputTokens: input.config.maxOutputTokens,
+      thoughtsTokenCount: usage?.thoughtsTokenCount, // thinking กินเท่าไหร่
+      candidatesTokenCount: usage?.candidatesTokenCount, // คำตอบจริงกินเท่าไหร่
+      totalTokenCount: usage?.totalTokenCount,
+      promptTokenCount: usage?.promptTokenCount, // prompt บวมมั้ย (Step/FAQ/ประวัติ)
+    };
 
     if (finishReason === "MAX_TOKENS") {
+      // ชนเพดาน = JSON ขาดกลางคัน → ห้าม parse เด็ดขาด (จะได้ค่าครึ่ง ๆ / throw)
+      // ลูกค้าจะเห็น DEFAULT_REPLY ("ขัดข้อง") ซึ่งมักเกิดตอนเทิร์นสรุปออเดอร์ = เทิร์นปิดการขาย
+      console.error(JSON.stringify({ scope: "gemini", warning: "MAX_TOKENS — ตอบไม่จบ ใช้ fallback", ...budget }));
       return fallback(input.currentStage);
     }
+
+    console.log(JSON.stringify({ scope: "gemini", ...budget }));
 
     const text = response.text;
     if (!text) {

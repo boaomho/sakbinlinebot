@@ -34,7 +34,7 @@ export function testConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     personaGender: "หญิง",
     useEmoji: false,
     temperature: 1.0,
-    maxOutputTokens: 2048,
+    maxOutputTokens: 4096,
     showTyping: false,
     debounceWaitMs: 80,
     delayBetweenBubblesMs: 0,

@@ -202,7 +202,11 @@ export async function getConfig(): Promise<AppConfig> {
     personaGender: strOf("หญิง", "เพศบอท"),
     useEmoji: boolOf(false, "ใช้ emoji", "ใช้_emoji", "emoji"),
     temperature: numOf(1.0, "temperature"),
-    maxOutputTokens: Math.max(2048, numOf(2048, "maxOutputTokens", "max_output_tokens")),
+    // 🔴 พื้น 4096 — gemini-3.x นับ thinking+output รวมกันในเพดานนี้
+    // ของจริงเคยชน 2032/2048 ตอนเทิร์นสรุปออเดอร์ (เทิร์นปิดการขาย = เทิร์นที่แพงที่สุด)
+    // → finishReason=MAX_TOKENS → fallback → ลูกค้าเห็น "ปลาทูขัดข้อง" ตอนกำลังจะจ่ายเงิน
+    // ชีตตั้ง 2048 ไว้ ซึ่งไม่พอจริง → โค้ดบังคับพื้นให้ (pattern เดียวกับที่เคยยกจาก 1024→2048)
+    maxOutputTokens: Math.max(4096, numOf(4096, "maxOutputTokens", "max_output_tokens")),
     showTyping: boolOf(true, "แสดง_typing", "typing"),
     debounceWaitMs: debounceSec * 1000,
     delayBetweenBubblesMs: numOf(1, "หน่วง_ระหว่างบอลลูน", "หน่วง_ระหว่างข้อความ") * 1000,
