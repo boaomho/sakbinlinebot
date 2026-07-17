@@ -1,8 +1,17 @@
 import { google, sheets_v4 } from "googleapis";
 import { sanitizePhone, sanitizeAmount, sanitizeShortText } from "./core/orders";
+import { resolveSpreadsheetId } from "./core/sheet-id";
 
 // sanitizers ย้ายไปอยู่ lib/core/orders.ts (โดเมนล้วน) — re-export ไว้เพื่อไม่ให้ import เดิมพัง
 export { sanitizePhone, sanitizeAmount, sanitizeShortText };
+
+/**
+ * spreadsheetId ของชีต Orders — รับได้ทั้ง ID ล้วนและ URL หน้าแก้ไข
+ * ผิดรูป (เช่น published CSV URL) = throw ทันทีพร้อมบอกวิธีแก้ ไม่ปล่อยให้ Google ตอบ 404 ลอย ๆ
+ */
+function ordersSheetId(): string {
+  return resolveSpreadsheetId(process.env.SHEET_ORDERS_ID, "SHEET_ORDERS_ID");
+}
 
 const SHEET_NAME = "Orders";
 /**
@@ -79,8 +88,7 @@ export interface NewOrderInput {
 }
 
 export async function appendOrderRow(input: NewOrderInput): Promise<void> {
-  const sheetId = process.env.SHEET_ORDERS_ID;
-  if (!sheetId) throw new Error("SHEET_ORDERS_ID missing");
+  const sheetId = ordersSheetId();
   const sheets = getSheets();
 
   const row = [
@@ -142,8 +150,8 @@ function isTrue(value: string | undefined): boolean {
  * ถ้าติ๊กทั้ง คอนเฟิร์ม(O) และ ยกเลิก(P) พร้อมกัน → ถือว่ายกเลิก (ปลอดภัยไว้ก่อน จึงกรอง cancelled ออกก่อนเสมอ)
  */
 export async function listPendingOrders(): Promise<OrderRow[]> {
-  const sheetId = process.env.SHEET_ORDERS_ID;
-  if (!sheetId) return [];
+  if (!process.env.SHEET_ORDERS_ID) return []; // env ไม่มี = ฟีเจอร์ปิด ข้ามเงียบ (พฤติกรรมเดิม)
+  const sheetId = ordersSheetId(); // env มีแต่ผิดรูป = ดังทันที
   const sheets = getSheets();
 
   const res = await sheets.spreadsheets.values.get({
@@ -177,8 +185,8 @@ export async function listPendingOrders(): Promise<OrderRow[]> {
 }
 
 export async function markOrderSent(rowIndex: number, orderNumber: string): Promise<void> {
-  const sheetId = process.env.SHEET_ORDERS_ID;
-  if (!sheetId) return;
+  if (!process.env.SHEET_ORDERS_ID) return; // env ไม่มี = ฟีเจอร์ปิด ข้ามเงียบ (พฤติกรรมเดิม)
+  const sheetId = ordersSheetId(); // env มีแต่ผิดรูป = ดังทันที
   const sheets = getSheets();
 
   await sheets.spreadsheets.values.batchUpdate({
