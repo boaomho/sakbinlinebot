@@ -248,6 +248,25 @@ async function runOrderGate(
   const payment = gate.payment;
   const adminGroupId = process.env.ADMIN_GROUP_ID;
 
+  // 🔬 TEMP DIAG (ลบออกเมื่อหาสาเหตุเจอ) — gate เห็นอะไรบ้าง
+  // ⚠️ log แค่ "ชื่อฟิลด์ที่มีค่า" ห้าม log ค่าจริง (ชื่อ/ที่อยู่/เบอร์ = PII ตาม CLAUDE.md)
+  console.log(
+    JSON.stringify({
+      scope: "diag-gate",
+      at: "after-merge",
+      aiSentFields: Object.keys(gemini.orderData).filter((k) => (gemini.orderData[k] ?? "").trim() !== ""),
+      pendingFilledFields: Object.keys(pending).filter((k) => (pending[k] ?? "").trim() !== ""),
+      aiPaymentMethod: gemini.paymentMethod,
+      gate: {
+        payment: gate.payment,
+        complete: gate.complete,
+        waitTag: gate.waitTag,
+        paidNoAddress: gate.paidNoAddress,
+      },
+      slipPresent: Boolean(slipPathname),
+    }),
+  );
+
   if (gate.complete) {
     const name = await getProfileName(userId);
     try {
@@ -460,6 +479,29 @@ async function processMessage(
     if (switches.memory) await setHumanMode(userId, true);
     editHandled = true;
   }
+
+  // 🔬 TEMP DIAG (ลบออกเมื่อหาสาเหตุเจอ) — gate ถูกเรียกมั้ย ถ้าไม่ เพราะอะไร
+  // ถ้า runOrderGate ไม่ถูกเรียก จะไม่มี log อะไรจาก scope:"orders" เลยทั้ง success/fail
+  console.log(
+    JSON.stringify({
+      scope: "diag-gate",
+      at: "before-gate",
+      willRunGate: Boolean(switches.orders && switches.memory && customer && !editHandled),
+      switchOrders: switches.orders,
+      rawSwitchOrdersFromSheet: config.rawSwitches.orders, // ← สวิตช์ในชีต Config
+      switchMemory: switches.memory,
+      hasCustomer: Boolean(customer),
+      editHandled,
+      envOrdersReady: {
+        ORDER_GROUP_ID: Boolean(process.env.ORDER_GROUP_ID),
+        GOOGLE_SERVICE_ACCOUNT: Boolean(process.env.GOOGLE_SERVICE_ACCOUNT),
+        SHEET_ORDERS_ID: Boolean(process.env.SHEET_ORDERS_ID),
+        BLOB_SLIPS_TOKEN: Boolean(process.env.BLOB_SLIPS_TOKEN),
+        DATABASE_URL: Boolean(process.env.DATABASE_URL),
+      },
+      configLoadFailed: config.loadFailed,
+    }),
+  );
 
   // order gate — โค้ดตัดสินจาก pending_order (merge → ครบ/ไม่ครบ) · ข้ามถ้าเป็นการขอแก้ออเดอร์เดิม
   if (switches.orders && switches.memory && customer && !editHandled) {
