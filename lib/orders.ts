@@ -1,6 +1,6 @@
-import { google, sheets_v4 } from "googleapis";
 import { sanitizePhone, sanitizeAmount, sanitizeShortText } from "./core/orders";
 import { resolveSpreadsheetId } from "./core/sheet-id";
+import { getSheets } from "./sheets/client";
 
 // sanitizers ย้ายไปอยู่ lib/core/orders.ts (โดเมนล้วน) — re-export ไว้เพื่อไม่ให้ import เดิมพัง
 export { sanitizePhone, sanitizeAmount, sanitizeShortText };
@@ -61,33 +61,7 @@ export const ORDERS_HEADER = [
   "bot_version", // X 23
 ];
 
-function getCredentials(): { client_email: string; private_key: string } | null {
-  const raw = process.env.GOOGLE_SERVICE_ACCOUNT;
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw);
-    if (!parsed.client_email || !parsed.private_key) return null;
-    return { client_email: parsed.client_email, private_key: parsed.private_key };
-  } catch (error) {
-    console.error(JSON.stringify({ scope: "orders", warning: "GOOGLE_SERVICE_ACCOUNT parse failed", error: String(error) }));
-    return null;
-  }
-}
-
-let sheetsClient: sheets_v4.Sheets | null = null;
-
-function getSheets(): sheets_v4.Sheets {
-  if (sheetsClient) return sheetsClient;
-  const creds = getCredentials();
-  if (!creds) throw new Error("GOOGLE_SERVICE_ACCOUNT missing or invalid");
-  const auth = new google.auth.JWT({
-    email: creds.client_email,
-    key: creds.private_key,
-    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-  });
-  sheetsClient = google.sheets({ version: "v4", auth });
-  return sheetsClient;
-}
+// getSheets() ย้ายไป lib/sheets/client.ts (client เดียวใช้ทั้งอ่าน BotLibrary + อ่าน/เขียน Orders)
 
 export interface NewOrderInput {
   lineDisplayName: string;

@@ -95,6 +95,16 @@ vi.mock("googleapis", async () => {
       for (const d of p.requestBody.data) sheetsCalls.batchUpdates.push({ range: d.range, values: d.values });
       return { data: {} };
     },
+    // batchGet: คืน valueRanges เรียงตามลำดับ ranges ที่ขอ (ตาม types จริง)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    batchGet: async (p: any) => {
+      sheetsCalls.lastBatchGetRanges = p.ranges;
+      const valueRanges = (p.ranges as string[]).map((range) => ({
+        range,
+        values: sheetsCalls.botLibReturn[range.split("!")[0]] ?? [],
+      }));
+      return { data: { valueRanges } };
+    },
   };
   return {
     google: {
@@ -147,6 +157,8 @@ beforeAll(async () => {
 beforeEach(async () => {
   const { resetState } = await import("./state");
   const { resetDb } = await import("./db");
+  const { __resetBotLibraryCache } = await import("@/lib/sheets/loader");
   resetState();
+  __resetBotLibraryCache(); // กัน bundle ค้างข้ามเทส
   await resetDb();
 });

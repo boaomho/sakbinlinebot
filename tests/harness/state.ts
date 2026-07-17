@@ -32,6 +32,10 @@ export const sheetsCalls = {
   batchUpdates: [] as { range: string; values: string[][] }[],
   /** ค่าที่จะให้ values.get คืน (สำหรับ cron ออเดอร์) */
   getReturn: [] as string[][],
+  /** ค่าที่จะให้ values.batchGet คืน — keyed ด้วยชื่อแท็บ (CSV_Step, CSV_FAQ, ...) */
+  botLibReturn: {} as Record<string, string[][]>,
+  /** ranges ที่ถูกขอครั้งล่าสุด (ตรวจว่ายิง 1 call ครบทุกแท็บ) */
+  lastBatchGetRanges: [] as string[],
 };
 
 /** สลิปที่อัปโหลด (mock lib/blob) */
@@ -82,6 +86,8 @@ export function resetState(): void {
   sheetsCalls.appends.length = 0;
   sheetsCalls.batchUpdates.length = 0;
   sheetsCalls.getReturn.length = 0;
+  sheetsCalls.botLibReturn = {};
+  sheetsCalls.lastBatchGetRanges = [];
   blobState.uploaded.length = 0;
   blobState.seq = 0;
   geminiState.script = [];
