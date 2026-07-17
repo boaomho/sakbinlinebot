@@ -1,0 +1,131 @@
+import { beforeAll, beforeEach, vi } from "vitest";
+
+/**
+ * Mock ขา external ทั้งหมด — vi.mock ถูก hoist ขึ้นบนสุดของไฟล์ factory จึงอ้าง
+ * ตัวแปร top-level ไม่ได้ ต้อง await import("./state") ข้างในแทน
+ *
+ * หลักการเลือกชั้นที่ mock:
+ * - LINE  → mock ที่ "SDK client" ชั้นล่างสุด ไม่ใช่ lib/line → lib/line ทำงานจริง
+ *           (parseReplyIntoMessages + enforceTextLast ได้ถูกเทสของจริง)
+ * - Sheets/Blob/Gemini → mock ที่ lib (ไม่มี logic ที่ต้องพิสูจน์ในก้อนนี้)
+ * - orders → mock เฉพาะ appendOrderRow · sanitizePhone ฯลฯ ใช้ของจริง (route.ts พึ่งมัน)
+ * - db (Neon) → ของจริงทั้งหมด (state ข้ามเทิร์นคือหัวใจของบท 1/7/9)
+ */
+
+vi.mock("@line/bot-sdk", async () => {
+  const actual = await vi.importActual<typeof import("@line/bot-sdk")>("@line/bot-sdk");
+  const { Readable } = await import("node:stream");
+  const { lineCalls, LINE_DISPLAY_NAME } = await import("./state");
+
+  class FakeMessagingApiClient {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    async replyMessage(req: any) {
+      lineCalls.replies.push({ to: req.replyToken, messages: req.messages });
+      return {};
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    async pushMessage(req: any) {
+      lineCalls.pushes.push({ to: req.to, messages: req.messages });
+      return {};
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    async showLoadingAnimation(req: any) {
+      lineCalls.loadingIndicators.push(req.chatId);
+      return {};
+    }
+    async getProfile(userId: string) {
+      return { displayName: LINE_DISPLAY_NAME, userId };
+    }
+  }
+
+  class FakeMessagingApiBlobClient {
+    async getMessageContent(_messageId: string) {
+      return Readable.from([Buffer.from("fake-image-bytes")]);
+    }
+  }
+
+  return {
+    ...actual,
+    messagingApi: {
+      ...actual.messagingApi,
+      MessagingApiClient: FakeMessagingApiClient,
+      MessagingApiBlobClient: FakeMessagingApiBlobClient,
+    },
+  };
+});
+
+vi.mock("@/lib/config", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/config")>("@/lib/config");
+  const { testConfig } = await import("./fixtures");
+  // resolveFeatureSwitches / formatConfigForPrompt / DEFAULT_REPLY = ของจริง
+  return { ...actual, getConfig: async () => testConfig() };
+});
+
+vi.mock("@/lib/sheets", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/sheets")>("@/lib/sheets");
+  const { STEP_CSV, FAQ_CSV } = await import("./fixtures");
+  return {
+    ...actual,
+    getStepCsv: async () => STEP_CSV,
+    getFaqCsv: async () => FAQ_CSV,
+  };
+});
+
+vi.mock("@/lib/orders", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/orders")>("@/lib/orders");
+  const { orderRows } = await import("./state");
+  return {
+    ...actual, // sanitizePhone / sanitizeAmount / sanitizeShortText = ของจริง
+    appendOrderRow: async (input: unknown) => {
+      orderRows.push(input as never);
+    },
+    listPendingOrders: async () => [],
+    markOrderSent: async () => {},
+  };
+});
+
+vi.mock("@/lib/blob", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/blob")>("@/lib/blob");
+  const { blobState } = await import("./state");
+  return {
+    ...actual,
+    uploadSlip: async (userId: string) => {
+      blobState.seq += 1;
+      const pathname = `slips/harness/${userId}_${String(blobState.seq).padStart(3, "0")}.jpg`;
+      blobState.uploaded.push(pathname);
+      return { pathname, url: `https://blob.invalid/${pathname}` };
+    },
+    getSlipSignedUrl: async (pathname: string) => `https://blob.invalid/signed/${pathname}`,
+  };
+});
+
+vi.mock("@/lib/gemini", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/gemini")>("@/lib/gemini");
+  const { geminiState, turn } = await import("./state");
+  return {
+    ...actual,
+    runSalesTurn: async (input: Parameters<typeof actual.runSalesTurn>[0]) => {
+      // ยิง Gemini จริงเฉพาะตอนรันมือ: HARNESS_REAL_GEMINI=1 npm test
+      if (process.env.HARNESS_REAL_GEMINI === "1") return actual.runSalesTurn(input);
+      const scripted = geminiState.script[geminiState.cursor];
+      if (!scripted) {
+        geminiState.overflowCalls += 1;
+        return turn({ reply: "(script หมด)" });
+      }
+      geminiState.cursor += 1;
+      return scripted;
+    },
+  };
+});
+
+beforeAll(async () => {
+  const { initHarnessDb } = await import("./db");
+  await initHarnessDb();
+});
+
+beforeEach(async () => {
+  const { resetState } = await import("./state");
+  const { resetDb } = await import("./db");
+  resetState();
+  await resetDb();
+});
