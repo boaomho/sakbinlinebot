@@ -62,12 +62,7 @@ import {
 } from "@/lib/admin-commands";
 import { uploadSlip, getSlipSignedUrl } from "@/lib/blob";
 import { appendOrderRow } from "@/lib/orders";
-import {
-  evaluateOrderGate,
-  formatProductAndQty,
-  buildNewOrderAdminText,
-  buildIncompleteOrderAdminText,
-} from "@/lib/core/orders";
+import { evaluateOrderGate, formatProductAndQty, buildNewOrderAdminText } from "@/lib/core/orders";
 
 export const maxDuration = 30;
 
@@ -264,7 +259,6 @@ async function runOrderGate(
       payment: gate.payment,
       complete: gate.complete,
       missing: gate.missing,
-      incompleteWithIntent: gate.incompleteWithIntent,
       waitTag: gate.waitTag,
       slipPresent: Boolean(slipPathname),
     }),
@@ -311,22 +305,10 @@ async function runOrderGate(
     return;
   }
 
-  // ---- ระดับ 2: ยังไม่ครบ ----
+  // ---- ยังไม่ครบ → ติดแท็กรอ (ป้อน Follow) · ไม่แจ้งกลุ่ม · บอทขอสิ่งที่ยังขาดจากลูกค้าเอง ----
+  // 🔴 D-11: ไม่มี push ⚠️ ระหว่างทางแล้ว (มันแจ้งเร็วไป: COD ยังไม่ได้ที่อยู่ก็ยิงกลุ่ม)
+  //   COD ยังไม่จ่าย บอทเก็บข้อมูลเองพอ · โอน แอดมินรู้ตอนสลิป (push 💰 ใน handleImageIntent)
   await reconcileWaitTags(userId, gate.waitTag);
-
-  // ลูกค้า "สั่งแล้ว" (เลือกวิธีจ่ายแล้ว) แต่ข้อมูลไม่ครบ → แจ้งแอดมินให้ตามเก็บ ห้ามเงียบ
-  // 🔴 คนที่มาถึงขั้นนี้ = จ่ายแล้ว(โอน)/ตกลงแล้ว(COD) ปล่อยเงียบ = เสียออเดอร์ที่จ่ายเงินแล้ว
-  // ยังไม่เขียนแถว: ยังไม่มี order_id ให้แอดมินเติมข้อมูลทีหลังได้ (มาตอน Step 2)
-  // ใช้ flag เดิม paid_no_address_notified เป็นตัวกัน push ซ้ำทุกเทิร์น (ไม่เพิ่ม state ใหม่)
-  if (gate.incompleteWithIntent && !customer.paidNoAddressNotified) {
-    if (adminGroupId) {
-      const name = await getProfileName(userId);
-      const note = gemini.imageNote ? `\n${gemini.imageNote}` : "";
-      const text = buildIncompleteOrderAdminText(pending, payment, gate.missing, name) + note;
-      await pushRawText(adminGroupId, text);
-    }
-    await setPaidNoAddressNotified(userId, true); // แจ้งครั้งเดียว กัน spam ทุกเทิร์น
-  }
 }
 
 async function processMessage(

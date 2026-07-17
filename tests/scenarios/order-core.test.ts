@@ -77,39 +77,35 @@ describe("evaluateOrderGate — 2 ระดับ", () => {
     expect(g.complete).toBe(true);
   });
 
-  it("ขาดเบอร์ + สั่งแล้ว → ไม่ครบ + แจ้งแอดมิน", () => {
+  it("ขาดเบอร์ → ไม่ครบ · missing มี เบอร์ (บอทขอเบอร์ต่อ)", () => {
     const g = evaluateOrderGate({ pending: { ...base, การชำระเงิน: "COD" }, slipPresent: false });
     expect(g.complete).toBe(false);
     expect(g.missing).toContain("เบอร์");
-    expect(g.incompleteWithIntent).toBe(true);
   });
 
-  it("โอน + ที่อยู่ + ไม่มีสลิป → ไม่ครบ + รอโอน + แจ้งแอดมิน", () => {
+  it("โอน + ที่อยู่ + ไม่มีสลิป → ไม่ครบ + รอโอน · missing มี สลิป", () => {
     const g = evaluateOrderGate({ pending: { ...base, เบอร์: "0811122334", การชำระเงิน: "โอน" }, slipPresent: false });
     expect(g.complete).toBe(false);
     expect(g.waitTag).toBe("รอโอน");
-    expect(g.incompleteWithIntent).toBe(true);
     expect(g.missing).toContain("สลิป");
   });
 
-  it("โอน + สลิป + ไม่มีที่อยู่ → แจ้งแอดมิน (จ่ายแล้วห้ามเงียบ)", () => {
+  it("โอน + สลิป + ไม่มีที่อยู่ → ไม่ครบ · missing มี ที่อยู่ (บอทขอที่อยู่ · แอดมินรู้จากสลิปแล้ว)", () => {
     const g = evaluateOrderGate({ pending: { การชำระเงิน: "โอน", เบอร์: "0811122334", ชื่อ: "สมหญิง" }, slipPresent: true });
     expect(g.complete).toBe(false);
-    expect(g.incompleteWithIntent).toBe(true);
     expect(g.missing).toContain("ที่อยู่");
   });
 
-  it("ยังไม่เลือกวิธีจ่าย → เงียบได้ (ยังไม่ใช่ลูกค้าที่ตกลงซื้อ)", () => {
+  it("ยังไม่เลือกวิธีจ่าย → ไม่ครบ ไม่มีแท็กรอ", () => {
     const g = evaluateOrderGate({ pending: { ...base, เบอร์: "0811122334" }, slipPresent: false });
     expect(g.complete).toBe(false);
-    expect(g.incompleteWithIntent, "ยังไม่สั่ง = ไม่ต้องกวนแอดมิน").toBe(false);
     expect(g.waitTag).toBeNull();
   });
 
-  it("ขาดชื่อ + สั่งแล้ว → แจ้งแอดมิน", () => {
-    const g = evaluateOrderGate({ pending: { ที่อยู่: base.ที่อยู่, เบอร์: "0811122334", การชำระเงิน: "COD" }, slipPresent: false });
+  it("ได้แค่ที่อยู่ → ไม่ครบ · missing มี ชื่อ+เบอร์ (บอทต้องขอทั้งคู่ต่อ)", () => {
+    const g = evaluateOrderGate({ pending: { ที่อยู่: base.ที่อยู่, การชำระเงิน: "COD" }, slipPresent: false });
     expect(g.complete).toBe(false);
     expect(g.missing).toContain("ชื่อ");
-    expect(g.incompleteWithIntent).toBe(true);
+    expect(g.missing).toContain("เบอร์");
   });
 });

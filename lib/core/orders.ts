@@ -79,25 +79,23 @@ export interface OrderGateResult {
   payment: string;
   /** ครบ = เขียนลงชีตได้ + push 📦 */
   complete: boolean;
-  /** แท็กรอที่ควรเป็น ณ ตอนนี้ (null = ไม่มีแท็กรอ) */
+  /** แท็กรอที่ควรเป็น ณ ตอนนี้ (null = ไม่มีแท็กรอ) — ป้อน Follow engine (ยังไม่เปิด) */
   waitTag: WaitTag;
-  /**
-   * ไม่ครบ แต่ลูกค้า "สั่งแล้ว" (เลือกวิธีจ่ายแล้ว) → push แจ้งแอดมิน ⚠️ ให้ตามเก็บ
-   * 🔴 คนที่มาถึงขั้นนี้ = จ่ายแล้ว(โอน)/ตกลงแล้ว(COD) — ห้ามเงียบเด็ดขาด
-   */
-  incompleteWithIntent: boolean;
-  /** อะไรขาดบ้าง — เอาไปประกอบข้อความ push ⚠️ ให้แอดมินรู้ว่าต้องตามอะไร */
+  /** อะไรขาดบ้าง (ชื่อ/ที่อยู่/เบอร์/สลิป) — บอทเอาไปขอลูกค้าเฉพาะที่ขาด · ใช้ log ด้วย */
   missing: string[];
 }
 
 /**
- * gate ออเดอร์ 2 ระดับ — โค้ดตัดสินจาก pending_order ที่มีจริงเท่านั้น ไม่พึ่ง AI signal
+ * gate ออเดอร์ — โค้ดตัดสินจาก pending_order ที่มีจริงเท่านั้น ไม่พึ่ง AI signal
  *
  *   COD ปิด = ชื่อ + เบอร์(มีตัวเลข) + ที่อยู่(ก้อนไม่ว่าง)
  *   โอน ปิด = เหมือน COD + สลิป
- *   ครบ           → เขียนชีต + push 📦
- *   ไม่ครบ+สั่งแล้ว → push ⚠️ อย่างเดียว (ยังไม่เขียนแถว — ยังไม่มี order_id ให้เติมทีหลังจน Step 2)
- *   ยังไม่สั่ง      → เงียบได้ (ยังไม่ใช่ลูกค้าที่จ่ายเงิน)
+ *   ครบ    → เขียนชีต + push 📦
+ *   ไม่ครบ → ไม่เขียน ไม่แจ้งกลุ่ม · บอทขอสิ่งที่ยังขาดจากลูกค้าเอง (missing)
+ *
+ * 🔴 จังหวะแจ้งกลุ่ม (ผู้เรียกจัดการ · D-11): ตัด push ⚠️ ระหว่างทางออก — มันแจ้งเร็วไป
+ *   (COD ยังไม่ได้ที่อยู่ก็ยิงกลุ่ม) · COD ยังไม่จ่าย บอทเก็บข้อมูลเองพอ ครบค่อย 📦
+ *   โอน แอดมินรู้ตอนสลิปอยู่แล้ว (push 💰 แยก) ครบค่อย 📦 อีกรอบ
  *
  * เป็น pure function: ไม่มี I/O ไม่แตะ DB — ผู้เรียกเอาผลไปลงมือเอง
  */
@@ -110,8 +108,7 @@ export function evaluateOrderGate({ pending, slipPresent }: OrderGateInput): Ord
 
   const complete = (payment === "COD" && base) || (payment === "โอน" && base && slipPresent);
 
-  const hasIntent = payment !== ""; // เลือกวิธีจ่ายแล้ว = สั่งแล้ว
-
+  // เช็คครบ 3 อย่างแยกกัน — ขาดอันไหนบอทขออันนั้น (ได้ที่อยู่แล้วยังต้องขอชื่อ+เบอร์ต่อ)
   const missing: string[] = [];
   if (!complete) {
     if (!name) missing.push("ชื่อ");
@@ -119,9 +116,6 @@ export function evaluateOrderGate({ pending, slipPresent }: OrderGateInput): Ord
     if (!phone) missing.push("เบอร์");
     if (payment === "โอน" && !slipPresent) missing.push("สลิป");
   }
-
-  // ไม่ครบ + สั่งแล้ว → แจ้งแอดมินให้ตามเก็บ ห้ามเงียบ
-  const incompleteWithIntent = !complete && hasIntent;
 
   let waitTag: WaitTag = null;
   if (!complete) {
@@ -136,7 +130,7 @@ export function evaluateOrderGate({ pending, slipPresent }: OrderGateInput): Ord
     }
   }
 
-  return { payment, complete, waitTag, incompleteWithIntent, missing };
+  return { payment, complete, waitTag, missing };
 }
 
 /** ข้อความแจ้งกลุ่มแอดมินเมื่อออเดอร์สมบูรณ์ขึ้นชีต (push จุดที่ 2) */
@@ -151,27 +145,3 @@ export function buildNewOrderAdminText(pending: Record<string, string>, payment:
   );
 }
 
-/**
- * ข้อความแจ้งแอดมินเมื่อ "ลูกค้าสั่งแล้วแต่ข้อมูลไม่ครบ" — ยังไม่ขึ้นชีต ต้องมีคนตามเก็บ
- * ใส่ของที่มีอยู่ให้หมดเท่าที่มี เพื่อให้แอดมินตามต่อได้ทันทีโดยไม่ต้องไล่อ่านแชท
- */
-export function buildIncompleteOrderAdminText(
-  pending: Record<string, string>,
-  payment: string,
-  missing: string[],
-  lineName: string,
-): string {
-  const lines = [
-    `⚠️ ลูกค้าสั่งแล้วแต่ข้อมูลไม่ครบ (${payment})`,
-    `ยังขาด: ${missing.join(", ")}`,
-    "———",
-  ];
-  const productLine = formatProductAndQty(pending);
-  if (productLine) lines.push(productLine);
-  if (pending["ยอด"]) lines.push(pending["ยอด"]);
-  if (pending["ชื่อ"]) lines.push(`ชื่อ: ${pending["ชื่อ"]}`);
-  if (pending["เบอร์"]) lines.push(`เบอร์: ${pending["เบอร์"]}`);
-  if (pending["ที่อยู่"]) lines.push(`ที่อยู่: ${pending["ที่อยู่"]}`);
-  lines.push("———", `LineOA: ${lineName}`);
-  return lines.join("\n");
-}
