@@ -1,6 +1,7 @@
 import { sanitizePhone, sanitizeAmount, sanitizeShortText } from "./core/orders";
 import { resolveSpreadsheetId } from "./core/sheet-id";
 import { getSheets } from "./sheets/client";
+import { resolveColumns, cell, columnLetter, rowFromValues, ColumnMap } from "./sheets/columns";
 
 // sanitizers ย้ายไปอยู่ lib/core/orders.ts (โดเมนล้วน) — re-export ไว้เพื่อไม่ให้ import เดิมพัง
 export { sanitizePhone, sanitizeAmount, sanitizeShortText };
@@ -63,6 +64,49 @@ export const ORDERS_HEADER = [
 
 // getSheets() ย้ายไป lib/sheets/client.ts (client เดียวใช้ทั้งอ่าน BotLibrary + อ่าน/เขียน Orders)
 
+// ---- header-driven: หาคอลัมน์จากชื่อ header ไม่ใช่ index ตายตัว (CONTRACTS C1) ----
+// cache header 60 วิ (เดียวกับ loader) — append เกิดทุกออเดอร์ อ่าน header ทุกครั้ง = +1 read เปล่า
+// safety: ถ้า field ไม่ครบ/ผิดรูปจาก cache เก่า → invalidate + อ่านใหม่ 1 รอบ (กันแก้ header กลางคัน)
+
+const HEADER_TTL_MS = 60_000;
+let ordersColsCache: { cols: ColumnMap; at: number } | null = null;
+
+async function getOrdersColumns(force = false): Promise<ColumnMap> {
+  const now = Date.now();
+  if (!force && ordersColsCache && now - ordersColsCache.at < HEADER_TTL_MS) {
+    return ordersColsCache.cols;
+  }
+  const res = await getSheets().spreadsheets.values.get({
+    spreadsheetId: ordersSheetId(),
+    range: `${SHEET_NAME}!1:1`,
+  });
+  const header = ((res.data.values?.[0] as string[] | undefined) ?? []).map((c) => String(c));
+  const cols = resolveColumns(header, ORDERS_HEADER, SHEET_NAME);
+  if (!cols) {
+    ordersColsCache = null;
+    throw new Error("Orders header ไม่ครบตาม ORDERS_HEADER — ไม่เขียนกันลงผิดช่อง (all-or-nothing)");
+  }
+  ordersColsCache = { cols, at: now };
+  return cols;
+}
+
+/** ลอง fn ด้วย cache · ถ้า field ไม่ครบ (throw) → invalidate + อ่าน header ใหม่ 1 รอบแล้วลองอีกที */
+async function withOrdersColumns<T>(fn: (cols: ColumnMap) => T | Promise<T>): Promise<T> {
+  const cols = await getOrdersColumns();
+  try {
+    return await fn(cols);
+  } catch (error) {
+    console.warn(JSON.stringify({ scope: "orders", warning: "header cache น่าจะเก่า อ่านใหม่ 1 รอบ", error: String(error) }));
+    const fresh = await getOrdersColumns(true);
+    return await fn(fresh);
+  }
+}
+
+/** เฉพาะเทส — ล้าง cache header */
+export function __resetOrdersColumnsCache(): void {
+  ordersColsCache = null;
+}
+
 export interface NewOrderInput {
   lineDisplayName: string;
   productAndQty?: string;
@@ -78,43 +122,36 @@ export interface NewOrderInput {
 }
 
 export async function appendOrderRow(input: NewOrderInput): Promise<void> {
-  const sheetId = ordersSheetId();
-  const sheets = getSheets();
+  // ค่าที่จะเขียน keyed ด้วย "ชื่อ header" — โค้ดวางตามตำแหน่งจริงจาก resolveColumns
+  // (Q–X เว้นว่างไว้ก่อน · Step 2/3 จะเติม)
+  const values: Record<string, string> = {
+    ลำดับ: "", // cron แจกตอนคอนเฟิร์ม
+    วันที่: new Date().toISOString(),
+    ชื่อไลน์ลูกค้า: sanitizeShortText(input.lineDisplayName, 100),
+    "ชื่อ-นามสกุล": sanitizeShortText(input.customerName),
+    เบอร์โทร: sanitizePhone(input.phone),
+    ที่อยู่: sanitizeShortText(input.address, 300),
+    จังหวัด: sanitizeShortText(input.province, 100),
+    รหัสไปรษณีย์: sanitizeShortText(input.postalCode, 10),
+    "สินค้า+จำนวน": sanitizeShortText(input.productAndQty, 200),
+    ยอดเงิน: sanitizeAmount(input.total),
+    การชำระเงิน: sanitizeShortText(input.paymentMethod, 20),
+    รูปSlip: input.slipPathname ?? "",
+    คอนเฟิร์ม: "FALSE",
+    ยกเลิก: "FALSE",
+    ส่งออเดอร์แล้ว: "FALSE",
+    เลขTracking: "",
+  };
 
-  // ⚠️ ลำดับต้องตรงกับ ORDERS_HEADER เป๊ะ — ค่าลงผิดช่อง = ออเดอร์เพี้ยนทั้งแถวแบบเงียบ ๆ
-  const row = [
-    "", // A ลำดับ - เว้นว่าง ให้ cron แจกตอนคอนเฟิร์ม
-    new Date().toISOString(), // B วันที่
-    sanitizeShortText(input.lineDisplayName, 100), // C ชื่อไลน์ลูกค้า
-    sanitizeShortText(input.customerName), // D ชื่อ-นามสกุล
-    sanitizePhone(input.phone), // E เบอร์โทร
-    sanitizeShortText(input.address, 300), // F ที่อยู่ (ก้อนดิบ)
-    sanitizeShortText(input.province, 100), // G จังหวัด
-    sanitizeShortText(input.postalCode, 10), // H รหัสไปรษณีย์
-    sanitizeShortText(input.productAndQty, 200), // I สินค้า+จำนวน
-    sanitizeAmount(input.total), // J ยอดเงิน
-    sanitizeShortText(input.paymentMethod, 20), // K การชำระเงิน
-    input.slipPathname ?? "", // L รูปSlip (pathname)
-    "FALSE", // M คอนเฟิร์ม
-    "FALSE", // N ยกเลิก
-    "FALSE", // O ส่งออเดอร์แล้ว
-    "", // P เลขTracking
-    // ---- Q–X: จองตำแหน่งให้ตรงชีตจริง · ยังไม่มีค่าจน Step 2/3 ----
-    "", // Q order_id      (Step 2 — idempotency key)
-    "", // R line_user_id  (Step 2)
-    "", // S items_json    (Step 2)
-    "", // T ค่าส่ง         (Step 3)
-    "", // U source_channel(Step 2)
-    "", // V ref_code      (Step 2)
-    "", // W ยอดในสลิป      (แอดมินกรอกเอง)
-    "", // X bot_version   (Step 2)
-  ];
-
-  await sheets.spreadsheets.values.append({
-    spreadsheetId: sheetId,
-    range: `${SHEET_NAME}!A:X`,
-    valueInputOption: "USER_ENTERED",
-    requestBody: { values: [row] },
+  await withOrdersColumns(async (cols) => {
+    const row = rowFromValues(values, cols); // throw ถ้า header ไม่ครบ → withOrdersColumns อ่านใหม่
+    const lastCol = columnLetter(Math.max(...Object.values(cols)));
+    await getSheets().spreadsheets.values.append({
+      spreadsheetId: ordersSheetId(),
+      range: `${SHEET_NAME}!A:${lastCol}`,
+      valueInputOption: "USER_ENTERED",
+      requestBody: { values: [row] },
+    });
   });
 }
 
@@ -150,33 +187,33 @@ function isTrue(value: string | undefined): boolean {
  */
 export async function listPendingOrders(): Promise<OrderRow[]> {
   if (!process.env.SHEET_ORDERS_ID) return []; // env ไม่มี = ฟีเจอร์ปิด ข้ามเงียบ (พฤติกรรมเดิม)
-  const sheetId = ordersSheetId(); // env มีแต่ผิดรูป = ดังทันที
-  const sheets = getSheets();
 
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: sheetId,
-    range: `${SHEET_NAME}!A2:X`,
+  const cols = await getOrdersColumns(); // env ผิดรูป/ header ไม่ครบ = ดังทันที
+  const lastCol = columnLetter(Math.max(...Object.values(cols)));
+  const res = await getSheets().spreadsheets.values.get({
+    spreadsheetId: ordersSheetId(),
+    range: `${SHEET_NAME}!A2:${lastCol}`,
   });
-  const rows = res.data.values ?? [];
+  const rows = (res.data.values as string[][] | undefined) ?? [];
 
   const parsed: OrderRow[] = rows.map((r, i) => ({
     rowIndex: i + 2,
-    orderNumber: r[0] ?? "", // A
-    lineDisplayName: r[2] ?? "", // C
-    customerName: r[3] ?? "", // D
-    phone: r[4] ?? "", // E
-    address: r[5] ?? "", // F
-    province: r[6] ?? "", // G
-    postalCode: r[7] ?? "", // H
-    productAndQty: r[8] ?? "", // I
-    total: r[9] ?? "", // J
-    paymentMethod: r[10] ?? "", // K
-    slipPathname: r[11] ?? "", // L
-    confirmed: isTrue(r[12]), // M
-    cancelled: isTrue(r[13]), // N
-    sent: isTrue(r[14]), // O
-    trackingNumber: r[15] ?? "", // P
-    orderId: r[16] ?? "", // Q ← idempotency key (เลื่อนจาก S เพราะลบ ตำบล/อำเภอ)
+    orderNumber: cell(r, cols, "ลำดับ"),
+    lineDisplayName: cell(r, cols, "ชื่อไลน์ลูกค้า"),
+    customerName: cell(r, cols, "ชื่อ-นามสกุล"),
+    phone: cell(r, cols, "เบอร์โทร"),
+    address: cell(r, cols, "ที่อยู่"),
+    province: cell(r, cols, "จังหวัด"),
+    postalCode: cell(r, cols, "รหัสไปรษณีย์"),
+    productAndQty: cell(r, cols, "สินค้า+จำนวน"),
+    total: cell(r, cols, "ยอดเงิน"),
+    paymentMethod: cell(r, cols, "การชำระเงิน"),
+    slipPathname: cell(r, cols, "รูปSlip"),
+    confirmed: isTrue(cell(r, cols, "คอนเฟิร์ม")),
+    cancelled: isTrue(cell(r, cols, "ยกเลิก")),
+    sent: isTrue(cell(r, cols, "ส่งออเดอร์แล้ว")),
+    trackingNumber: cell(r, cols, "เลขTracking"),
+    orderId: cell(r, cols, "order_id"), // หาโดยชื่อ ไม่ใช่ r[16]
   }));
 
   return parsed.filter((o) => o.confirmed && !o.cancelled && !o.sent);
@@ -184,17 +221,17 @@ export async function listPendingOrders(): Promise<OrderRow[]> {
 
 export async function markOrderSent(rowIndex: number, orderNumber: string): Promise<void> {
   if (!process.env.SHEET_ORDERS_ID) return; // env ไม่มี = ฟีเจอร์ปิด ข้ามเงียบ (พฤติกรรมเดิม)
-  const sheetId = ordersSheetId(); // env มีแต่ผิดรูป = ดังทันที
-  const sheets = getSheets();
 
-  await sheets.spreadsheets.values.batchUpdate({
-    spreadsheetId: sheetId,
+  const cols = await getOrdersColumns();
+  const numCol = columnLetter(cols["ลำดับ"]);
+  const sentCol = columnLetter(cols["ส่งออเดอร์แล้ว"]); // หาโดยชื่อ ไม่ hardcode O
+  await getSheets().spreadsheets.values.batchUpdate({
+    spreadsheetId: ordersSheetId(),
     requestBody: {
       valueInputOption: "USER_ENTERED",
       data: [
-        { range: `${SHEET_NAME}!A${rowIndex}:A${rowIndex}`, values: [[orderNumber]] },
-        // O = ส่งออเดอร์แล้ว (ย้ายจาก Q เพราะลบคอลัมน์ ตำบล/อำเภอ ออก 2 ช่อง)
-        { range: `${SHEET_NAME}!O${rowIndex}:O${rowIndex}`, values: [["TRUE"]] },
+        { range: `${SHEET_NAME}!${numCol}${rowIndex}:${numCol}${rowIndex}`, values: [[orderNumber]] },
+        { range: `${SHEET_NAME}!${sentCol}${rowIndex}:${sentCol}${rowIndex}`, values: [["TRUE"]] },
       ],
     },
   });

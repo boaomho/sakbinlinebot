@@ -89,7 +89,13 @@ vi.mock("googleapis", async () => {
       return { data: {} };
     },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    get: async (_p: any) => ({ data: { values: sheetsCalls.getReturn } }),
+    get: async (p: any) => {
+      // ขอ header (!1:1) → คืน ordersHeader · ขอแถวข้อมูล → คืน getReturn
+      if (typeof p.range === "string" && p.range.includes("!1:1")) {
+        return { data: { values: [sheetsCalls.ordersHeader] } };
+      }
+      return { data: { values: sheetsCalls.getReturn } };
+    },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     batchUpdate: async (p: any) => {
       for (const d of p.requestBody.data) sheetsCalls.batchUpdates.push({ range: d.range, values: d.values });
@@ -155,10 +161,13 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  const { resetState } = await import("./state");
+  const { resetState, sheetsCalls } = await import("./state");
   const { resetDb } = await import("./db");
   const { __resetBotLibraryCache } = await import("@/lib/sheets/loader");
+  const { ORDERS_HEADER, __resetOrdersColumnsCache } = await import("@/lib/orders");
   resetState();
   __resetBotLibraryCache(); // กัน bundle ค้างข้ามเทส
+  __resetOrdersColumnsCache(); // กัน header cache ค้างข้ามเทส
+  sheetsCalls.ordersHeader = [...ORDERS_HEADER]; // default = layout ปกติ (เทสสลับคอลัมน์ override เอง)
   await resetDb();
 });

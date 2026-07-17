@@ -49,3 +49,31 @@ export function cell(row: string[], cols: ColumnMap, name: string): string {
   if (idx === undefined) return "";
   return (row[idx] ?? "").toString();
 }
+
+/** index 0-based → ตัวอักษรคอลัมน์ (0→A, 23→X, 25→Z, 26→AA) — ใช้สร้าง A1 range */
+export function columnLetter(index: number): string {
+  let n = index;
+  let s = "";
+  do {
+    s = String.fromCharCode(65 + (n % 26)) + s;
+    n = Math.floor(n / 26) - 1;
+  } while (n >= 0);
+  return s;
+}
+
+/**
+ * วางค่า (keyed ด้วยชื่อ header) ลง array ตามตำแหน่งจริงใน ColumnMap
+ * @throws ถ้ามีชื่อที่ต้องเขียนแต่ไม่มีใน cols (header ไม่ครบ) — ผู้เรียกไป invalidate cache + อ่านใหม่
+ */
+export function rowFromValues(values: Record<string, string>, cols: ColumnMap): string[] {
+  const maxIdx = Math.max(...Object.values(cols));
+  const row = new Array<string>(maxIdx + 1).fill("");
+  for (const [name, value] of Object.entries(values)) {
+    const idx = cols[name];
+    if (idx === undefined) {
+      throw new Error(`rowFromValues: ไม่มีคอลัมน์ "${name}" ใน header (ต้อง invalidate cache + อ่านใหม่)`);
+    }
+    row[idx] = value;
+  }
+  return row;
+}
