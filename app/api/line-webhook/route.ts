@@ -500,6 +500,10 @@ async function processMessage(
         DATABASE_URL: Boolean(process.env.DATABASE_URL),
       },
       configLoadFailed: config.loadFailed,
+      // ชี้ขาดเรื่องวงเล็บ: ถ้า "เปิด_ระบบออเดอร์" อยู่ในลิสต์นี้ = stripKeyAnnotation ทำงานถูก
+      // (log แค่ "ชื่อคีย์" ไม่ log ค่า — ค่าบางตัวเป็นข้อความร้าน ไม่ควรโผล่ log)
+      configKeysLoaded: [...config.raw.keys()],
+      allRawSwitches: config.rawSwitches,
     }),
   );
 
