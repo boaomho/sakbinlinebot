@@ -25,7 +25,7 @@ export interface GeminiTurnInput {
 export type PaymentMethod = "โอน" | "COD" | "";
 
 /** เจตนาของรูปที่ลูกค้าส่งมา (AI ตีความจาก stage+บริบท) — code ลงมือเฉพาะ slip/damage */
-export type ImageIntent = "slip" | "damage" | "other";
+export type ImageIntent = "slip" | "damage" | "address" | "other";
 
 export interface GeminiTurnOutput {
   reply: string;
@@ -61,9 +61,9 @@ const RESPONSE_SCHEMA = {
       properties: {
         ชื่อ: { type: Type.STRING },
         เบอร์: { type: Type.STRING },
+        // ที่อยู่ = ก้อนดิบทั้งหมดตามที่ลูกค้าให้ (ไม่แยก ตำบล/อำเภอ แล้ว — โค้ดไม่ตรวจ ไม่ cross-check)
         ที่อยู่: { type: Type.STRING },
-        ตำบล: { type: Type.STRING },
-        อำเภอ: { type: Type.STRING },
+        // จังหวัด/รหัสไปรษณีย์ = metadata หยิบได้ก็ใส่ หยิบไม่ได้เว้นว่าง ไม่กระทบการปิดออเดอร์
         จังหวัด: { type: Type.STRING },
         รหัสไปรษณีย์: { type: Type.STRING },
         สินค้า: { type: Type.STRING },
@@ -120,7 +120,7 @@ function toPaymentMethod(value: unknown): PaymentMethod {
 }
 
 function isValidImageIntent(value: unknown): value is ImageIntent {
-  return value === "slip" || value === "damage" || value === "other";
+  return value === "slip" || value === "damage" || value === "address" || value === "other";
 }
 
 export async function runSalesTurn(input: GeminiTurnInput): Promise<GeminiTurnOutput> {

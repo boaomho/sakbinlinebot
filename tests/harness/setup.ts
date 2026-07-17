@@ -71,16 +71,37 @@ vi.mock("@/lib/sheets", async () => {
   };
 });
 
-vi.mock("@/lib/orders", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/orders")>("@/lib/orders");
-  const { orderRows } = await import("./state");
-  return {
-    ...actual, // sanitizePhone / sanitizeAmount / sanitizeShortText = ของจริง
-    appendOrderRow: async (input: unknown) => {
-      orderRows.push(input as never);
+/**
+ * mock ที่ชั้น googleapis (ต่ำสุด) ไม่ใช่ที่ lib/orders
+ * → appendOrderRow / listPendingOrders / markOrderSent ตัวจริงทำงานเต็ม:
+ *   sanitize ค่า · จัดคอลัมน์ A–P · resolveSpreadsheetId
+ * 🔴 บั๊ก P0 (SHEET_ORDERS_ID เป็น CSV URL) รอดมาได้เพราะเมื่อก่อน mock lib/orders ทิ้ง
+ */
+vi.mock("googleapis", async () => {
+  const { sheetsCalls } = await import("./state");
+  class FakeJWT {
+    constructor(_opts: unknown) {}
+  }
+  const values = {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    append: async (p: any) => {
+      sheetsCalls.appends.push({ range: p.range, values: p.requestBody.values });
+      return { data: {} };
     },
-    listPendingOrders: async () => [],
-    markOrderSent: async () => {},
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    get: async (_p: any) => ({ data: { values: sheetsCalls.getReturn } }),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    batchUpdate: async (p: any) => {
+      for (const d of p.requestBody.data) sheetsCalls.batchUpdates.push({ range: d.range, values: d.values });
+      return { data: {} };
+    },
+  };
+  return {
+    google: {
+      auth: { JWT: FakeJWT },
+      sheets: () => ({ spreadsheets: { values } }),
+    },
+    sheets_v4: {},
   };
 });
 

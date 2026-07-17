@@ -62,7 +62,12 @@ import {
 } from "@/lib/admin-commands";
 import { uploadSlip, getSlipSignedUrl } from "@/lib/blob";
 import { appendOrderRow } from "@/lib/orders";
-import { evaluateOrderGate, formatProductAndQty, buildNewOrderAdminText } from "@/lib/core/orders";
+import {
+  evaluateOrderGate,
+  formatProductAndQty,
+  buildNewOrderAdminText,
+  buildIncompleteOrderAdminText,
+} from "@/lib/core/orders";
 
 export const maxDuration = 30;
 
@@ -165,9 +170,10 @@ function imageReceivedReply(config: AppConfig): string {
 
 /**
  * จัดการรูปตาม image_intent ที่ AI ตัดสิน (เรียกเฉพาะเทิร์นที่มีรูปจริง):
- * - slip   → อัปโหลด slips store (private) + signed URL → push ADMIN (💰 สลิป ทันที) · จำ pathname · คืน pathname
- * - damage → อัปโหลดหลักฐาน + push ADMIN + เข้า human_mode (เคลมต้องใช้คน) · คืน null
- * - other  → ไม่ทำอะไร (คืน null)
+ * - slip    → อัปโหลด slips store (private) + signed URL → push ADMIN (💰 สลิป ทันที) · จำ pathname · คืน pathname
+ * - damage  → อัปโหลดหลักฐาน + push ADMIN + เข้า human_mode (เคลมต้องใช้คน) · คืน null
+ * - address → ไม่ทำอะไรกับตัวรูป (AI อ่านที่อยู่ในรูปแล้วใส่ order_data มาให้แล้ว) · คืน null
+ * - other   → ไม่ทำอะไร (คืน null)
  * คืน pathname สลิปของเทิร์นนี้ (ถ้าเป็น slip) เพื่อให้ order gate รู้ว่ามีสลิปแล้ว
  */
 async function handleImageIntent(
@@ -178,7 +184,7 @@ async function handleImageIntent(
   config: AppConfig,
   switches: FeatureSwitches,
 ): Promise<string | null> {
-  if (intent === "other") return null;
+  if (intent === "other" || intent === "address") return null;
 
   const adminGroupId = process.env.ADMIN_GROUP_ID;
   const noteLine = imageNote ? `\n${imageNote}` : "";
@@ -248,21 +254,19 @@ async function runOrderGate(
   const payment = gate.payment;
   const adminGroupId = process.env.ADMIN_GROUP_ID;
 
-  // 🔬 TEMP DIAG (ลบออกเมื่อหาสาเหตุเจอ) — gate เห็นอะไรบ้าง
+  // log ผลการตัดสิน gate ทุกเทิร์น — ออเดอร์เคยหายเงียบเพราะพาธ "ไม่ครบ" ไม่เคย log อะไรเลย
   // ⚠️ log แค่ "ชื่อฟิลด์ที่มีค่า" ห้าม log ค่าจริง (ชื่อ/ที่อยู่/เบอร์ = PII ตาม CLAUDE.md)
   console.log(
     JSON.stringify({
-      scope: "diag-gate",
-      at: "after-merge",
-      aiSentFields: Object.keys(gemini.orderData).filter((k) => (gemini.orderData[k] ?? "").trim() !== ""),
+      scope: "orders",
+      event: "gate",
       pendingFilledFields: Object.keys(pending).filter((k) => (pending[k] ?? "").trim() !== ""),
-      aiPaymentMethod: gemini.paymentMethod,
-      gate: {
-        payment: gate.payment,
-        complete: gate.complete,
-        waitTag: gate.waitTag,
-        paidNoAddress: gate.paidNoAddress,
-      },
+      payment: gate.payment,
+      complete: gate.complete,
+      missing: gate.missing,
+      incompleteWithIntent: gate.incompleteWithIntent,
+      codPhoneBlocked: gate.codPhoneBlocked,
+      waitTag: gate.waitTag,
       slipPresent: Boolean(slipPathname),
     }),
   );
@@ -277,8 +281,6 @@ async function runOrderGate(
         customerName: pending["ชื่อ"],
         phone: pending["เบอร์"],
         address: pending["ที่อยู่"],
-        subdistrict: pending["ตำบล"],
-        district: pending["อำเภอ"],
         province: pending["จังหวัด"],
         postalCode: pending["รหัสไปรษณีย์"],
         paymentMethod: payment,
@@ -310,16 +312,21 @@ async function runOrderGate(
     return;
   }
 
-  // ยังไม่ครบ = สภาพปกติ → ติดแท็กรอตามที่ core ตัดสิน (+ เคสพิเศษ โอนแล้วยังไม่มีที่อยู่)
+  // ---- ระดับ 2: ยังไม่ครบ ----
   await reconcileWaitTags(userId, gate.waitTag);
 
-  if (gate.paidNoAddress && !customer.paidNoAddressNotified) {
+  // ลูกค้า "สั่งแล้ว" (เลือกวิธีจ่ายแล้ว) แต่ข้อมูลไม่ครบ → แจ้งแอดมินให้ตามเก็บ ห้ามเงียบ
+  // 🔴 คนที่มาถึงขั้นนี้ = จ่ายแล้ว(โอน)/ตกลงแล้ว(COD) ปล่อยเงียบ = เสียออเดอร์ที่จ่ายเงินแล้ว
+  // ยังไม่เขียนแถว: ยังไม่มี order_id ให้แอดมินเติมข้อมูลทีหลังได้ (มาตอน Step 2)
+  // ใช้ flag เดิม paid_no_address_notified เป็นตัวกัน push ซ้ำทุกเทิร์น (ไม่เพิ่ม state ใหม่)
+  if (gate.incompleteWithIntent && !customer.paidNoAddressNotified) {
     if (adminGroupId) {
       const name = await getProfileName(userId);
       const note = gemini.imageNote ? `\n${gemini.imageNote}` : "";
-      await pushRawText(adminGroupId, `💰 ลูกค้าโอนแล้ว แต่ยังไม่ได้ที่อยู่${note}\n\nLineOA: ${name}`);
+      const text = buildIncompleteOrderAdminText(pending, payment, gate.missing, name) + note;
+      await pushRawText(adminGroupId, text);
     }
-    await setPaidNoAddressNotified(userId, true); // แจ้งครั้งเดียว
+    await setPaidNoAddressNotified(userId, true); // แจ้งครั้งเดียว กัน spam ทุกเทิร์น
   }
 }
 
@@ -479,33 +486,6 @@ async function processMessage(
     if (switches.memory) await setHumanMode(userId, true);
     editHandled = true;
   }
-
-  // 🔬 TEMP DIAG (ลบออกเมื่อหาสาเหตุเจอ) — gate ถูกเรียกมั้ย ถ้าไม่ เพราะอะไร
-  // ถ้า runOrderGate ไม่ถูกเรียก จะไม่มี log อะไรจาก scope:"orders" เลยทั้ง success/fail
-  console.log(
-    JSON.stringify({
-      scope: "diag-gate",
-      at: "before-gate",
-      willRunGate: Boolean(switches.orders && switches.memory && customer && !editHandled),
-      switchOrders: switches.orders,
-      rawSwitchOrdersFromSheet: config.rawSwitches.orders, // ← สวิตช์ในชีต Config
-      switchMemory: switches.memory,
-      hasCustomer: Boolean(customer),
-      editHandled,
-      envOrdersReady: {
-        ORDER_GROUP_ID: Boolean(process.env.ORDER_GROUP_ID),
-        GOOGLE_SERVICE_ACCOUNT: Boolean(process.env.GOOGLE_SERVICE_ACCOUNT),
-        SHEET_ORDERS_ID: Boolean(process.env.SHEET_ORDERS_ID),
-        BLOB_SLIPS_TOKEN: Boolean(process.env.BLOB_SLIPS_TOKEN),
-        DATABASE_URL: Boolean(process.env.DATABASE_URL),
-      },
-      configLoadFailed: config.loadFailed,
-      // ชี้ขาดเรื่องวงเล็บ: ถ้า "เปิด_ระบบออเดอร์" อยู่ในลิสต์นี้ = stripKeyAnnotation ทำงานถูก
-      // (log แค่ "ชื่อคีย์" ไม่ log ค่า — ค่าบางตัวเป็นข้อความร้าน ไม่ควรโผล่ log)
-      configKeysLoaded: [...config.raw.keys()],
-      allRawSwitches: config.rawSwitches,
-    }),
-  );
 
   // order gate — โค้ดตัดสินจาก pending_order (merge → ครบ/ไม่ครบ) · ข้ามถ้าเป็นการขอแก้ออเดอร์เดิม
   if (switches.orders && switches.memory && customer && !editHandled) {

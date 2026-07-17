@@ -32,10 +32,10 @@ function formatOrderMessage(orderNumber: string, order: OrderRow): string {
   return [
     `${orderNumber}.${order.productAndQty} ด้วยค่ะ`,
     "",
-    `${order.total} ${order.paymentMethod || "-"} ${order.district || order.province}ค่ะ.`,
+    `${order.total} ${order.paymentMethod || "-"} ${order.province}ค่ะ.`,
     "",
     order.customerName,
-    [order.address, order.subdistrict, order.district, order.province, order.postalCode].filter(Boolean).join(" "),
+    [order.address, order.province, order.postalCode].filter(Boolean).join(" "),
     order.phone,
     "",
     `LineOA: ${order.lineDisplayName}`,

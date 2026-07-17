@@ -1,10 +1,13 @@
 import type { messagingApi } from "@line/bot-sdk";
 import type { GeminiTurnOutput, PaymentMethod, ImageIntent } from "@/lib/gemini";
-import type { NewOrderInput } from "@/lib/orders";
 
 /**
  * state กลางของ harness — mock factory (ที่ถูก hoist) import ไฟล์นี้เข้าไปใช้
  * ทุกอย่างเป็น module-level เพื่อให้ทั้ง mock และ assertion มองเห็นก้อนเดียวกัน
+ *
+ * 🔴 ไฟล์นี้ห้าม import @/lib/orders (หรืออะไรที่ import googleapis) เด็ดขาด
+ *    เพราะ mock factory ของ googleapis import ไฟล์นี้ → จะเกิด circular dependency
+ *    แล้วเทสค้างแบบไม่มี error (เคยโดนมาแล้ว) · helper ที่ต้องใช้ ORDERS_HEADER อยู่ที่ ./sheet.ts
  */
 
 export interface SentMessage {
@@ -19,8 +22,17 @@ export const lineCalls = {
   loadingIndicators: [] as string[],
 };
 
-/** แถวที่ "เขียนลงชีต Orders" (mock appendOrderRow) */
-export const orderRows: NewOrderInput[] = [];
+/**
+ * ทุก call ที่ยิงเข้า Google Sheets API — mock ที่ชั้น googleapis (ชั้นล่างสุด)
+ * ไม่ใช่ที่ lib/orders → appendOrderRow ตัวจริงทำงานเต็ม (sanitize + จัดคอลัมน์ A–P)
+ * 🔴 สำคัญ: ถ้า mock lib/orders จะมองไม่เห็น "ค่าลงผิดช่อง" ซึ่งคือบั๊กที่แพงที่สุดของระบบนี้
+ */
+export const sheetsCalls = {
+  appends: [] as { range: string; values: string[][] }[],
+  batchUpdates: [] as { range: string; values: string[][] }[],
+  /** ค่าที่จะให้ values.get คืน (สำหรับ cron ออเดอร์) */
+  getReturn: [] as string[][],
+};
 
 /** สลิปที่อัปโหลด (mock lib/blob) */
 export const blobState = {
@@ -67,7 +79,9 @@ export function resetState(): void {
   lineCalls.replies.length = 0;
   lineCalls.pushes.length = 0;
   lineCalls.loadingIndicators.length = 0;
-  orderRows.length = 0;
+  sheetsCalls.appends.length = 0;
+  sheetsCalls.batchUpdates.length = 0;
+  sheetsCalls.getReturn.length = 0;
   blobState.uploaded.length = 0;
   blobState.seq = 0;
   geminiState.script = [];

@@ -15,33 +15,50 @@ function ordersSheetId(): string {
 
 const SHEET_NAME = "Orders";
 /**
- * โครงชีต Orders จริง (คอลัมน์ A-R):
- * A: ลำดับ (แจกตอนคอนเฟิร์ม, เว้นว่างตอนบันทึก)   B: วันที่   C: ชื่อไลน์ลูกค้า
- * D: ชื่อ-นามสกุล   E: เบอร์โทร(10หลัก)   F: ที่อยู่   G: ตำบล   H: อำเภอ   I: จังหวัด
- * J: รหัสไปรษณีย์   K: สินค้า+จำนวน (ช่องเดียว)   L: ยอดเงิน   M: การชำระเงิน(โอน/COD)
- * N: รูปSlip (pathname เท่านั้น ไม่เก็บ signed URL เพราะหมดอายุ)
- * O: คอนเฟิร์ม (แอดมินติ๊กเมื่อเช็คยอด/ยืนยันแล้ว)   P: ยกเลิก (แอดมินติ๊กเพื่อยกเลิก)
- * Q: ส่งออเดอร์แล้ว (cron ตั้งเอง)   R: เลขTracking (แอดมินกรอกเอง)
+ * โครงชีต Orders จริง (คอลัมน์ A–X · 24 ช่อง) — อ่านจากชีตจริงแล้ว
+ *
+ * 🔴 ลบ ตำบล/อำเภอ ออก → คอลัมน์ Q–X **เลื่อนซ้าย 2 ช่อง** จาก contract v1.2 เดิม (S–Z)
+ *    order_id: S→Q · line_user_id: T→R · items_json: U→S · ค่าส่ง: V→T
+ *    source_channel: W→U · ref_code: X→V · ยอดในสลิป: Y→W · bot_version: Z→X
+ *
+ * ที่อยู่เก็บเป็น "ก้อนเดียว" ตามที่ลูกค้าพิมพ์ · จังหวัด/รหัส = metadata ที่ AI หยิบได้ก็ใส่
+ * (การจับคู่ตำบล-อำเภอ-รหัส เป็นหน้าที่ระบบขนส่ง+แอดมิน ไม่ใช่บอท)
+ *
+ * A: ลำดับ (cron แจกตอนคอนเฟิร์ม)  B: วันที่  C: ชื่อไลน์ลูกค้า  D: ชื่อ-นามสกุล
+ * E: เบอร์โทร  F: ที่อยู่ (ก้อนดิบ)  G: จังหวัด  H: รหัสไปรษณีย์  I: สินค้า+จำนวน
+ * J: ยอดเงิน  K: การชำระเงิน  L: รูปSlip (pathname · ไม่เก็บ signed URL เพราะหมดอายุ)
+ * M: คอนเฟิร์ม (แอดมินติ๊ก)  N: ยกเลิก (แอดมินติ๊ก)  O: ส่งออเดอร์แล้ว (cron)  P: เลขTracking
+ * Q: order_id  R: line_user_id  S: items_json  T: ค่าส่ง  U: source_channel
+ * V: ref_code  W: ยอดในสลิป (แอดมินกรอก)  X: bot_version
+ *
+ * ⚠️ Q–X ยังไม่มีค่า (เขียนเป็นช่องว่าง) — Step 2/3 จะเติม ตอนนี้จองตำแหน่งไว้ให้ตรงชีตก่อน
+ * ⚠️ index ตายตัวชั่วคราว — Step 1 (header-driven) จะรื้อถาวร
  */
 export const ORDERS_HEADER = [
-  "ลำดับ",
-  "วันที่",
-  "ชื่อไลน์ลูกค้า",
-  "ชื่อ-นามสกุล",
-  "เบอร์โทร",
-  "ที่อยู่",
-  "ตำบล",
-  "อำเภอ",
-  "จังหวัด",
-  "รหัสไปรษณีย์",
-  "สินค้า+จำนวน",
-  "ยอดเงิน",
-  "การชำระเงิน",
-  "รูปSlip",
-  "คอนเฟิร์ม",
-  "ยกเลิก",
-  "ส่งออเดอร์แล้ว",
-  "เลขTracking",
+  "ลำดับ", // A  0
+  "วันที่", // B  1
+  "ชื่อไลน์ลูกค้า", // C  2
+  "ชื่อ-นามสกุล", // D  3
+  "เบอร์โทร", // E  4
+  "ที่อยู่", // F  5
+  "จังหวัด", // G  6
+  "รหัสไปรษณีย์", // H  7
+  "สินค้า+จำนวน", // I  8
+  "ยอดเงิน", // J  9
+  "การชำระเงิน", // K 10
+  "รูปSlip", // L 11
+  "คอนเฟิร์ม", // M 12
+  "ยกเลิก", // N 13
+  "ส่งออเดอร์แล้ว", // O 14
+  "เลขTracking", // P 15
+  "order_id", // Q 16  ← idempotency key (Step 2)
+  "line_user_id", // R 17
+  "items_json", // S 18
+  "ค่าส่ง", // T 19
+  "source_channel", // U 20
+  "ref_code", // V 21
+  "ยอดในสลิป", // W 22
+  "bot_version", // X 23
 ];
 
 function getCredentials(): { client_email: string; private_key: string } | null {
@@ -78,9 +95,8 @@ export interface NewOrderInput {
   total?: string;
   customerName?: string;
   phone?: string;
+  /** ที่อยู่ก้อนดิบตามที่ลูกค้าพิมพ์ (ไม่แยก ตำบล/อำเภอ แล้ว) */
   address?: string;
-  subdistrict?: string;
-  district?: string;
   province?: string;
   postalCode?: string;
   paymentMethod?: string;
@@ -91,30 +107,38 @@ export async function appendOrderRow(input: NewOrderInput): Promise<void> {
   const sheetId = ordersSheetId();
   const sheets = getSheets();
 
+  // ⚠️ ลำดับต้องตรงกับ ORDERS_HEADER เป๊ะ — ค่าลงผิดช่อง = ออเดอร์เพี้ยนทั้งแถวแบบเงียบ ๆ
   const row = [
     "", // A ลำดับ - เว้นว่าง ให้ cron แจกตอนคอนเฟิร์ม
     new Date().toISOString(), // B วันที่
     sanitizeShortText(input.lineDisplayName, 100), // C ชื่อไลน์ลูกค้า
     sanitizeShortText(input.customerName), // D ชื่อ-นามสกุล
     sanitizePhone(input.phone), // E เบอร์โทร
-    sanitizeShortText(input.address, 300), // F ที่อยู่
-    sanitizeShortText(input.subdistrict, 100), // G ตำบล
-    sanitizeShortText(input.district, 100), // H อำเภอ
-    sanitizeShortText(input.province, 100), // I จังหวัด
-    sanitizeShortText(input.postalCode, 10), // J รหัสไปรษณีย์
-    sanitizeShortText(input.productAndQty, 200), // K สินค้า+จำนวน
-    sanitizeAmount(input.total), // L ยอดเงิน
-    sanitizeShortText(input.paymentMethod, 20), // M การชำระเงิน
-    input.slipPathname ?? "", // N รูปSlip (pathname)
-    "FALSE", // O คอนเฟิร์ม
-    "FALSE", // P ยกเลิก
-    "FALSE", // Q ส่งออเดอร์แล้ว
-    "", // R เลขTracking
+    sanitizeShortText(input.address, 300), // F ที่อยู่ (ก้อนดิบ)
+    sanitizeShortText(input.province, 100), // G จังหวัด
+    sanitizeShortText(input.postalCode, 10), // H รหัสไปรษณีย์
+    sanitizeShortText(input.productAndQty, 200), // I สินค้า+จำนวน
+    sanitizeAmount(input.total), // J ยอดเงิน
+    sanitizeShortText(input.paymentMethod, 20), // K การชำระเงิน
+    input.slipPathname ?? "", // L รูปSlip (pathname)
+    "FALSE", // M คอนเฟิร์ม
+    "FALSE", // N ยกเลิก
+    "FALSE", // O ส่งออเดอร์แล้ว
+    "", // P เลขTracking
+    // ---- Q–X: จองตำแหน่งให้ตรงชีตจริง · ยังไม่มีค่าจน Step 2/3 ----
+    "", // Q order_id      (Step 2 — idempotency key)
+    "", // R line_user_id  (Step 2)
+    "", // S items_json    (Step 2)
+    "", // T ค่าส่ง         (Step 3)
+    "", // U source_channel(Step 2)
+    "", // V ref_code      (Step 2)
+    "", // W ยอดในสลิป      (แอดมินกรอกเอง)
+    "", // X bot_version   (Step 2)
   ];
 
   await sheets.spreadsheets.values.append({
     spreadsheetId: sheetId,
-    range: `${SHEET_NAME}!A:R`,
+    range: `${SHEET_NAME}!A:X`,
     valueInputOption: "USER_ENTERED",
     requestBody: { values: [row] },
   });
@@ -123,12 +147,13 @@ export async function appendOrderRow(input: NewOrderInput): Promise<void> {
 export interface OrderRow {
   rowIndex: number;
   orderNumber: string;
+  /** order_id (คอลัมน์ Q) — idempotency key · ยังว่างจน Step 2 */
+  orderId: string;
   lineDisplayName: string;
   customerName: string;
   phone: string;
+  /** ที่อยู่ก้อนดิบ (ไม่แยก ตำบล/อำเภอ แล้ว) */
   address: string;
-  subdistrict: string;
-  district: string;
   province: string;
   postalCode: string;
   productAndQty: string;
@@ -156,29 +181,28 @@ export async function listPendingOrders(): Promise<OrderRow[]> {
 
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: sheetId,
-    range: `${SHEET_NAME}!A2:R`,
+    range: `${SHEET_NAME}!A2:X`,
   });
   const rows = res.data.values ?? [];
 
   const parsed: OrderRow[] = rows.map((r, i) => ({
     rowIndex: i + 2,
-    orderNumber: r[0] ?? "",
-    lineDisplayName: r[2] ?? "",
-    customerName: r[3] ?? "",
-    phone: r[4] ?? "",
-    address: r[5] ?? "",
-    subdistrict: r[6] ?? "",
-    district: r[7] ?? "",
-    province: r[8] ?? "",
-    postalCode: r[9] ?? "",
-    productAndQty: r[10] ?? "",
-    total: r[11] ?? "",
-    paymentMethod: r[12] ?? "",
-    slipPathname: r[13] ?? "",
-    confirmed: isTrue(r[14]),
-    cancelled: isTrue(r[15]),
-    sent: isTrue(r[16]),
-    trackingNumber: r[17] ?? "",
+    orderNumber: r[0] ?? "", // A
+    lineDisplayName: r[2] ?? "", // C
+    customerName: r[3] ?? "", // D
+    phone: r[4] ?? "", // E
+    address: r[5] ?? "", // F
+    province: r[6] ?? "", // G
+    postalCode: r[7] ?? "", // H
+    productAndQty: r[8] ?? "", // I
+    total: r[9] ?? "", // J
+    paymentMethod: r[10] ?? "", // K
+    slipPathname: r[11] ?? "", // L
+    confirmed: isTrue(r[12]), // M
+    cancelled: isTrue(r[13]), // N
+    sent: isTrue(r[14]), // O
+    trackingNumber: r[15] ?? "", // P
+    orderId: r[16] ?? "", // Q ← idempotency key (เลื่อนจาก S เพราะลบ ตำบล/อำเภอ)
   }));
 
   return parsed.filter((o) => o.confirmed && !o.cancelled && !o.sent);
@@ -195,7 +219,8 @@ export async function markOrderSent(rowIndex: number, orderNumber: string): Prom
       valueInputOption: "USER_ENTERED",
       data: [
         { range: `${SHEET_NAME}!A${rowIndex}:A${rowIndex}`, values: [[orderNumber]] },
-        { range: `${SHEET_NAME}!Q${rowIndex}:Q${rowIndex}`, values: [["TRUE"]] },
+        // O = ส่งออเดอร์แล้ว (ย้ายจาก Q เพราะลบคอลัมน์ ตำบล/อำเภอ ออก 2 ช่อง)
+        { range: `${SHEET_NAME}!O${rowIndex}:O${rowIndex}`, values: [["TRUE"]] },
       ],
     },
   });
