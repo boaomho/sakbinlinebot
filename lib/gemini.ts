@@ -145,6 +145,23 @@ export async function runSalesTurn(input: GeminiTurnInput): Promise<GeminiTurnOu
     parts.push({ inlineData: { mimeType: input.image.mimeType, data: input.image.base64Data } });
   }
 
+  // แยกขนาดแต่ละส่วน (char ~ token) — หาว่าส่วนไหนใหญ่สุด selective ทำงานจริงมั้ย
+  console.log(
+    JSON.stringify({
+      scope: "prompt-size",
+      chars: {
+        system: systemInstruction.length,
+        config: input.configText.length,
+        step: input.stepText.length,
+        faq: input.faqText.length,
+        catalog: input.catalogText.length,
+        state: input.stateText.length,
+        history: input.historyText.length,
+        grandTotal: systemInstruction.length + userText.length,
+      },
+    }),
+  );
+
   try {
     const response = await getClient().models.generateContent({
       model: MODEL,

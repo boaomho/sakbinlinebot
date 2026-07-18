@@ -164,8 +164,10 @@ function leanHandoffBlock(s: StepRow): string {
 export function buildStepInjection(rows: string[][], currentStage: string, userMessage: string): string {
   const parsed = parseStepRows(rows);
   if (!parsed) {
-    console.warn(JSON.stringify({ scope: "inject", warning: "CSV_Step header ไม่ครบ fallback ยัดทั้งก้อน" }));
-    return tabToText(rows);
+    const whole = tabToText(rows);
+    // 🔴 fallback = selective ไม่ทำงาน (header ไม่ match) → prompt ไม่ลด · resolveColumns log missing/available แล้ว
+    console.warn(JSON.stringify({ scope: "inject", tab: "CSV_Step", mode: "fallback-whole", chars: whole.length }));
+    return whole;
   }
   const { steps, stepIds } = parsed;
   const cur = steps.find((s) => s.stepId === (currentStage ?? "").trim());
