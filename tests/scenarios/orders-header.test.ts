@@ -1,8 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { sendText } from "../harness/replay";
 import { scriptGemini, turn, sheetsCalls } from "../harness/state";
 import { appendedRows } from "../harness/sheet";
+import { seedBotLib } from "../harness/botlib-fixture";
 import { listPendingOrders, ORDERS_HEADER } from "@/lib/orders";
+
+beforeEach(() => seedBotLib());
 
 /**
  * 🔴 Part B — Orders header-driven: อ่าน/เขียนจากชื่อ header ไม่ใช่ index ตายตัว
@@ -25,35 +28,35 @@ describe("appendOrderRow — สลับคอลัมน์ Orders → ยั
 
     scriptGemini([
       turn({
-        reply: "สรุปที่อยู่จัดส่งนะคะ[[เว้น]]ของถึงภายใน 1-2 วันทำการค่ะ",
-        stage: "4b",
+        reply: "ขอคิดยอดสักครู่นะคะ",
+        stage: "3",
         paymentMethod: "COD",
+        needsPriceQuote: true,
         orderData: {
-          สินค้า: "น้ำพริกปลาทู",
-          จำนวน: "3",
-          ยอด: "285",
+          items: [{ sku: "NPT-10G", qty: 3 }],
           ชื่อ: "สมหญิง ใจดี",
           เบอร์: "0811122334",
           ที่อยู่: "1 ถนนเจริญ ช่องนนทรี ยานนาวา กทม. 10120",
         },
       }),
+      turn({ reply: "รับ 3 ถ้วย 275 บาท ส่งของให้เลยนะคะ", stage: "4b", paymentMethod: "COD" }),
     ]);
 
-    await sendText(U, "สมหญิง ใจดี 1 ถนนเจริญ ช่องนนทรี ยานนาวา กทม. 10120 0811122334 เก็บปลายทาง");
+    await sendText(U, "เอา 3 ถ้วย สมหญิง ใจดี 1 ถนนเจริญ ช่องนนทรี ยานนาวา กทม. 10120 0811122334 เก็บปลายทาง");
 
     expect(appendedRows(), "ต้องเขียน 1 แถว").toHaveLength(1);
     const row = appendedRows()[0];
 
     // อ่านค่าจาก "ตำแหน่งตาม header ใหม่" ต้องตรงกับที่ตั้งใจเขียน
     const at = (name: string) => row[header.indexOf(name)];
-    expect(at("ยอดเงิน"), "ยอดเงิน (ย้ายไป index 1)").toBe("285");
+    expect(at("ยอดเงิน"), "ยอดเงิน (ย้ายไป index 1) = 275 จาก pricing").toBe("275");
     expect(at("ชื่อ-นามสกุล")).toBe("สมหญิง ใจดี");
     expect(at("เบอร์โทร")).toBe("0811122334");
     expect(at("ที่อยู่")).toBe("1 ถนนเจริญ ช่องนนทรี ยานนาวา กทม. 10120");
     expect(at("การชำระเงิน")).toBe("COD");
     expect(at("ส่งออเดอร์แล้ว")).toBe("FALSE");
     // 🔴 พิสูจน์ไม่ใช่ index เดิม: ยอดเงิน "ไม่" อยู่ index 9 (J) แบบ layout เก่าแล้ว
-    expect(row[9], "index 9 เดิมของยอดเงิน ตอนนี้ต้องไม่ใช่ 285").not.toBe("285");
+    expect(row[9], "index 9 เดิมของยอดเงิน ตอนนี้ต้องไม่ใช่ 275").not.toBe("275");
   });
 });
 

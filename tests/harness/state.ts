@@ -1,5 +1,9 @@
 import type { messagingApi } from "@line/bot-sdk";
 import type { GeminiTurnOutput, PaymentMethod, ImageIntent } from "@/lib/gemini";
+import type { AppConfig } from "@/lib/config";
+
+/** override config ต่อเทส (เช่น quotaSaver) — setup mock getConfig อ่านค่านี้ */
+export const harnessOverrides = { config: {} as Partial<AppConfig> };
 
 /**
  * state กลางของ harness — mock factory (ที่ถูก hoist) import ไฟล์นี้เข้าไปใช้
@@ -97,6 +101,7 @@ export function resetState(): void {
   geminiState.script = [];
   geminiState.cursor = 0;
   geminiState.overflowCalls = 0;
+  harnessOverrides.config = {};
 }
 
 /** ข้อความทั้งหมดที่ส่งถึงลูกค้า (reply + push หาลูกค้า) เรียงตามลำดับจริง */

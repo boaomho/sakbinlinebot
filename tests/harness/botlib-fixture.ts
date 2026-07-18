@@ -1,0 +1,75 @@
+import { sheetsCalls } from "./state";
+
+/**
+ * สำเนา "แช่แข็ง" ของ BotLibrary จริง (เจ้าของ paste header + ค่าจริงมา) — ใช้ร่วมทุกเทส
+ * 🔴 อย่าแต่งให้สวย: header เรียงเหมือนชีตจริงเป๊ะ (Products/Promo 13 คอลัมน์)
+ *    + มี "แถวอันตราย" ที่พบในชีตจริง (แถวว่าง · แถวหมายเหตุคอลัมน์ A · coming_soon · สิ้นสุดว่าง)
+ *    ถ้าชีตจริงแก้ราคา → แก้ที่ไฟล์นี้ที่เดียว (กันแต่ละเทสถือ fixture ของตัวเองแล้วตกหล่น)
+ */
+
+// ── header จริง (paste ตรงจากเจ้าของ) ──
+export const PRODUCTS_HEADER = [
+  "sku", "ชื่อสินค้า", "หน่วย", "ราคาปกติ_ต่อหน่วย", "ขนาด/น้ำหนัก", "เลข อย.",
+  "ส่วนประกอบตามฉลาก", "สารก่อภูมิแพ้", "วิธีรับประทาน", "วิธีเก็บรักษา", "อายุการเก็บ", "รูปสินค้า (URL)", "สถานะ",
+];
+export const PROMO_HEADER = [
+  "promo_id", "sku", "ชื่อโปร", "จำนวน", "ราคาปกติ (auto)", "ราคาโปร", "ประหยัด (auto)",
+  "ค่าส่ง", "ยอดที่ลูกค้าจ่าย (auto)", "ข้อความโชว์ (auto)", "เริ่มใช้", "สิ้นสุด", "สถานะ",
+];
+
+const NOTE_PRODUCTS = ["หมายเหตุ: ช่องพื้นฟ้า = คนกรอก · ช่อง (auto) = สูตร", "", "", "", "", "", "", "", "", "", "", "", ""];
+const NOTE_PROMO = ["หมายเหตุ: ช่องพื้นฟ้า = คนกรอก · ช่อง (auto) = สูตร", "", "", "", "", "", "", "", "", "", "", "", ""];
+const BLANK = ["", "", "", "", "", "", "", "", "", "", "", "", ""];
+
+/** CSV_Products จริง: NPT-10G live 95 · NPR-200ML coming_soon 90 + แถวว่าง + แถวหมายเหตุ */
+export function productsRows(): string[][] {
+  return [
+    PRODUCTS_HEADER,
+    ["NPT-10G", "น้ำพริกปลาทูฟรีซดราย", "ถ้วย", "95", "10 กรัม / ถ้วย", "22-2-02365-6-0041", "ปลาทู พริก กระเทียม", "ปลา", "ทานกับข้าวสวย", "อุณหภูมิห้อง", "12 เดือน", "https://ex/npt.jpg", "live"],
+    ["NPR-200ML", "น้ำปลาร้าคุณนาย", "ขวด", "90", "200 มล. / ขวด", "(รอเลข อย.)", "ปลาร้า เกลือ", "ปลา", "ปรุงอาหาร", "อุณหภูมิห้อง", "12 เดือน", "", "coming_soon"],
+    BLANK,
+    NOTE_PRODUCTS,
+  ];
+}
+
+/**
+ * CSV_Promo จริง: P1/P3/P5/P10 ผูก NPT-10G · เริ่มใช้ 2026-07-01 · สิ้นสุดว่าง (=ยัง live) + แถวว่าง + แถวหมายเหตุ
+ * @param priceOverride แก้ราคาโปรรายตัว (เทสกันชีตเปลี่ยนแล้วโค้ดไม่รู้ตัว: P5 440→400)
+ */
+export function promoRows(priceOverride: Record<string, string> = {}): string[][] {
+  const promoPrice = (id: string, def: string) => priceOverride[id] ?? def;
+  return [
+    PROMO_HEADER,
+    ["P1", "NPT-10G", "1 ถ้วย", "1", "95", promoPrice("P1", "95"), "0", "30", "125", "น้ำพริกปลาทูฟรีซดราย 1 ถ้วย 95 บาท ค่าส่ง 30 บาท", "2026-07-01", "", "live"],
+    ["P3", "NPT-10G", "3 ถ้วย ส่งฟรี", "3", "285", promoPrice("P3", "275"), "10", "0", "275", "น้ำพริกปลาทูฟรีซดราย 3 ถ้วย จากปกติ 285 บาท ลดเหลือ 275 บาท ส่งฟรี", "2026-07-01", "", "live"],
+    ["P5", "NPT-10G", "5 ถ้วย ส่งฟรี", "5", "475", promoPrice("P5", "440"), "35", "0", "440", "น้ำพริกปลาทูฟรีซดราย 5 ถ้วย จากปกติ 475 บาท ลดเหลือ 440 บาท ส่งฟรี", "2026-07-01", "", "live"],
+    ["P10", "NPT-10G", "10 ถ้วย ส่งฟรี", "10", "950", promoPrice("P10", "850"), "100", "0", "850", "น้ำพริกปลาทูฟรีซดราย 10 ถ้วย จากปกติ 950 บาท ลดเหลือ 850 บาท ส่งฟรี", "2026-07-01", "", "live"],
+    BLANK,
+    NOTE_PROMO,
+  ];
+}
+
+/** key ราคา/ค่าส่ง/เพดาน จริงใน CSV_Config (ใส่ลง testConfig.raw เพื่อให้ pricing อ่านได้) */
+export const PRICING_CONFIG: Record<string, string> = {
+  ยอดขั้นต่ำส่งฟรี_บาท: "275",
+  ค่าส่ง_มาตรฐาน: "30",
+  ค่าส่ง_COD_เพิ่ม: "0",
+  เพดานจำนวน_คูณโปรใหญ่สุด: "2",
+};
+
+/**
+ * seed BotLibrary ให้ route อ่านผ่าน loadBotLibrary (mock batchGet คืน botLibReturn[tab])
+ * @param stepRows ถ้าอยากทดสอบ resolver ตัวแปรในสเต็ป (มี {ยอดรวม}/{สรุปรายการ}) ส่งเข้ามา
+ */
+export function seedBotLib(opts: { stepRows?: string[][]; promoPriceOverride?: Record<string, string> } = {}): void {
+  sheetsCalls.botLibReturn = {
+    CSV_Step: opts.stepRows ?? [["ประตู", "เป้าหมาย"], ["1", "ทักทาย"]],
+    CSV_Objections: [],
+    CSV_Examples: [],
+    CSV_FAQ: [["คำถาม", "คำตอบ"], ["ส่งกี่วัน", "1-2 วันค่ะ"]],
+    CSV_Follow: [],
+    CSV_Config: [["key", "value"]],
+    CSV_Products: productsRows(),
+    CSV_Promo: promoRows(opts.promoPriceOverride),
+  };
+}

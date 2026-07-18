@@ -5,8 +5,9 @@
 ## 1. File tree (lib/ · app/api/ · tests/)
 ```
 lib/
-  core/           # โดเมนล้วน ห้าม import LINE/Gemini/googleapis
-    orders.ts       gate ออเดอร์ + sanitizers + ข้อความแจ้งแอดมิน
+  core/           # โดเมนล้วน ห้าม import LINE/Gemini/googleapis/Sheets
+    orders.ts       gate ออเดอร์ (items+priceOk) + sanitizers + PendingOrder + ข้อความแจ้งแอดมิน
+    pricing.ts      คำนวณราคา/ค่าส่ง/เพดาน (D-15) + resolveRuntimeVars({สรุปรายการ}/{ยอดรวม}/{การชำระเงิน})
     sheet-id.ts     แปลง env → spreadsheetId (รับ ID/URL, กัน published-CSV)
   sheets/         # อ่าน Google Sheets (header-driven)
     client.ts       getSheets() — JWT service account (อ่าน+เขียน)
@@ -15,6 +16,7 @@ lib/
     clean.ts        cleanCell/stripKeyAnnotation/cleanHeader (กันอักขระล่องหน)
   agent/
     inject.ts       selective injection: step/faq/catalog เข้า prompt
+    quote.ts        computeQuote (pending→price+vars) + guard 2 (เลขตรง Core) + guard 5 (เหลือ {...})
   gemini.ts       runSalesTurn() — เรียก Gemini, parse JSON output
   config.ts       getConfig()/resolveFeatureSwitches() — CSV_Config + สวิตช์
   db.ts           Neon Postgres — customer state, messages, pending_order, ฯลฯ
@@ -35,15 +37,21 @@ tests/
 
 ## 2. Export หลัก (ชื่อ · หน้าที่)
 **lib/core/orders.ts** (pure)
-- `evaluateOrderGate({pending, slipPresent}) → {payment, complete, waitTag, missing, brokenOrder}` — ตัดสินออเดอร์ครบ/ไม่ครบ (COD: ชื่อ+ที่อยู่+เบอร์+สินค้า+จำนวน+ยอด · โอน: +สลิป)
-- `addressComplete(p)` ที่อยู่ก้อนไม่ว่าง · `nameComplete(p)` ชื่อ≥2 ตัว · `sanitizePhone(s)` strip เหลือตัวเลข
-- `formatProductAndQty(o)` → "สินค้า xจำนวน" · `buildNewOrderAdminText`/`buildBrokenOrderAdminText`
+- `evaluateOrderGate({pending, slipPresent, priceOk}) → {payment, complete, waitTag, missing, brokenOrder}` — ตัดสินออเดอร์ครบ/ไม่ครบ (COD: ชื่อ+ที่อยู่+เบอร์+items ไม่ว่าง+priceOk · โอน: +สลิป)
+- `PendingOrder {ชื่อ?,ที่อยู่?,เบอร์?,การชำระเงิน?,items?}` · `normalizeItems`/`itemsEqual` (ตัดสิน "items เปลี่ยน")
+- `addressComplete(p)` · `nameComplete(p)` · `sanitizePhone(s)` · `buildNewOrderAdminText(summary,total,payment,name,phone)`/`buildBrokenOrderAdminText`
+
+**lib/core/pricing.ts** (pure · D-15) — `calculatePrice({items,paymentMethod,now?}, promoRows, productRows, config) → {lines, subtotal, shippingFee, total, error, needsHandoff}`
+- โปรฐาน = live+ในช่วงวันที่ จำนวนมากสุด≤qty · ต่อหน่วย=ราคาโปร/จำนวน · ceil ที่ line · เพดาน=floor(max(จำนวน live)×config) · อ่านชีตล้วน ห้าม hardcode
+- `formatOrderSummary`(" · ")/`formatLinesForSheet`(" | ") · `formatPayment` · `resolveRuntimeVars(text,{summary,total,payment})` แทน {สรุปรายการ}/{ยอดรวม}/{การชำระเงิน}
+
+**lib/agent/quote.ts** — `computeQuote(pending, lib, config, now) → {price, vars, ok}|null` · `hasUnresolvedPricingVars` (guard 5) · `replyNumbersConsistent` (guard 2)
 
 **lib/sheets/loader.ts** — `loadBotLibrary(): Promise<BotLibrary|null>` batchGet 8 แท็บ + cache · `BOTLIB_TABS`
 **lib/sheets/columns.ts** — `resolveColumns(header, required, label) → map|null` (all-or-nothing) · `cell` · `tabToText` · `rowFromValues` · `columnLetter`
 **lib/agent/inject.ts** — `buildStepInjection(rows, stage, msg)` สารบัญทุกประตู+เต็มที่เกี่ยว · `buildFaqInjection(rows, msg)` · `buildCatalogInjection(products, promo)` · `resolveDestinations(nextWhen, ids)`
 **lib/orders.ts** — `appendOrderRow(input)` · `listPendingOrders()` · `markOrderSent(row, num)` · `ORDERS_HEADER` (24 คอล A–X, header-driven)
-**lib/gemini.ts** — `runSalesTurn(GeminiTurnInput) → GeminiTurnOutput{reply, stage, tagsAdd, handoff, orderData, paymentMethod, orderEditRequest, imageIntent, imageNote, degraded}`
+**lib/gemini.ts** — `runSalesTurn(GeminiTurnInput{...,pass2Note?}) → GeminiTurnOutput{reply, stage, tagsAdd, handoff, orderData:OrderDataFromAI{ชื่อ?,ที่อยู่?,เบอร์?,items?}, needsPriceQuote, paymentMethod, orderEditRequest, imageIntent, imageNote, degraded}`
 **lib/config.ts** — `getConfig()` · `resolveFeatureSwitches(config) → FeatureSwitches` · `formatConfigForPrompt`
 **lib/db.ts** — `ensureCustomer`/`mergePendingOrder`/`reconcileWaitTags`/`resetCustomerMemory`/`getRecentHistory`/`insertPendingMessage`(debounce)/`nextOrderNumber`(atomic upsert counter · KI-05) ฯลฯ
 
@@ -51,10 +59,13 @@ tests/
 1. `route.ts processMessage` → `loadBotLibrary()` ได้ CSV_Step/FAQ/Products/Promo/Config
 2. `buildStepInjection` + `buildFaqInjection` + `buildCatalogInjection` → stepText/faqText/catalogText
 3. `formatConfigForPrompt` → configText · `buildStateText` → stateText · `getRecentHistory`+`formatHistoryForPrompt` → historyText
-4. `runSalesTurn(...)` → **`prompt/system.ts`**:
-   - `buildStaticSystemInstruction()` = systemInstruction (คงที่: บทบาท/กฎเหล็ก/order_data/รูปแบบผลลัพธ์)
-   - `buildUserContent()` = user content (`<ข้อมูล Config>`/`<ข้อมูลสเต็ป>`/`<ข้อมูล FAQ>`/`<ข้อมูลสินค้าและราคา>`/`<เวลาปัจจุบัน>`/`<สถานะลูกค้า>`/`<ประวัติสนทนา>`/`<ข้อความลูกค้า>`)
+   - 🔴 D-15 **pre-resolve**: ถ้า pending มี items → `computeQuote` → `resolveRuntimeVars(stepText, vars)` (บอทพูดยอดได้ในเทิร์นเดียว)
+4. `runSalesTurn(...)` (pass 1) → **`prompt/system.ts`**:
+   - `buildStaticSystemInstruction()` = systemInstruction (คงที่: บทบาท/กฎเหล็ก/order_data items/needs_price_quote/รูปแบบผลลัพธ์)
+   - `buildUserContent({...,pass2Note?})` = user content (+`<หมายเหตุระบบ>` ตอน pass 2)
 5. Gemini generateContent (responseSchema JSON) → parse → GeminiTurnOutput
+6. 🔴 D-15 **2-pass**: ถ้า items เปลี่ยน (`itemsEqual` เทียบก่อน merge · items ว่าง=ไม่เปลี่ยน) → merge → `computeQuote` → pass 2 (inject ยอด) → guard 2/5 → ส่ง (quota-saver ยุบ 1 reply) · fail-safe เมื่อ pricing/pass2 ล้ม → แจ้งลูกค้า+แอดมิน
+7. `runOrderGate(pending, price, ...)` → เขียนชีต I/J/S/T จาก price (ไม่อ่านยอดจาก AI)
 
 ## 4. คำสั่งพิเศษ
 - **`/reset`** (แชท 1:1) — `route.ts` `isResetCommand` → `resetCustomerMemory(userId)`: ล้าง stage/tags/pending_order + DELETE messages+pending_messages · ทำงานเมื่อ Config `เปิด_คำสั่งเทสต์`=เปิด (default เปิด)
@@ -77,6 +88,7 @@ tests/
 
 ## 6. CSV_Config keys ที่โค้ดอ่าน (ชื่อตรงตัว · มี alias)
 `ชื่อบอท` · `ชื่อร้าน`(/`ชื่อร้าน/แบรนด์`) · `เพศบอท` · `ใช้ emoji`(/`ใช้_emoji`/`emoji`) · `temperature` · `maxOutputTokens`(พื้น 4096) · `แสดง_typing`(/`typing`) · `debounce_รวบคำถาม`(prefix `debounce`) · `หน่วง_ระหว่างบอลลูน`(/`หน่วง_ระหว่างข้อความ`) · `อายุลิงก์สลิป_วัน` · `เวลาตัดรอบออเดอร์`(/`เวลารอบตัดออเดอร์`) · `เลขออเดอร์_รีเซ็ตทุกวัน` · `คำ_handoff`(/`คำ_ส่งต่อแอดมิน`/`keyword_handoff`) · `คืนสิทธิ์บอท_หลังแชทเงียบ` · `ประโยคเปลี่ยนมือ_บอทรับต่อ` · `เปิด_คำสั่งเทสต์` · `โหมดประหยัดโควตา`
+**pricing (D-15 · lib/core/pricing อ่านจาก config.raw):** `ยอดขั้นต่ำส่งฟรี_บาท`(275) · `ค่าส่ง_มาตรฐาน`(30) · `ค่าส่ง_COD_เพิ่ม`(0) · `เพดานจำนวน_คูณโปรใหญ่สุด`(2)
 **สวิตช์:** `เปิด_ติดแท็ก` · `เปิด_ส่งต่อแอดมิน` · `เปิด_ระบบออเดอร์` · `เปิด_ระบบติดตาม` · `เปิด_การ์ด_flex` · `เปิด_จังหวะหน่วงเหมือนคน`
 > ค่าสวิตช์ที่รับ: `เปิด/true/on/1/ใช่/yes` = true · `ปิด/false/off/0/ไม่/no/ว่าง` = false
 
@@ -91,5 +103,7 @@ tests/
 - **KI-03** backtick ในเนื้อ prompt ปิด template literal (เกิด 6 ครั้ง) — guard `tests/scenarios/prompt-lint.test.ts`
 - **KI-04** harness state.ts ห้าม import อะไรที่ import googleapis (circular → เทสค้าง)
 - **KI-05** 🟡 `nextOrderNumber` counter atomic จริง (`INSERT..ON CONFLICT DO UPDATE last_no+1 RETURNING`) แต่ `cron/orders/route.ts` loop `listPendingOrders → nextOrderNumber → markOrderSent` **ไม่มี lock กัน cron รันซ้อน** → 2 รอบทับกันแจกเลขคนละเลขให้ออเดอร์เดียวกัน + push แพ็คซ้ำ · ตรงกับ Don't "แจกเลขแบบไม่ atomic" ใน CLAUDE.md ที่ **ยังไม่ทำ guard ระดับ loop**
-- prompt ยังใหญ่ (~9,707 tokens · เจ้าของรายงานหลัง selective+catalog · เป้า <5000 ยังไม่ถึง) — ลด systemInstruction = รอบ 2a (DECISIONS.md)
+- prompt ยังใหญ่ (~9,707 tokens · เป้า <5000 ยังไม่ถึง) — ลด systemInstruction = รอบ 2a (DECISIONS.md)
+- **KI-06** 🟡 D-15 resolver ครอบแค่ 3 ตัวแปรเงิน ({สรุปรายการ}/{ยอดรวม}/{การชำระเงิน}) · ตัวแปรอื่นในชีต ({ชื่อสินค้า}/{เลข อย.}/{ชื่อบัญชี}…) ยังให้ AI เติมชั่วคราว → resolver เต็ม = commit ถัดไป (D-16, DECISIONS.md)
+- **KI-07** 🟡 D-15 2-pass = เทิร์นที่ items เปลี่ยนยิง Gemini 2 ครั้ง (คนละ request ไม่ชน timeout 8s) · เพิ่มค่า model ต่อเทิร์นสั่ง · G/H (จังหวัด/รหัส) เขียนว่างเสมอ (ตั้งใจ ดู DECISIONS D-15)
 - validate stage-enum เลื่อนไป Step 6

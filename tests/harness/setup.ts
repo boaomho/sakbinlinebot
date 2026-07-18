@@ -57,8 +57,9 @@ vi.mock("@line/bot-sdk", async () => {
 vi.mock("@/lib/config", async () => {
   const actual = await vi.importActual<typeof import("@/lib/config")>("@/lib/config");
   const { testConfig } = await import("./fixtures");
+  const { harnessOverrides } = await import("./state");
   // resolveFeatureSwitches / formatConfigForPrompt / DEFAULT_REPLY = ของจริง
-  return { ...actual, getConfig: async () => testConfig() };
+  return { ...actual, getConfig: async () => testConfig(harnessOverrides.config) };
 });
 
 // Step 1: route อ่าน Step/FAQ ผ่าน loadBotLibrary (googleapis batchGet ถูก mock) แล้ว
