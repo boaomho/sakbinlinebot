@@ -9,7 +9,7 @@ import {
   FeatureSwitches,
 } from "@/lib/config";
 import { loadBotLibrary } from "@/lib/sheets/loader";
-import { tabToText } from "@/lib/sheets/columns";
+import { buildStepInjection, buildFaqInjection } from "@/lib/agent/inject";
 import {
   ensureCustomer,
   updateCustomerAfterTurn,
@@ -365,11 +365,15 @@ async function processMessage(
     }
   }
 
-  // Step 1: อ่าน Step/FAQ จาก BotLibrary (batchGet 1 call, cache) — ยังส่งทั้งก้อน
-  // (Part 4 จะเปลี่ยนเป็น selective injection ที่ลด token + คงความฉลาดเห็นทุกประตู)
+  const previousStage = customer?.stage ?? null;
+
+  // Step 1 · Part 4: selective injection — ลด prompt (แก้ราก MAX_TOKENS) + คงความฉลาดเห็นทุกประตู
+  // Step: สารบัญทุกประตูเสมอ + เนื้อเต็มเฉพาะ ปัจจุบัน/ปลายทาง/entry-match/handoff(lean)
+  // FAQ: สารบัญทุกข้อ + เต็มเฉพาะที่ keyword ตรง
   const lib = await loadBotLibrary();
-  const stepText = lib && lib.CSV_Step.length > 0 ? tabToText(lib.CSV_Step) : "(ไม่มีข้อมูลสเต็ป)";
-  const faqText = lib && lib.CSV_FAQ.length > 0 ? tabToText(lib.CSV_FAQ) : "(ไม่มีข้อมูล FAQ)";
+  const stepText =
+    lib && lib.CSV_Step.length > 0 ? buildStepInjection(lib.CSV_Step, previousStage ?? "", userMessage) : "(ไม่มีข้อมูลสเต็ป)";
+  const faqText = lib && lib.CSV_FAQ.length > 0 ? buildFaqInjection(lib.CSV_FAQ, userMessage) : "(ไม่มีข้อมูล FAQ)";
   const configText = formatConfigForPrompt(config);
   const stateText = buildStateText(customer);
 
@@ -378,8 +382,6 @@ async function processMessage(
     const history = await getRecentHistory(userId, 20);
     historyText = formatHistoryForPrompt(history);
   }
-
-  const previousStage = customer?.stage ?? null;
 
   const geminiOutput = await withTimeout(
     runSalesTurn({
