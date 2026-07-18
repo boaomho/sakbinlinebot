@@ -45,7 +45,7 @@ tests/
 **lib/orders.ts** — `appendOrderRow(input)` · `listPendingOrders()` · `markOrderSent(row, num)` · `ORDERS_HEADER` (24 คอล A–X, header-driven)
 **lib/gemini.ts** — `runSalesTurn(GeminiTurnInput) → GeminiTurnOutput{reply, stage, tagsAdd, handoff, orderData, paymentMethod, orderEditRequest, imageIntent, imageNote, degraded}`
 **lib/config.ts** — `getConfig()` · `resolveFeatureSwitches(config) → FeatureSwitches` · `formatConfigForPrompt`
-**lib/db.ts** — `ensureCustomer`/`mergePendingOrder`/`reconcileWaitTags`/`resetCustomerMemory`/`getRecentHistory`/`insertPendingMessage`(debounce)/`nextOrderNumber`(?) ฯลฯ
+**lib/db.ts** — `ensureCustomer`/`mergePendingOrder`/`reconcileWaitTags`/`resetCustomerMemory`/`getRecentHistory`/`insertPendingMessage`(debounce)/`nextOrderNumber`(atomic upsert counter · KI-05) ฯลฯ
 
 ## 3. จุดประกอบ prompt (ตามลำดับ)
 1. `route.ts processMessage` → `loadBotLibrary()` ได้ CSV_Step/FAQ/Products/Promo/Config
@@ -90,5 +90,6 @@ tests/
 - **KI-02** ยังไม่มี price guard ฝั่งโค้ด (C6 เต็มรูป = Step 3 pricing.ts) · `lib/agent/inject.ts` ยัดตารางให้บอทอ่าน (ชั่วคราว)
 - **KI-03** backtick ในเนื้อ prompt ปิด template literal (เกิด 6 ครั้ง) — guard `tests/scenarios/prompt-lint.test.ts`
 - **KI-04** harness state.ts ห้าม import อะไรที่ import googleapis (circular → เทสค้าง)
-- prompt ยังใหญ่ (~10,911 tokens) selective ยังไม่ถึงเป้า <5000 — งานวัด/ลด (รอบถัดไป)
+- **KI-05** 🟡 `nextOrderNumber` counter atomic จริง (`INSERT..ON CONFLICT DO UPDATE last_no+1 RETURNING`) แต่ `cron/orders/route.ts` loop `listPendingOrders → nextOrderNumber → markOrderSent` **ไม่มี lock กัน cron รันซ้อน** → 2 รอบทับกันแจกเลขคนละเลขให้ออเดอร์เดียวกัน + push แพ็คซ้ำ · ตรงกับ Don't "แจกเลขแบบไม่ atomic" ใน CLAUDE.md ที่ **ยังไม่ทำ guard ระดับ loop**
+- prompt ยังใหญ่ (~9,707 tokens · เจ้าของรายงานหลัง selective+catalog · เป้า <5000 ยังไม่ถึง) — ลด systemInstruction = รอบ 2a (DECISIONS.md)
 - validate stage-enum เลื่อนไป Step 6
