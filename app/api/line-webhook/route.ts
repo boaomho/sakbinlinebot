@@ -269,6 +269,18 @@ async function runOrderGate(
     }),
   );
 
+  // 🔬 diag เฉพาะตอน DIAG_PROMPT_TOKENS=1 — รูปร่างค่า order_data (ไม่ log ค่าจริง = PII-safe)
+  //    ชี้ขาด bug A: เช่น เบอร์={len:1,digits:true} = AI เอา "5" จาก "เอา 5 ถ้วย" มาใส่ผิดช่อง
+  //    vs เบอร์={len:10} = hallucinate เบอร์ · สินค้า/จำนวน/ยอด หายจริงมั้ย
+  if (process.env.DIAG_PROMPT_TOKENS === "1") {
+    const shape: Record<string, { len: number; digits: boolean }> = {};
+    for (const [k, v] of Object.entries(gemini.orderData)) {
+      const s = (v ?? "").trim();
+      if (s !== "") shape[k] = { len: s.length, digits: /^\d+$/.test(s) };
+    }
+    console.log(JSON.stringify({ scope: "orders", event: "orderData-shape", shape }));
+  }
+
   if (gate.complete) {
     const name = await getProfileName(userId);
     try {
