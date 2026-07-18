@@ -1,4 +1,5 @@
 import { neon, NeonQueryFunction } from "@neondatabase/serverless";
+import { PendingOrder } from "./core/orders";
 
 let sqlClient: NeonQueryFunction<false, false> | null = null;
 let schemaReady = false;
@@ -113,7 +114,7 @@ export interface CustomerState {
   lastSlipPathname: string | null;
   displayName: string | null;
   resumeNoticePending: boolean;
-  pendingOrder: Record<string, string>;
+  pendingOrder: PendingOrder;
   hasWrittenOrder: boolean;
   paidNoAddressNotified: boolean;
   createdAt: Date;
@@ -128,7 +129,7 @@ function rowToCustomer(r: Record<string, unknown>): CustomerState {
     lastSlipPathname: (r.last_slip_pathname as string | null) ?? null,
     displayName: (r.display_name as string | null) ?? null,
     resumeNoticePending: Boolean(r.resume_notice_pending),
-    pendingOrder: (r.pending_order as Record<string, string> | null) ?? {},
+    pendingOrder: (r.pending_order as PendingOrder | null) ?? {},
     hasWrittenOrder: Boolean(r.has_written_order),
     paidNoAddressNotified: Boolean(r.paid_no_address_notified),
     humanMode: Boolean(r.human_mode),
@@ -355,18 +356,23 @@ export async function setLastSlipPathname(userId: string, pathname: string): Pro
 // ---- ออเดอร์: pending_order (สะสมข้ามเทิร์น) + gate flags + waiting tags ----
 
 /**
- * merge ฟิลด์ใหม่ลง pending_order — ทับเฉพาะ field ที่มีค่า (ไม่ว่าง) · field ที่ไม่ได้ส่ง = คงของเดิม
- * (ลูกค้าให้ข้อมูลทีละเทิร์นได้ ห้ามให้ของเดิมหาย) · คืน pending_order หลัง merge
+ * merge ข้อมูลเทิร์นนี้ลง pending_order — คืน pending หลัง merge
+ * - ช่องข้อความ (ชื่อ/ที่อยู่/เบอร์/การชำระเงิน): ทับเฉพาะที่ไม่ว่าง · ไม่ส่ง = คงเดิม
+ * - items: ทับเฉพาะเมื่อส่ง array "ไม่ว่าง" มา (ลูกค้าเปลี่ยน/เพิ่มรายการ)
+ *   🔴 D-15 rule: items ว่าง = AI แค่ไม่พูดถึงซ้ำ ≠ ยกเลิก → คง items เดิมไว้ (ห้าม wipe เงียบ)
+ *   การยกเลิก/เปลี่ยนใจต้องมาจากข้อความชัดเจน จัดการทางอื่น ไม่ใช่จาก field ที่ AI ลืมส่ง
  */
-export async function mergePendingOrder(userId: string, fields: Record<string, string>): Promise<Record<string, string>> {
+export async function mergePendingOrder(userId: string, fields: PendingOrder): Promise<PendingOrder> {
   await ensureSchema();
   const sql = getSql();
   const rows = await sql`SELECT pending_order FROM customers WHERE user_id = ${userId}`;
-  const existing = ((rows[0] as Record<string, unknown> | undefined)?.pending_order as Record<string, string> | null) ?? {};
-  const merged: Record<string, string> = { ...existing };
-  for (const [k, v] of Object.entries(fields)) {
+  const existing = ((rows[0] as Record<string, unknown> | undefined)?.pending_order as PendingOrder | null) ?? {};
+  const merged: PendingOrder = { ...existing };
+  for (const k of ["ชื่อ", "ที่อยู่", "เบอร์", "การชำระเงิน"] as const) {
+    const v = fields[k];
     if (typeof v === "string" && v.trim() !== "") merged[k] = v.trim();
   }
+  if (Array.isArray(fields.items) && fields.items.length > 0) merged.items = fields.items;
   await sql`UPDATE customers SET pending_order = ${JSON.stringify(merged)}::jsonb WHERE user_id = ${userId}`;
   return merged;
 }

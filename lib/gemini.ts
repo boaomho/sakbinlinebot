@@ -1,6 +1,18 @@
 import { GoogleGenAI, ThinkingLevel, Type } from "@google/genai";
 import { buildStaticSystemInstruction, buildUserContent } from "@/prompt/system";
 import { AppConfig, DEFAULT_REPLY } from "./config";
+import { OrderItem } from "./core/pricing";
+
+/**
+ * order_data ที่ AI ส่งกลับ (D-15) — 3 ช่องผู้รับ + items:[{sku,qty}]
+ * 🔴 ไม่มี ยอด/จำนวน(ข้อความ) แล้ว — ตัวเลขเงินคิดโดย lib/core/pricing เท่านั้น
+ */
+export interface OrderDataFromAI {
+  ชื่อ?: string;
+  ที่อยู่?: string;
+  เบอร์?: string;
+  items?: OrderItem[];
+}
 
 const MODEL = "gemini-3.5-flash";
 
@@ -20,6 +32,8 @@ export interface GeminiTurnInput {
   userMessage: string;
   currentStage: string;
   image?: GeminiImageInput;
+  /** D-15 pass 2 — หมายเหตุระบบว่าคิดยอดเสร็จแล้ว (ดู UserContentParams.pass2Note) */
+  pass2Note?: string;
 }
 
 /** ช่องทางชำระเงินที่ AI ประเมินใหม่ทุกเทิร์นจากบทสนทนาล่าสุด · "" = ยังไม่ตัดสิน */
@@ -34,8 +48,13 @@ export interface GeminiTurnOutput {
   tagsAdd: string[];
   handoff: boolean;
   handoffReason: string;
-  /** ข้อมูลจัดส่งที่ AI จับได้เทิร์นนี้ (โค้ด merge ลง pending_order · ไม่รวมช่องทางชำระ) */
-  orderData: Record<string, string>;
+  /** ข้อมูลจัดส่ง+รายการที่ AI จับได้เทิร์นนี้ (โค้ด merge ลง pending_order · ไม่รวมช่องทางชำระ) */
+  orderData: OrderDataFromAI;
+  /**
+   * true = บอทกำลังจะพูด "ยอด" ที่ยังคำนวณไม่ได้ตอนประกอบ prompt (ลูกค้าเพิ่งบอก/เปลี่ยนจำนวน)
+   * → โค้ดจะคำนวณราคาแล้วเรียก pass 2 ให้บอทแจกแจงยอดจริง (D-15 · 2-pass)
+   */
+  needsPriceQuote: boolean;
   /** ช่องทางชำระ "ล่าสุด" — AI ประเมินใหม่ทุกเทิร์น (โค้ดใช้ตัดสิน gate) */
   paymentMethod: PaymentMethod;
   /** true = ลูกค้าขอแก้ออเดอร์ที่ "บันทึกลงชีตแล้ว" (เปลี่ยนที่อยู่/COD↔โอน/เพิ่มลด/ยกเลิก) → โค้ด handoff */
@@ -60,15 +79,26 @@ const RESPONSE_SCHEMA = {
     order_data: {
       type: Type.OBJECT,
       properties: {
-        // ผู้รับ 3 ช่องเท่านั้น — น้อย = AI พลาดยาก · เลิกแยก จังหวัด/รหัส (ดึงจากก้อนด้วยสูตรชีตทีหลังได้)
+        // ผู้รับ 3 ช่อง (ก้อนดิบ ไม่แยกจังหวัด/รหัส) + items รายการสั่งซื้อ
         ชื่อ: { type: Type.STRING },
-        ที่อยู่: { type: Type.STRING }, // ก้อนดิบทั้งหมดตามที่ลูกค้าให้ (รวมจังหวัด/รหัสในก้อน)
+        ที่อยู่: { type: Type.STRING },
         เบอร์: { type: Type.STRING },
-        สินค้า: { type: Type.STRING },
-        จำนวน: { type: Type.STRING },
-        ยอด: { type: Type.STRING },
+        // 🔴 D-15: order line = items:[{sku,qty}] · sku จาก CSV_Products (live) · qty ตัวเลขล้วน
+        //   ไม่มี ยอด/จำนวน(ข้อความ) — ตัวเลขเงินคิดโดย lib/core/pricing เท่านั้น
+        items: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              sku: { type: Type.STRING },
+              qty: { type: Type.NUMBER },
+            },
+          },
+        },
       },
     },
+    // บอทกำลังจะพูดยอดที่ยังคำนวณไม่ได้ (ลูกค้าเพิ่งบอก/เปลี่ยนจำนวน) → โค้ดคำนวณแล้ว pass 2
+    needs_price_quote: { type: Type.BOOLEAN },
     payment_method: { type: Type.STRING },
     order_edit_request: { type: Type.BOOLEAN },
     image_intent: { type: Type.STRING },
@@ -81,6 +111,7 @@ const RESPONSE_SCHEMA = {
     "handoff",
     "handoff_reason",
     "order_data",
+    "needs_price_quote",
     "payment_method",
     "order_edit_request",
     "image_intent",
@@ -105,6 +136,7 @@ function fallback(stage: string): GeminiTurnOutput {
     handoff: false,
     handoffReason: "",
     orderData: {},
+    needsPriceQuote: false,
     paymentMethod: "",
     orderEditRequest: false,
     imageIntent: "other",
@@ -115,6 +147,31 @@ function fallback(stage: string): GeminiTurnOutput {
 
 function toPaymentMethod(value: unknown): PaymentMethod {
   return value === "โอน" || value === "COD" ? value : "";
+}
+
+/**
+ * แปลง order_data ดิบจาก AI → OrderDataFromAI (เก็บเฉพาะช่องที่มีค่าจริง)
+ * items: รับเฉพาะ {sku:string, qty:number>0} · กันของแปลก/ไม่ครบ (parse ไม่พังทั้งเทิร์น)
+ */
+function parseOrderData(raw: unknown): OrderDataFromAI {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const o = raw as Record<string, unknown>;
+  const out: OrderDataFromAI = {};
+  if (typeof o["ชื่อ"] === "string" && o["ชื่อ"].trim()) out["ชื่อ"] = o["ชื่อ"];
+  if (typeof o["ที่อยู่"] === "string" && o["ที่อยู่"].trim()) out["ที่อยู่"] = o["ที่อยู่"];
+  if (typeof o["เบอร์"] === "string" && o["เบอร์"].trim()) out["เบอร์"] = o["เบอร์"];
+  if (Array.isArray(o["items"])) {
+    const items: OrderItem[] = [];
+    for (const el of o["items"] as unknown[]) {
+      if (!el || typeof el !== "object") continue;
+      const e = el as Record<string, unknown>;
+      const sku = typeof e.sku === "string" ? e.sku.trim() : "";
+      const qty = typeof e.qty === "number" ? e.qty : Number(e.qty);
+      if (sku && Number.isFinite(qty) && qty > 0) items.push({ sku, qty });
+    }
+    if (items.length > 0) out.items = items;
+  }
+  return out;
 }
 
 function isValidImageIntent(value: unknown): value is ImageIntent {
@@ -137,6 +194,7 @@ export async function runSalesTurn(input: GeminiTurnInput): Promise<GeminiTurnOu
     stateText: input.stateText,
     historyText: input.historyText,
     userMessage: input.userMessage,
+    pass2Note: input.pass2Note,
   });
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -255,10 +313,8 @@ export async function runSalesTurn(input: GeminiTurnInput): Promise<GeminiTurnOu
       tagsAdd: Array.isArray(parsed.tags_add) ? parsed.tags_add.filter((t: unknown) => typeof t === "string") : [],
       handoff: Boolean(parsed.handoff),
       handoffReason: typeof parsed.handoff_reason === "string" ? parsed.handoff_reason : "",
-      orderData:
-        parsed.order_data && typeof parsed.order_data === "object" && !Array.isArray(parsed.order_data)
-          ? (parsed.order_data as Record<string, string>)
-          : {},
+      orderData: parseOrderData(parsed.order_data),
+      needsPriceQuote: Boolean(parsed.needs_price_quote),
       paymentMethod: toPaymentMethod(parsed.payment_method),
       orderEditRequest: Boolean(parsed.order_edit_request),
       imageIntent: isValidImageIntent(parsed.image_intent) ? parsed.image_intent : "other",

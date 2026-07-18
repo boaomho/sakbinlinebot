@@ -109,7 +109,9 @@ export function __resetOrdersColumnsCache(): void {
 
 export interface NewOrderInput {
   lineDisplayName: string;
+  /** I = สรุปรายการคนอ่าน "น้ำพริกปลาทู x4 | ..." (จาก lib/core/pricing formatLinesForSheet) */
   productAndQty?: string;
+  /** J = total จาก lib/core/pricing (ตัวเลขล้วน) — ไม่เคยอ่านจาก AI */
   total?: string;
   customerName?: string;
   phone?: string;
@@ -119,6 +121,10 @@ export interface NewOrderInput {
   postalCode?: string;
   paymentMethod?: string;
   slipPathname?: string;
+  /** S = items_json = JSON.stringify(items) (D-15) */
+  itemsJson?: string;
+  /** T = ค่าส่ง จาก lib/core/pricing (ตัวเลขล้วน) */
+  shippingFee?: string;
 }
 
 export async function appendOrderRow(input: NewOrderInput): Promise<void> {
@@ -141,6 +147,8 @@ export async function appendOrderRow(input: NewOrderInput): Promise<void> {
     ยกเลิก: "FALSE",
     ส่งออเดอร์แล้ว: "FALSE",
     เลขTracking: "",
+    items_json: sanitizeShortText(input.itemsJson, 1000),
+    ค่าส่ง: sanitizeAmount(input.shippingFee),
   };
 
   await withOrdersColumns(async (cols) => {

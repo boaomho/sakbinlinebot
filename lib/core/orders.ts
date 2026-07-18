@@ -37,19 +37,45 @@ export function sanitizeShortText(text: string | undefined, maxLen = 200): strin
 
 // ---- โดเมนออเดอร์ ----
 
+import { OrderItem } from "./pricing";
+
 /** แท็ก "รอ" ที่โค้ดเป็นคนจัดการเอง (ห้ามให้ AI ใส่ผ่าน tags_add) */
 export type WaitTag = "รอโอน" | "รอที่อยู่" | null;
 
-/** ช่อง สินค้า+จำนวน ที่คนอ่าน เช่น "น้ำพริกปลาทู x3" */
-export function formatProductAndQty(orderData: Record<string, string>): string {
-  return [orderData["สินค้า"], orderData["จำนวน"]].filter(Boolean).join(" x");
+/**
+ * pending_order ที่ merge สะสมข้ามเทิร์น (เก็บใน Neon JSONB)
+ * 🔴 D-15: order line ไม่ใช่ข้อความ สินค้า/จำนวน/ยอด อีกต่อไป — เป็น items:[{sku,qty}]
+ *    (ยอด/ค่าส่ง คิดโดย lib/core/pricing.ts เท่านั้น · AI ไม่แตะตัวเลขเงิน)
+ */
+export interface PendingOrder {
+  ชื่อ?: string;
+  ที่อยู่?: string;
+  เบอร์?: string;
+  การชำระเงิน?: string;
+  items?: OrderItem[];
+}
+
+/** normalize items เพื่อเทียบ (เรียง sku + sku/qty) — ใช้ตัดสิน "items เปลี่ยนมั้ย" (deterministic) */
+export function normalizeItems(items: OrderItem[] | undefined): OrderItem[] {
+  return (items ?? [])
+    .filter((it) => it && typeof it.sku === "string" && it.sku.trim() !== "" && Number.isFinite(it.qty) && it.qty > 0)
+    .map((it) => ({ sku: it.sku.trim(), qty: it.qty }))
+    .sort((a, b) => (a.sku < b.sku ? -1 : a.sku > b.sku ? 1 : a.qty - b.qty));
+}
+
+/** items เท่ากันไหม (หลัง normalize) */
+export function itemsEqual(a: OrderItem[] | undefined, b: OrderItem[] | undefined): boolean {
+  const na = normalizeItems(a);
+  const nb = normalizeItems(b);
+  if (na.length !== nb.length) return false;
+  return na.every((it, i) => it.sku === nb[i].sku && it.qty === nb[i].qty);
 }
 
 /**
  * ชื่อผู้รับใช้ได้: ไม่ว่าง + ยาว ≥2 ตัวอักษร (รับได้ทั้งชื่อคน/ชื่อเล่น/ชื่อร้าน/บริษัท)
  * ไม่บังคับนามสกุล — ลูกค้าจริงพิมพ์ชื่อเล่นเยอะ บังคับแล้วเสียออเดอร์
  */
-export function nameComplete(p: Record<string, string>): boolean {
+export function nameComplete(p: PendingOrder): boolean {
   return (p["ชื่อ"] ?? "").trim().length >= 2;
 }
 
@@ -63,15 +89,20 @@ export function nameComplete(p: Record<string, string>): boolean {
  * การจับคู่ตำบล-อำเภอ-รหัสเป็นหน้าที่ระบบขนส่ง+แอดมิน ไม่ใช่บอท
  * จังหวัด/รหัสไปรษณีย์ = metadata ที่ AI หยิบได้ก็ใส่ ไม่ได้ก็เว้น ไม่กระทบการปิดออเดอร์
  */
-export function addressComplete(p: Record<string, string>): boolean {
+export function addressComplete(p: PendingOrder): boolean {
   return (p["ที่อยู่"] ?? "").trim() !== "";
 }
 
 export interface OrderGateInput {
   /** pending_order ที่ merge สะสมแล้ว (โค้ดตัดสินจาก "ของที่มีจริง" เท่านั้น) */
-  pending: Record<string, string>;
+  pending: PendingOrder;
   /** มีสลิปผูกอยู่กับลูกค้ารายนี้หรือยัง (เทิร์นนี้ หรือที่จำไว้) */
   slipPresent: boolean;
+  /**
+   * pricing สำเร็จมั้ย = `error === null && !needsHandoff` (คำนวณโดยผู้เรียกจาก lib/core/pricing)
+   * 🔴 D-15: order line ครบ = items ไม่ว่าง **และ** pricing ผ่าน (ยอด/เพดานคำนวณได้ ไม่ใช่แค่มี items)
+   */
+  priceOk: boolean;
 }
 
 export interface OrderGateResult {
@@ -81,11 +112,11 @@ export interface OrderGateResult {
   complete: boolean;
   /** แท็กรอที่ควรเป็น ณ ตอนนี้ (null = ไม่มีแท็กรอ) — ป้อน Follow engine (ยังไม่เปิด) */
   waitTag: WaitTag;
-  /** อะไรขาดบ้าง (ชื่อ/ที่อยู่/เบอร์/สินค้า/จำนวน/ยอด/สลิป) — บอทเอาไปขอลูกค้าเฉพาะที่ขาด · ใช้ log ด้วย */
+  /** อะไรขาดบ้าง (ชื่อ/ที่อยู่/เบอร์/รายการสินค้า/สลิป) — บอทเอาไปขอลูกค้าเฉพาะที่ขาด · ใช้ log ด้วย */
   missing: string[];
   /**
-   * "ออเดอร์พัง" = ข้อมูลจัดส่งครบ (ชื่อ+ที่อยู่+เบอร์) แต่ order line ไม่ครบ (ขาด สินค้า/จำนวน/ยอด)
-   * มักเกิดจาก AI ไม่ extract สินค้า/จำนวน/ยอด → ควรแจ้งแอดมินให้ช่วย (ไม่ใช่เคส D-11 early ที่ยังไม่มีที่อยู่)
+   * "ออเดอร์พัง" = ข้อมูลจัดส่งครบ (ชื่อ+ที่อยู่+เบอร์) แต่ยังไม่มี items (AI ไม่ extract รายการ)
+   * → ควรแจ้งแอดมินให้ช่วย (ไม่ใช่เคส D-11 early ที่ยังไม่มีที่อยู่)
    */
   brokenOrder: boolean;
 }
@@ -104,14 +135,14 @@ export interface OrderGateResult {
  *
  * เป็น pure function: ไม่มี I/O ไม่แตะ DB — ผู้เรียกเอาผลไปลงมือเอง
  */
-export function evaluateOrderGate({ pending, slipPresent }: OrderGateInput): OrderGateResult {
-  const has = (k: string) => (pending[k] ?? "").trim() !== "";
+export function evaluateOrderGate({ pending, slipPresent, priceOk }: OrderGateInput): OrderGateResult {
   const payment = (pending["การชำระเงิน"] ?? "").trim();
   const name = nameComplete(pending);
   const addr = addressComplete(pending);
   const phone = sanitizePhone(pending["เบอร์"]) !== ""; // มีตัวเลข = ผ่าน (แอดมินตรวจเบอร์เอง)
   const shipping = name && addr && phone;
-  const product = has("สินค้า") && has("จำนวน") && has("ยอด"); // order line ต้องครบ (ยอด = จาก CSV_Promo · C6)
+  const itemsOk = normalizeItems(pending.items).length > 0;
+  const product = itemsOk && priceOk; // order line ครบ = มี items + pricing ผ่าน (ยอด/เพดานคำนวณได้)
   const base = shipping && product;
 
   const complete = (payment === "COD" && base) || (payment === "โอน" && base && slipPresent);
@@ -122,14 +153,13 @@ export function evaluateOrderGate({ pending, slipPresent }: OrderGateInput): Ord
     if (!name) missing.push("ชื่อ");
     if (!addr) missing.push("ที่อยู่");
     if (!phone) missing.push("เบอร์");
-    if (!has("สินค้า")) missing.push("สินค้า");
-    if (!has("จำนวน")) missing.push("จำนวน");
-    if (!has("ยอด")) missing.push("ยอด");
+    if (!itemsOk) missing.push("รายการสินค้า");
     if (payment === "โอน" && !slipPresent) missing.push("สลิป");
   }
 
-  // ออเดอร์พัง: จัดส่งครบ + เลือกวิธีจ่ายแล้ว แต่ order line ขาด → แจ้งแอดมิน (ไม่ใช่ D-11 early)
-  const brokenOrder = !complete && payment !== "" && shipping && !product;
+  // ออเดอร์พัง: จัดส่งครบ + เลือกวิธีจ่ายแล้ว แต่ยังไม่มี items → AI ไม่ extract รายการ → แจ้งแอดมิน (ไม่ใช่ D-11 early)
+  // (กรณี items มีแต่ pricing ล้ม → ผู้เรียกจัดการแยกจาก priceResult.error/needsHandoff โดยตรง)
+  const brokenOrder = !complete && payment !== "" && shipping && !itemsOk;
 
   let waitTag: WaitTag = null;
   if (!complete) {
@@ -147,30 +177,39 @@ export function evaluateOrderGate({ pending, slipPresent }: OrderGateInput): Ord
   return { payment, complete, waitTag, missing, brokenOrder };
 }
 
-/** ข้อความแจ้งแอดมินเมื่อ "ออเดอร์พัง" — จัดส่งครบแต่ order line ขาด (AI ไม่ extract สินค้า/จำนวน/ยอด) */
-export function buildBrokenOrderAdminText(pending: Record<string, string>, missing: string[], lineName: string): string {
+/** สรุป items ที่คนอ่านได้จาก pending (เช่น "NPT-10G x4 · NPT-20G x2") — ใช้ในข้อความแอดมินตอน pricing ยังคำนวณไม่ได้ */
+function itemsToText(items: OrderItem[] | undefined): string {
+  const norm = normalizeItems(items);
+  return norm.length > 0 ? norm.map((it) => `${it.sku} x${it.qty}`).join(" · ") : "(ไม่มี)";
+}
+
+/** ข้อความแจ้งแอดมินเมื่อ "ออเดอร์พัง" — จัดส่งครบแต่ยังไม่มี items (AI ไม่ extract รายการ) */
+export function buildBrokenOrderAdminText(pending: PendingOrder, missing: string[], lineName: string): string {
   return [
-    "⚠️ ออเดอร์ตกหล่น (ข้อมูลจัดส่งครบ แต่ order line ไม่ครบ)",
+    "⚠️ ออเดอร์ตกหล่น (ข้อมูลจัดส่งครบ แต่ยังไม่มีรายการสินค้า)",
     `ยังขาด: ${missing.join(", ")}`,
     "———",
     `ชื่อ: ${pending["ชื่อ"] ?? ""}`,
     `เบอร์: ${sanitizePhone(pending["เบอร์"])}`,
     `ที่อยู่: ${pending["ที่อยู่"] ?? ""}`,
-    `สินค้า: ${pending["สินค้า"] ?? "(ไม่มี)"} · จำนวน: ${pending["จำนวน"] ?? "(ไม่มี)"} · ยอด: ${pending["ยอด"] ?? "(ไม่มี)"}`,
+    `รายการ: ${itemsToText(pending.items)}`,
     "———",
     `LineOA: ${lineName}`,
   ].join("\n");
 }
 
-/** ข้อความแจ้งกลุ่มแอดมินเมื่อออเดอร์สมบูรณ์ขึ้นชีต (push จุดที่ 2) */
-export function buildNewOrderAdminText(pending: Record<string, string>, payment: string, name: string): string {
+/**
+ * ข้อความแจ้งกลุ่มแอดมินเมื่อออเดอร์สมบูรณ์ขึ้นชีต (push จุดที่ 2)
+ * 🔴 ยอด/สรุปรายการ มาจาก lib/core/pricing (ผู้เรียกส่งเข้ามา) — ไม่อ่านตัวเลขจาก AI
+ */
+export function buildNewOrderAdminText(
+  summary: string,
+  total: number,
+  payment: string,
+  name: string,
+  phone: string,
+): string {
   const icon = payment === "COD" ? "📦" : "💰";
-  return (
-    `${icon} ออเดอร์ใหม่ (${payment})\n` +
-    `${formatProductAndQty(pending)}\n` +
-    `${pending["ยอด"] ?? ""}\n` +
-    `${pending["ชื่อ"] ?? ""} ${sanitizePhone(pending["เบอร์"])}\n` +
-    `${pending["จังหวัด"] ?? ""}`
-  );
+  return `${icon} ออเดอร์ใหม่ (${payment})\n${summary}\n${total} บาท\n${name} ${sanitizePhone(phone)}`;
 }
 

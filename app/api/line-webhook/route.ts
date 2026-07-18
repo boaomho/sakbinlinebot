@@ -63,7 +63,9 @@ import {
 } from "@/lib/admin-commands";
 import { uploadSlip, getSlipSignedUrl } from "@/lib/blob";
 import { appendOrderRow } from "@/lib/orders";
-import { evaluateOrderGate, formatProductAndQty, buildNewOrderAdminText, buildBrokenOrderAdminText } from "@/lib/core/orders";
+import { evaluateOrderGate, buildNewOrderAdminText, buildBrokenOrderAdminText, itemsEqual, normalizeItems, PendingOrder } from "@/lib/core/orders";
+import { resolveRuntimeVars, formatLinesForSheet, formatOrderSummary, RuntimeVarContext, PriceResult } from "@/lib/core/pricing";
+import { computeQuote, hasUnresolvedPricingVars, replyNumbersConsistent } from "@/lib/agent/quote";
 
 export const maxDuration = 30;
 
@@ -85,13 +87,42 @@ function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T
   });
 }
 
+/** ส่งข้อความถึงลูกค้า: reply ก่อน · ล้มเหลว (token หมดอายุ) → push */
+async function deliverReply(replyToken: string, userId: string, text: string, quotaSaver: boolean): Promise<void> {
+  const sent = await replyMessages(replyToken, text, quotaSaver);
+  if (!sent) await pushMessages(userId, text, quotaSaver);
+}
+
+/** GeminiTurnOutput เมื่อ Gemini ล้ม (timeout/throw) — degraded=true */
+function fallbackTurn(stage: string): import("@/lib/gemini").GeminiTurnOutput {
+  return {
+    reply: DEFAULT_REPLY,
+    stage,
+    tagsAdd: [],
+    handoff: false,
+    handoffReason: "",
+    orderData: {},
+    needsPriceQuote: false,
+    paymentMethod: "",
+    orderEditRequest: false,
+    imageIntent: "other",
+    imageNote: "",
+    degraded: true,
+  };
+}
+
 function buildStateText(customer: CustomerState | null): string {
   if (!customer) {
     return "(ไม่มีความจำลูกค้า ระบบความจำปิดอยู่ ถือว่าเป็นการเริ่มบทสนทนาใหม่ทุกครั้ง)";
   }
-  const pendingKeys = Object.entries(customer.pendingOrder)
-    .filter(([, v]) => (v ?? "").trim() !== "")
-    .map(([k, v]) => `${k}=${v}`);
+  const po = customer.pendingOrder;
+  const pendingKeys: string[] = [];
+  for (const k of ["ชื่อ", "ที่อยู่", "เบอร์", "การชำระเงิน"] as const) {
+    const v = po[k];
+    if (typeof v === "string" && v.trim() !== "") pendingKeys.push(`${k}=${v}`);
+  }
+  const normItems = normalizeItems(po.items);
+  if (normItems.length > 0) pendingKeys.push(`รายการ=${normItems.map((it) => `${it.sku} x${it.qty}`).join(", ")}`);
   return [
     `ประตูปัจจุบัน: ${customer.stage ?? "(ยังไม่เคยเข้าประตูไหน)"}`,
     `แท็ก: ${customer.tags.length > 0 ? customer.tags.join(", ") : "(ยังไม่มีแท็ก)"}`,
@@ -230,37 +261,37 @@ async function handleImageIntent(
 }
 
 /**
- * gate ออเดอร์: merge ข้อมูลเทิร์นนี้ลง pending_order → ให้ core ตัดสิน → ลงมือตามผล
- * การ "ตัดสิน" อยู่ที่ lib/core/orders.ts (evaluateOrderGate) เพื่อให้ช่องทางอื่น (Salepage)
- * ใช้กติกาเดียวกันได้ · ฟังก์ชันนี้เหลือแค่ I/O: DB / ชีต / Blob / push
+ * gate ออเดอร์: ตัดสินจาก pending_order (merge แล้วจากผู้เรียก) + ผลราคาจาก lib/core/pricing → ลงมือ
+ * การ "ตัดสิน" อยู่ที่ lib/core/orders.ts (evaluateOrderGate) · ฟังก์ชันนี้เหลือแค่ I/O: DB / ชีต / Blob / push
+ * 🔴 D-15: ยอด/ค่าส่ง มาจาก price (คำนวณโดย Core) — ไม่เคยอ่านจาก AI · alreadyEscalated กัน push ซ้ำกับ 2-pass
  */
 async function runOrderGate(
   userId: string,
   customer: CustomerState,
-  gemini: { orderData: Record<string, string>; paymentMethod: string; imageNote: string },
+  pending: PendingOrder,
+  price: PriceResult | null,
   slipThisTurn: string | null,
   config: AppConfig,
+  alreadyEscalated: boolean,
 ): Promise<void> {
-  const fields: Record<string, string> = { ...gemini.orderData };
-  if (gemini.paymentMethod) fields["การชำระเงิน"] = gemini.paymentMethod; // "" = คงของเดิม
-  const pending = await mergePendingOrder(userId, fields);
-
   const slipPathname = slipThisTurn ?? customer.lastSlipPathname ?? null;
-  const gate = evaluateOrderGate({ pending, slipPresent: Boolean(slipPathname) });
+  const priceOk = price !== null && price.error === null && !price.needsHandoff;
+  const gate = evaluateOrderGate({ pending, slipPresent: Boolean(slipPathname), priceOk });
   const payment = gate.payment;
   const adminGroupId = process.env.ADMIN_GROUP_ID;
+  const normItems = normalizeItems(pending.items);
 
-  // log ผลการตัดสิน gate ทุกเทิร์น — ออเดอร์เคยหายเงียบเพราะพาธ "ไม่ครบ" ไม่เคย log อะไรเลย
-  // ⚠️ log แค่ "ชื่อฟิลด์ที่มีค่า" ห้าม log ค่าจริง (ชื่อ/ที่อยู่/เบอร์ = PII ตาม CLAUDE.md)
+  // log gate ทุกเทิร์น (PII-safe: ชื่อ field + จำนวน item + สถานะราคา · ไม่ log ค่าจริง)
   console.log(
     JSON.stringify({
       scope: "orders",
       event: "gate",
-      // ชี้ขาด: AI ส่ง field อะไรมาเทิร์นนี้ (ชื่อ field เท่านั้น ไม่ log ค่า = PII-safe)
-      // ถ้าไม่มี "ที่อยู่" ทั้งที่ลูกค้าให้ที่อยู่ = AI ไม่ extract ลง order_data (ปัญหา prompt ไม่ใช่ gate)
-      aiSentFields: Object.keys(gemini.orderData).filter((k) => (gemini.orderData[k] ?? "").trim() !== ""),
-      pendingFilledFields: Object.keys(pending).filter((k) => (pending[k] ?? "").trim() !== ""),
-      payment: gate.payment,
+      filledFields: (["ชื่อ", "ที่อยู่", "เบอร์", "การชำระเงิน"] as const).filter((k) => (pending[k] ?? "").trim() !== ""),
+      itemCount: normItems.length,
+      priceOk,
+      priceError: price?.error ?? null,
+      priceHandoff: price?.needsHandoff ?? false,
+      payment,
       complete: gate.complete,
       missing: gate.missing,
       brokenOrder: gate.brokenOrder,
@@ -269,45 +300,31 @@ async function runOrderGate(
     }),
   );
 
-  // 🔬 diag เฉพาะตอน DIAG_PROMPT_TOKENS=1 — รูปร่างค่า order_data (ไม่ log ค่าจริง = PII-safe)
-  //    ชี้ขาด bug A: เช่น เบอร์={len:1,digits:true} = AI เอา "5" จาก "เอา 5 ถ้วย" มาใส่ผิดช่อง
-  //    vs เบอร์={len:10} = hallucinate เบอร์ · สินค้า/จำนวน/ยอด หายจริงมั้ย
-  if (process.env.DIAG_PROMPT_TOKENS === "1") {
-    const shape: Record<string, { len: number; digits: boolean }> = {};
-    for (const [k, v] of Object.entries(gemini.orderData)) {
-      const s = (v ?? "").trim();
-      if (s !== "") shape[k] = { len: s.length, digits: /^\d+$/.test(s) };
-    }
-    console.log(JSON.stringify({ scope: "orders", event: "orderData-shape", shape }));
-  }
-
-  if (gate.complete) {
+  if (gate.complete && price) {
     const name = await getProfileName(userId);
     try {
       await appendOrderRow({
         lineDisplayName: name,
-        productAndQty: formatProductAndQty(pending),
-        total: pending["ยอด"],
+        productAndQty: formatLinesForSheet(price.lines), // I = "น้ำพริกปลาทู x4 | ..."
+        total: String(price.total), // J = ยอดจาก Core
         customerName: pending["ชื่อ"],
         phone: pending["เบอร์"],
         address: pending["ที่อยู่"],
-        province: pending["จังหวัด"],
-        postalCode: pending["รหัสไปรษณีย์"],
         paymentMethod: payment,
         slipPathname: payment === "โอน" ? slipPathname ?? undefined : undefined,
+        itemsJson: JSON.stringify(normItems), // S = items_json
+        shippingFee: String(price.shippingFee), // T = ค่าส่ง
       });
     } catch (error) {
       console.error(JSON.stringify({ scope: "orders", warning: "appendOrderRow failed", error: String(error) }));
       return; // เขียนไม่สำเร็จ = ไม่ล้าง ไม่ push (retry เทิร์นหน้าได้)
     }
-    // สำเร็จ → ล้าง pending+สลิป, ลบแท็กรอ, mark เขียนแล้ว, reset flag แจ้งเตือน
     await clearPendingOrderAndSlip(userId);
     await reconcileWaitTags(userId, null);
     await setHasWrittenOrder(userId);
     await setPaidNoAddressNotified(userId, false);
-    // push จุดที่ 2 — ออเดอร์ใหม่ (โอน แนบรูปสลิป)
     if (adminGroupId) {
-      const text = buildNewOrderAdminText(pending, payment, name);
+      const text = buildNewOrderAdminText(formatOrderSummary(price.lines), price.total, payment, name, pending["เบอร์"] ?? "");
       const signedUrl = payment === "โอน" && slipPathname ? await getSlipSignedUrl(slipPathname, config.slipUrlExpiryDays) : null;
       if (signedUrl) {
         await pushRawMessages(adminGroupId, [
@@ -322,17 +339,20 @@ async function runOrderGate(
     return;
   }
 
-  // ---- ยังไม่ครบ → ติดแท็กรอ (ป้อน Follow) · บอทขอสิ่งที่ยังขาดจากลูกค้าเอง ----
-  // 🔴 D-11: ไม่ push ⚠️ ตอนข้อมูลจัดส่งยังไม่ครบ (COD ยังไม่ได้ที่อยู่ = เร็วไป บอทเก็บเอง)
+  // ---- ยังไม่ครบ → ติดแท็กรอ (D-11: ไม่ push ตอนจัดส่งยังไม่ครบ) ----
   await reconcileWaitTags(userId, gate.waitTag);
 
-  // 🔴 D-13: "ออเดอร์พัง" (จัดส่งครบ แต่ order line ขาด สินค้า/จำนวน/ยอด) → แจ้งแอดมินให้ช่วย ห้ามเงียบ
-  //   ต่างจาก D-11: ที่อยู่ครบแล้ว = ลูกค้าตั้งใจซื้อจริง แต่ระบบ extract order line ตกหล่น
-  //   reuse flag paid_no_address_notified กัน spam ทุกเทิร์น (ไม่เพิ่ม column ใหม่)
-  if (gate.brokenOrder && !customer.paidNoAddressNotified) {
+  // ปัญหาที่ต้องแจ้งแอดมิน (กัน spam ด้วย flag เดียว · ข้ามถ้า 2-pass แจ้งไปแล้ว):
+  //  - D-13 brokenOrder: จัดส่งครบ แต่ AI ไม่ extract items
+  //  - price ล้ม (error/needsHandoff) ทั้งที่มี items = ราคาคำนวณไม่ได้/เกินเพดาน (กฎ j/k)
+  const priceStuck = normItems.length > 0 && price !== null && (price.error !== null || price.needsHandoff);
+  if ((gate.brokenOrder || priceStuck) && !customer.paidNoAddressNotified && !alreadyEscalated) {
     if (adminGroupId) {
       const name = await getProfileName(userId);
-      await pushRawText(adminGroupId, buildBrokenOrderAdminText(pending, gate.missing, name));
+      const text = priceStuck
+        ? `⚠️ ออเดอร์ต้องตรวจราคา (${price?.error ?? "เกินเพดาน/ต้องมีคนดู"})\nรายการ: ${normItems.map((it) => `${it.sku} x${it.qty}`).join(" · ")}\n———\nLineOA: ${name}`
+        : buildBrokenOrderAdminText(pending, gate.missing, name);
+      await pushRawText(adminGroupId, text);
     }
     await setPaidNoAddressNotified(userId, true);
   }
@@ -397,8 +417,17 @@ async function processMessage(
   // Step: สารบัญทุกประตูเสมอ + เนื้อเต็มเฉพาะ ปัจจุบัน/ปลายทาง/entry-match/handoff(lean)
   // FAQ: สารบัญทุกข้อ + เต็มเฉพาะที่ keyword ตรง
   const lib = await loadBotLibrary();
-  const stepText =
+  const stepTextRaw =
     lib && lib.CSV_Step.length > 0 ? buildStepInjection(lib.CSV_Step, previousStage ?? "", userMessage) : "(ไม่มีข้อมูลสเต็ป)";
+
+  // D-15 pre-resolve: ถ้า pending มี items อยู่แล้ว (จากเทิร์นก่อน) → คำนวณยอด แล้วเติม
+  // {สรุปรายการ}/{ยอดรวม}/{การชำระเงิน} ในสเต็ป → บอทพูดยอดได้ในเทิร์นเดียว (ไม่ต้อง pass 2)
+  const nowDate = new Date();
+  const ordersActive = switches.orders && switches.memory && Boolean(customer);
+  const preQuote = ordersActive && customer ? computeQuote(customer.pendingOrder, lib, config, nowDate) : null;
+  const preVars: RuntimeVarContext = preQuote?.vars ?? { summary: null, total: null, payment: null };
+  const stepText = resolveRuntimeVars(stepTextRaw, preVars);
+
   const faqText = lib && lib.CSV_FAQ.length > 0 ? buildFaqInjection(lib.CSV_FAQ, userMessage) : "(ไม่มีข้อมูล FAQ)";
   // ยัดสินค้า+ราคาโปรเสมอ (บอทห้ามแต่งราคา C6) — CSV_Products/CSV_Promo ไม่เคยถูกยัดมาก่อน
   const catalogText = lib ? buildCatalogInjection(lib.CSV_Products, lib.CSV_Promo) : "(ไม่มีข้อมูลสินค้า)";
@@ -431,7 +460,8 @@ async function processMessage(
       tagsAdd: [] as string[],
       handoff: false,
       handoffReason: "",
-      orderData: {} as Record<string, string>,
+      orderData: {},
+      needsPriceQuote: false,
       paymentMethod: "" as const,
       orderEditRequest: false,
       imageIntent: "other" as ImageIntent,
@@ -460,36 +490,7 @@ async function processMessage(
   // damage = เคลม/ของเสียหาย → จัดการเป็น handoff ผ่าน image-intent handler (กันยิงซ้ำกับ handoff ทั่วไป)
   const damageHandled = Boolean(imageContent && !imageFallback && geminiOutput.imageIntent === "damage");
 
-  // ข้อความถึงลูกค้า: ถ้า image-fallback ใช้ข้อความสบายใจ (รับรูปแล้ว กำลังตรวจสอบ) แทน DEFAULT_REPLY
-  const baseReply = imageFallback ? imageReceivedReply(config) : geminiOutput.reply;
-
-  // บอทเพิ่งกลับมาดูแล (auto-timeout หรือแอดมินสั่งเปิดบอท) → เกริ่นประโยคเปลี่ยนมือก่อน 1 บับเบิล
-  // ส่งครั้งเดียว: flag arm ตอนเข้า human_mode, ล้างหลังส่ง (ข้อความถัดไปไม่ส่งซ้ำ)
-  const shouldNotifyResume = Boolean(switches.memory && customer?.resumeNoticePending && config.botResumeMessage);
-  const finalReply = shouldNotifyResume ? `${config.botResumeMessage}[[เว้น]]${baseReply}` : baseReply;
-
-  if (switches.memory) {
-    await addMessage(userId, "user", userMessage);
-    await addMessage(userId, "assistant", baseReply);
-    await updateCustomerAfterTurn(userId, { stage: geminiOutput.stage, tagsAdd: effectiveTagsAdd });
-    await logFunnelEvent(userId, previousStage, geminiOutput.stage);
-    if (shouldNotifyResume) await clearResumeNotice(userId);
-  }
-
-  const sent = await replyMessages(replyToken, finalReply, config.quotaSaver);
-  if (!sent) {
-    await pushMessages(userId, finalReply, config.quotaSaver);
-  }
-
-  // จัดการรูป: ปกติตาม image_intent · ถ้า Gemini ล้ม → บังคับ slip พร้อมโน้ตเตือน · คืน pathname สลิปเทิร์นนี้
-  let slipThisTurn: string | null = null;
-  if (imageContent) {
-    slipThisTurn = imageFallback
-      ? await handleImageIntent(userId, "slip", "⚠️ AI อ่านรูปไม่สำเร็จ (timeout/error) ช่วยเช็คให้ด้วยค่ะ", imageContent, config, switches)
-      : await handleImageIntent(userId, geminiOutput.imageIntent, geminiOutput.imageNote, imageContent, config, switches);
-  }
-
-  // ลูกค้าขอแก้ออเดอร์ที่ "บันทึกลงชีตแล้ว" → handoff ให้แอดมิน (ห้ามเขียน/แก้แถวอัตโนมัติ) · push จุดพิเศษ ✏️
+  // ลูกค้าขอแก้ออเดอร์ที่ "บันทึกลงชีตแล้ว" → handoff (คำนวณก่อน order flow เพื่อข้าม)
   let editHandled = false;
   if (geminiOutput.orderEditRequest && customer?.hasWrittenOrder) {
     const adminGroupId = process.env.ADMIN_GROUP_ID;
@@ -502,9 +503,111 @@ async function processMessage(
     editHandled = true;
   }
 
-  // order gate — โค้ดตัดสินจาก pending_order (merge → ครบ/ไม่ครบ) · ข้ามถ้าเป็นการขอแก้ออเดอร์เดิม
-  if (switches.orders && switches.memory && customer && !editHandled) {
-    await runOrderGate(userId, customer, geminiOutput, slipThisTurn, config);
+  // ---- D-15 order flow: merge → คำนวณราคา → 2-pass เฉพาะเทิร์นที่ items เปลี่ยน ----
+  const runOrders = ordersActive && !editHandled && Boolean(customer);
+  let pending: PendingOrder = customer?.pendingOrder ?? {};
+  let postQuote = preQuote; // items ไม่เปลี่ยน = ใช้ผลเดิม (pre-resolve ทำแล้ว)
+  let itemsChanged = false;
+  if (runOrders && customer) {
+    const prevItems = customer.pendingOrder.items;
+    const fields: PendingOrder = { ...geminiOutput.orderData };
+    if (geminiOutput.paymentMethod) fields["การชำระเงิน"] = geminiOutput.paymentMethod; // "" = คงเดิม
+    pending = await mergePendingOrder(userId, fields);
+    itemsChanged =
+      normalizeItems(geminiOutput.orderData.items).length > 0 && !itemsEqual(geminiOutput.orderData.items, prevItems);
+    postQuote = computeQuote(pending, lib, config, nowDate);
+  }
+
+  // ---- สร้าง + ส่งข้อความถึงลูกค้า ----
+  const baseReply = imageFallback ? imageReceivedReply(config) : geminiOutput.reply;
+  const shouldNotifyResume = Boolean(switches.memory && customer?.resumeNoticePending && config.botResumeMessage);
+  const withResume = (text: string) => (shouldNotifyResume ? `${config.botResumeMessage}[[เว้น]]${text}` : text);
+  const FAILSAFE_REPLY = "ขออภัยค่ะ ยอดออเดอร์นี้ขอให้แอดมินยืนยันให้อีกครั้งนะคะ เดี๋ยวปลาทูรีบติดต่อกลับไวๆ ค่ะ 🙏";
+
+  let assistantSaved = baseReply; // ข้อความที่บันทึกเป็นประวัติ (อัปเดตตามที่ส่งจริง)
+  let escalated = false; // 2-pass แจ้งแอดมินไปแล้ว → gate ไม่ push ซ้ำ
+
+  if (itemsChanged && postQuote) {
+    // ลูกค้าเพิ่งบอก/เปลี่ยนจำนวน — pass 1 บอกแค่ "กำลังคิดยอด" · ต้อง pass 2 แจกแจงยอดจริง
+    let bubble2: string | null = null;
+    let ok = postQuote.ok;
+    if (ok) {
+      const stepText2 = resolveRuntimeVars(stepTextRaw, postQuote.vars);
+      const p = postQuote.price;
+      const note = `ระบบคำนวณยอดเสร็จแล้ว: ${postQuote.vars.summary} · ยอดรวม ${p.total} บาท · ค่าส่ง ${p.shippingFee} บาท. บอลลูนก่อนหน้าบอกลูกค้าว่ากำลังคิดยอดให้. ให้แจ้งยอดนี้ต่อแบบกระชับ ห้ามทวนทักทายซ้ำ ห้ามคิดเลขเอง พูดได้เฉพาะตัวเลขที่ให้มา.`;
+      const pass2 = await withTimeout(
+        runSalesTurn({ config, configText, stepText: stepText2, faqText, catalogText, stateText, historyText, userMessage, currentStage: geminiOutput.stage, pass2Note: note }),
+        GEMINI_TIMEOUT_MS,
+        fallbackTurn(geminiOutput.stage),
+      );
+      const cand = resolveRuntimeVars(pass2.reply, postQuote.vars);
+      // guard เฉพาะข้อความที่จะส่ง: 5 (เหลือ {...} เงิน) + 2 (เลขไม่ตรง Core) + pass2 ล้ม
+      if (pass2.degraded || hasUnresolvedPricingVars(cand) || !replyNumbersConsistent(cand, p, postQuote.vars.summary)) {
+        console.warn(JSON.stringify({ scope: "orders", warning: "pass2 ไม่ผ่าน guard → fail-safe", degraded: pass2.degraded }));
+        ok = false;
+      } else {
+        bubble2 = cand;
+      }
+    }
+
+    if (ok && bubble2) {
+      if (config.quotaSaver) {
+        assistantSaved = bubble2; // ประหยัดโควตา: ส่งบับเบิลแจกแจงยอดทีเดียว
+        await deliverReply(replyToken, userId, withResume(bubble2), config.quotaSaver);
+      } else {
+        assistantSaved = `${baseReply}\n${bubble2}`;
+        await deliverReply(replyToken, userId, withResume(baseReply), config.quotaSaver);
+        await pushMessages(userId, bubble2, config.quotaSaver);
+      }
+    } else {
+      // fail-safe (guard 1): pricing/pass2 ล้ม → บอกลูกค้าสุภาพ + แจ้งแอดมิน ห้ามเงียบ
+      if (config.quotaSaver) {
+        assistantSaved = FAILSAFE_REPLY;
+        await deliverReply(replyToken, userId, withResume(FAILSAFE_REPLY), config.quotaSaver);
+      } else {
+        assistantSaved = `${baseReply}\n${FAILSAFE_REPLY}`;
+        await deliverReply(replyToken, userId, withResume(baseReply), config.quotaSaver);
+        await pushMessages(userId, FAILSAFE_REPLY, config.quotaSaver);
+      }
+      const adminGroupId = process.env.ADMIN_GROUP_ID;
+      if (adminGroupId) {
+        const name = await getProfileName(userId);
+        const items = normalizeItems(pending.items).map((it) => `${it.sku} x${it.qty}`).join(" · ");
+        await pushRawText(adminGroupId, `⚠️ คิดยอดให้ลูกค้าไม่สำเร็จ (${postQuote.price.error ?? "pass2/guard ล้ม/เกินเพดาน"})\nรายการ: ${items}\n———\nLineOA: ${name}`);
+      }
+      if (switches.memory) await setPaidNoAddressNotified(userId, true);
+      escalated = true;
+    }
+  } else {
+    // 1-pass ปกติ: resolve ตัวแปรเงินใน reply (เผื่อบอทก็อป {ยอดรวม} จากสเต็ป) + guard 5 ที่ outgoing
+    let out = resolveRuntimeVars(baseReply, preVars);
+    if (hasUnresolvedPricingVars(out)) {
+      console.warn(JSON.stringify({ scope: "orders", warning: "outgoing เหลือตัวแปรเงิน resolve ไม่ได้ → fail-safe" }));
+      out = FAILSAFE_REPLY;
+    }
+    assistantSaved = out;
+    await deliverReply(replyToken, userId, withResume(out), config.quotaSaver);
+  }
+
+  if (switches.memory) {
+    await addMessage(userId, "user", userMessage);
+    await addMessage(userId, "assistant", assistantSaved);
+    await updateCustomerAfterTurn(userId, { stage: geminiOutput.stage, tagsAdd: effectiveTagsAdd });
+    await logFunnelEvent(userId, previousStage, geminiOutput.stage);
+    if (shouldNotifyResume) await clearResumeNotice(userId);
+  }
+
+  // จัดการรูป: ปกติตาม image_intent · ถ้า Gemini ล้ม → บังคับ slip พร้อมโน้ตเตือน · คืน pathname สลิปเทิร์นนี้
+  let slipThisTurn: string | null = null;
+  if (imageContent) {
+    slipThisTurn = imageFallback
+      ? await handleImageIntent(userId, "slip", "⚠️ AI อ่านรูปไม่สำเร็จ (timeout/error) ช่วยเช็คให้ด้วยค่ะ", imageContent, config, switches)
+      : await handleImageIntent(userId, geminiOutput.imageIntent, geminiOutput.imageNote, imageContent, config, switches);
+  }
+
+  // order gate — ตัดสินจาก pending (merge แล้ว) + ราคาจาก Core · escalated กัน push ซ้ำกับ fail-safe
+  if (runOrders && customer) {
+    await runOrderGate(userId, customer, pending, postQuote?.price ?? null, slipThisTurn, config, escalated);
   }
 
   // handoff ทั่วไป (AI-semantic) · ข้ามถ้าจัดการเป็น damage หรือ edit ไปแล้ว (กันยิงซ้ำ)
