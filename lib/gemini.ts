@@ -59,13 +59,10 @@ const RESPONSE_SCHEMA = {
     order_data: {
       type: Type.OBJECT,
       properties: {
+        // ผู้รับ 3 ช่องเท่านั้น — น้อย = AI พลาดยาก · เลิกแยก จังหวัด/รหัส (ดึงจากก้อนด้วยสูตรชีตทีหลังได้)
         ชื่อ: { type: Type.STRING },
+        ที่อยู่: { type: Type.STRING }, // ก้อนดิบทั้งหมดตามที่ลูกค้าให้ (รวมจังหวัด/รหัสในก้อน)
         เบอร์: { type: Type.STRING },
-        // ที่อยู่ = ก้อนดิบทั้งหมดตามที่ลูกค้าให้ (ไม่แยก ตำบล/อำเภอ แล้ว — โค้ดไม่ตรวจ ไม่ cross-check)
-        ที่อยู่: { type: Type.STRING },
-        // จังหวัด/รหัสไปรษณีย์ = metadata หยิบได้ก็ใส่ หยิบไม่ได้เว้นว่าง ไม่กระทบการปิดออเดอร์
-        จังหวัด: { type: Type.STRING },
-        รหัสไปรษณีย์: { type: Type.STRING },
         สินค้า: { type: Type.STRING },
         จำนวน: { type: Type.STRING },
         ยอด: { type: Type.STRING },
