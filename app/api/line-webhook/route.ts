@@ -256,6 +256,9 @@ async function runOrderGate(
     JSON.stringify({
       scope: "orders",
       event: "gate",
+      // ชี้ขาด: AI ส่ง field อะไรมาเทิร์นนี้ (ชื่อ field เท่านั้น ไม่ log ค่า = PII-safe)
+      // ถ้าไม่มี "ที่อยู่" ทั้งที่ลูกค้าให้ที่อยู่ = AI ไม่ extract ลง order_data (ปัญหา prompt ไม่ใช่ gate)
+      aiSentFields: Object.keys(gemini.orderData).filter((k) => (gemini.orderData[k] ?? "").trim() !== ""),
       pendingFilledFields: Object.keys(pending).filter((k) => (pending[k] ?? "").trim() !== ""),
       payment: gate.payment,
       complete: gate.complete,
