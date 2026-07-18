@@ -145,10 +145,11 @@ export async function runSalesTurn(input: GeminiTurnInput): Promise<GeminiTurnOu
     parts.push({ inlineData: { mimeType: input.image.mimeType, data: input.image.base64Data } });
   }
 
-  // แยกขนาดแต่ละส่วน (char ~ token) — หาว่าส่วนไหนใหญ่สุด selective ทำงานจริงมั้ย
+  // แยกขนาดแต่ละส่วน (char = estimate เท่านั้น) — หาว่าส่วนไหนใหญ่สุด selective ทำงานจริงมั้ย
   console.log(
     JSON.stringify({
       scope: "prompt-size",
+      note: "char = estimate ไม่ใช่ token จริง (ดู prompt-tokens ถ้า DIAG_PROMPT_TOKENS=1)",
       chars: {
         system: systemInstruction.length,
         config: input.configText.length,
@@ -161,6 +162,50 @@ export async function runSalesTurn(input: GeminiTurnInput): Promise<GeminiTurnOu
       },
     }),
   );
+
+  // preview 200 ตัวอักษรแรก (เนื้อจากชีต ไม่ใช่ PII) — eyeball ว่าสารบัญสั้นจริง/catalog ยัดทั้งตาราง
+  console.log(
+    JSON.stringify({
+      scope: "prompt-preview",
+      step: input.stepText.slice(0, 200),
+      catalog: input.catalogText.slice(0, 200),
+      faq: input.faqText.slice(0, 200),
+    }),
+  );
+
+  // token จริงต่อ segment (gate ด้วย env กัน N countTokens calls ทุกเทิร์นใน production ปกติ)
+  // ตั้ง DIAG_PROMPT_TOKENS=1 แล้วเทส → ได้ token จริงต่อส่วน + เทียบ promptTokenCount ที่ Gemini คืน
+  if (process.env.DIAG_PROMPT_TOKENS === "1") {
+    const countTok = async (text: string): Promise<number> => {
+      if (!text) return 0;
+      try {
+        const r = await getClient().models.countTokens({ model: MODEL, contents: text });
+        return r.totalTokens ?? -1;
+      } catch {
+        return -1;
+      }
+    };
+    const [system, config, step, faq, catalog, state, history, user] = await Promise.all([
+      countTok(systemInstruction),
+      countTok(input.configText),
+      countTok(input.stepText),
+      countTok(input.faqText),
+      countTok(input.catalogText),
+      countTok(input.stateText),
+      countTok(input.historyText),
+      countTok(input.userMessage),
+    ]);
+    const segmentSum = [system, config, step, faq, catalog, state, history, user].reduce((a, b) => a + Math.max(0, b), 0);
+    console.log(
+      JSON.stringify({
+        scope: "prompt-tokens",
+        real: true,
+        segments: { system, config, step, faq, catalog, state, history, user },
+        segmentSum,
+        note: "sum ≈ promptTokenCount (ต่างเพราะ responseSchema+role overhead ที่ไม่ได้นับต่อ segment)",
+      }),
+    );
+  }
 
   try {
     const response = await getClient().models.generateContent({
