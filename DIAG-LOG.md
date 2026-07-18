@@ -51,6 +51,17 @@ npm test → Test Files 12 passed (12)
 - **ก่อนแก้ (บั๊ก):** I="น้ำพริกปลาทู" (ไม่มี x จำนวน) · J=ว่าง — ตรงกับที่เจ้าของเห็น
 
 ## G. รากบั๊ก (สรุป)
-- **bug A:** AI ไม่ extract สินค้า/จำนวน/ยอด (aiSentFields ยืนยัน) — แก้: systemInstruction เสริม "ครบ 6 ช่อง · สินค้า/จำนวน/ยอด สำคัญเท่า ชื่อ/ที่อยู่/เบอร์"
-- **bug B:** gate เช็คแค่ name/addr/phone → complete:true ทั้งที่ order line ว่าง — แก้: `evaluateOrderGate` require สินค้า+จำนวน+ยอด · ขาด → complete=false + `brokenOrder` → push แจ้งแอดมิน (D-13)
+- **bug B:** gate เช็คแค่ name/addr/phone → complete:true ทั้งที่ order line ว่าง — แก้: `evaluateOrderGate` require สินค้า+จำนวน+ยอด · ขาด → complete=false + `brokenOrder` → push แจ้งแอดมิน (D-13) ✅ **แก้แล้ว**
 - **ไม่เกี่ยว MAX_TOKENS:** รอบที่เจ้าของยืนยัน finishReason=STOP, candidates 329 (ไม่ถูกตัด) แต่ order_data ยังขาด = คนละปัญหา
+
+### G2. bug A — หาราก (COMMIT 1) : ตรวจ 4 จุดฝั่งโค้ด **ทั้งหมดถูกต้อง = ไม่ใช่ schema/โค้ด**
+| จุดตรวจ | ที่ | ผล |
+|---|---|---|
+| 1. responseSchema `order_data` | `lib/gemini.ts:52–89` | ✅ มีครบ 6 field (ชื่อ/ที่อยู่/เบอร์/สินค้า/จำนวน/ยอด · Type.STRING) — **ไม่ใช่ 3** |
+| 2. `aiSentFields` คำนวณจากอะไร | `route.ts:261` | ✅ `Object.keys(gemini.orderData).filter(...)` — คีย์จริงที่ AI ส่ง **ไม่ได้ hardcode 3 คีย์** ⇒ ถ้าโชว์ 3 = AI ส่งมา 3 จริง |
+| 3. type + parse drop field? | `lib/gemini.ts:38, 258–261` | ✅ `orderData: Record<string,string>` · parse รับ `parsed.order_data` ทั้งก้อน **ไม่ whitelist/ไม่ตัด** |
+| 4. JSON example ใน systemInstruction | `prompt/system.ts:195` | ✅ โชว์ครบ 6 ช่อง |
+- **เทสยืนยัน:** `gemini-guard.test.ts` เคสใหม่ "order_data 6 ช่อง parse ไม่ตก field" ✅ ผ่าน (mock Gemini ส่ง 6 → out.orderData ครบ 6)
+- **ตัดสมมุติฐาน "nested required":** AI ส่ง ชื่อ/ที่อยู่/เบอร์ ได้ (เป็น non-required nested props เหมือนกัน) ⇒ Gemini **ส่ง non-required nested prop ได้** ⇒ การไม่มี `required` ไม่ใช่สาเหตุที่ 3 ตัวหาย
+- **สรุป bug A:** ไม่ใช่ schema/type/parse/logging — เป็น **พฤติกรรม AI** เลือกไม่ใส่ สินค้า/จำนวน/ยอด ลง order_data (ทั้งที่คำนวณ "440" ใส่ใน reply ได้ = มีค่า แต่ไม่ field) · เสริม systemInstruction +110 tokens รอบก่อน **ไม่ได้ผล** ⇒ ห้ามเติม prompt ซ้ำ
+- **ราก "ชัด" ยังต้อง log เทิร์นสั่งซื้อ:** ต้องดู `aiSentFields` ของ **เทิร์น "เอา 5 ถ้วย" (เทิร์นแรก)** + `prompt-preview` (catalog/promo เข้า prompt จริงมั้ย — ยอด 440 มาจากตารางโปร) → ระบุว่า AI ไม่ใส่เพราะ (ก) ไม่ถือว่าเทิร์นสั่งซื้อ = จุด extract หรือ (ข) หา ยอด ไม่ได้เลยข้ามทั้ง order line · **[[รอ paste เทิร์นแรก]]**
