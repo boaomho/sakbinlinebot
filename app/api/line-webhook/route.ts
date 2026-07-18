@@ -63,7 +63,7 @@ import {
 } from "@/lib/admin-commands";
 import { uploadSlip, getSlipSignedUrl } from "@/lib/blob";
 import { appendOrderRow } from "@/lib/orders";
-import { evaluateOrderGate, formatProductAndQty, buildNewOrderAdminText } from "@/lib/core/orders";
+import { evaluateOrderGate, formatProductAndQty, buildNewOrderAdminText, buildBrokenOrderAdminText } from "@/lib/core/orders";
 
 export const maxDuration = 30;
 
@@ -263,6 +263,7 @@ async function runOrderGate(
       payment: gate.payment,
       complete: gate.complete,
       missing: gate.missing,
+      brokenOrder: gate.brokenOrder,
       waitTag: gate.waitTag,
       slipPresent: Boolean(slipPathname),
     }),
@@ -309,10 +310,20 @@ async function runOrderGate(
     return;
   }
 
-  // ---- ยังไม่ครบ → ติดแท็กรอ (ป้อน Follow) · ไม่แจ้งกลุ่ม · บอทขอสิ่งที่ยังขาดจากลูกค้าเอง ----
-  // 🔴 D-11: ไม่มี push ⚠️ ระหว่างทางแล้ว (มันแจ้งเร็วไป: COD ยังไม่ได้ที่อยู่ก็ยิงกลุ่ม)
-  //   COD ยังไม่จ่าย บอทเก็บข้อมูลเองพอ · โอน แอดมินรู้ตอนสลิป (push 💰 ใน handleImageIntent)
+  // ---- ยังไม่ครบ → ติดแท็กรอ (ป้อน Follow) · บอทขอสิ่งที่ยังขาดจากลูกค้าเอง ----
+  // 🔴 D-11: ไม่ push ⚠️ ตอนข้อมูลจัดส่งยังไม่ครบ (COD ยังไม่ได้ที่อยู่ = เร็วไป บอทเก็บเอง)
   await reconcileWaitTags(userId, gate.waitTag);
+
+  // 🔴 D-13: "ออเดอร์พัง" (จัดส่งครบ แต่ order line ขาด สินค้า/จำนวน/ยอด) → แจ้งแอดมินให้ช่วย ห้ามเงียบ
+  //   ต่างจาก D-11: ที่อยู่ครบแล้ว = ลูกค้าตั้งใจซื้อจริง แต่ระบบ extract order line ตกหล่น
+  //   reuse flag paid_no_address_notified กัน spam ทุกเทิร์น (ไม่เพิ่ม column ใหม่)
+  if (gate.brokenOrder && !customer.paidNoAddressNotified) {
+    if (adminGroupId) {
+      const name = await getProfileName(userId);
+      await pushRawText(adminGroupId, buildBrokenOrderAdminText(pending, gate.missing, name));
+    }
+    await setPaidNoAddressNotified(userId, true);
+  }
 }
 
 async function processMessage(

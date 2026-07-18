@@ -81,41 +81,55 @@ export interface OrderGateResult {
   complete: boolean;
   /** แท็กรอที่ควรเป็น ณ ตอนนี้ (null = ไม่มีแท็กรอ) — ป้อน Follow engine (ยังไม่เปิด) */
   waitTag: WaitTag;
-  /** อะไรขาดบ้าง (ชื่อ/ที่อยู่/เบอร์/สลิป) — บอทเอาไปขอลูกค้าเฉพาะที่ขาด · ใช้ log ด้วย */
+  /** อะไรขาดบ้าง (ชื่อ/ที่อยู่/เบอร์/สินค้า/จำนวน/ยอด/สลิป) — บอทเอาไปขอลูกค้าเฉพาะที่ขาด · ใช้ log ด้วย */
   missing: string[];
+  /**
+   * "ออเดอร์พัง" = ข้อมูลจัดส่งครบ (ชื่อ+ที่อยู่+เบอร์) แต่ order line ไม่ครบ (ขาด สินค้า/จำนวน/ยอด)
+   * มักเกิดจาก AI ไม่ extract สินค้า/จำนวน/ยอด → ควรแจ้งแอดมินให้ช่วย (ไม่ใช่เคส D-11 early ที่ยังไม่มีที่อยู่)
+   */
+  brokenOrder: boolean;
 }
 
 /**
  * gate ออเดอร์ — โค้ดตัดสินจาก pending_order ที่มีจริงเท่านั้น ไม่พึ่ง AI signal
  *
- *   COD ปิด = ชื่อ + เบอร์(มีตัวเลข) + ที่อยู่(ก้อนไม่ว่าง)
+ *   COD ปิด = ชื่อ + เบอร์(มีตัวเลข) + ที่อยู่(ก้อนไม่ว่าง) + order line (สินค้า+จำนวน+ยอด)
  *   โอน ปิด = เหมือน COD + สลิป
  *   ครบ    → เขียนชีต + push 📦
- *   ไม่ครบ → ไม่เขียน ไม่แจ้งกลุ่ม · บอทขอสิ่งที่ยังขาดจากลูกค้าเอง (missing)
+ *   ไม่ครบ → ไม่เขียน · บอทขอสิ่งที่ยังขาดจากลูกค้าเอง (missing)
  *
- * 🔴 จังหวะแจ้งกลุ่ม (ผู้เรียกจัดการ · D-11): ตัด push ⚠️ ระหว่างทางออก — มันแจ้งเร็วไป
- *   (COD ยังไม่ได้ที่อยู่ก็ยิงกลุ่ม) · COD ยังไม่จ่าย บอทเก็บข้อมูลเองพอ ครบค่อย 📦
- *   โอน แอดมินรู้ตอนสลิปอยู่แล้ว (push 💰 แยก) ครบค่อย 📦 อีกรอบ
+ * 🔴 จังหวะแจ้งกลุ่ม (ผู้เรียกจัดการ):
+ *   - D-11: ไม่ push ⚠️ ตอนข้อมูลจัดส่งยังไม่ครบ (COD ยังไม่ได้ที่อยู่ = แจ้งเร็วไป · บอทเก็บเอง)
+ *   - D-13: push ⚠️ เฉพาะ "ออเดอร์พัง" (จัดส่งครบแต่ order line ขาด = AI ไม่ extract สินค้า/จำนวน/ยอด)
  *
  * เป็น pure function: ไม่มี I/O ไม่แตะ DB — ผู้เรียกเอาผลไปลงมือเอง
  */
 export function evaluateOrderGate({ pending, slipPresent }: OrderGateInput): OrderGateResult {
+  const has = (k: string) => (pending[k] ?? "").trim() !== "";
   const payment = (pending["การชำระเงิน"] ?? "").trim();
   const name = nameComplete(pending);
   const addr = addressComplete(pending);
   const phone = sanitizePhone(pending["เบอร์"]) !== ""; // มีตัวเลข = ผ่าน (แอดมินตรวจเบอร์เอง)
-  const base = name && addr && phone;
+  const shipping = name && addr && phone;
+  const product = has("สินค้า") && has("จำนวน") && has("ยอด"); // order line ต้องครบ (ยอด = จาก CSV_Promo · C6)
+  const base = shipping && product;
 
   const complete = (payment === "COD" && base) || (payment === "โอน" && base && slipPresent);
 
-  // เช็คครบ 3 อย่างแยกกัน — ขาดอันไหนบอทขออันนั้น (ได้ที่อยู่แล้วยังต้องขอชื่อ+เบอร์ต่อ)
+  // เช็คแยกทีละช่อง — ขาดอันไหนขึ้น missing อันนั้น (บอทขอเฉพาะที่ขาด)
   const missing: string[] = [];
   if (!complete) {
     if (!name) missing.push("ชื่อ");
     if (!addr) missing.push("ที่อยู่");
     if (!phone) missing.push("เบอร์");
+    if (!has("สินค้า")) missing.push("สินค้า");
+    if (!has("จำนวน")) missing.push("จำนวน");
+    if (!has("ยอด")) missing.push("ยอด");
     if (payment === "โอน" && !slipPresent) missing.push("สลิป");
   }
+
+  // ออเดอร์พัง: จัดส่งครบ + เลือกวิธีจ่ายแล้ว แต่ order line ขาด → แจ้งแอดมิน (ไม่ใช่ D-11 early)
+  const brokenOrder = !complete && payment !== "" && shipping && !product;
 
   let waitTag: WaitTag = null;
   if (!complete) {
@@ -130,7 +144,22 @@ export function evaluateOrderGate({ pending, slipPresent }: OrderGateInput): Ord
     }
   }
 
-  return { payment, complete, waitTag, missing };
+  return { payment, complete, waitTag, missing, brokenOrder };
+}
+
+/** ข้อความแจ้งแอดมินเมื่อ "ออเดอร์พัง" — จัดส่งครบแต่ order line ขาด (AI ไม่ extract สินค้า/จำนวน/ยอด) */
+export function buildBrokenOrderAdminText(pending: Record<string, string>, missing: string[], lineName: string): string {
+  return [
+    "⚠️ ออเดอร์ตกหล่น (ข้อมูลจัดส่งครบ แต่ order line ไม่ครบ)",
+    `ยังขาด: ${missing.join(", ")}`,
+    "———",
+    `ชื่อ: ${pending["ชื่อ"] ?? ""}`,
+    `เบอร์: ${sanitizePhone(pending["เบอร์"])}`,
+    `ที่อยู่: ${pending["ที่อยู่"] ?? ""}`,
+    `สินค้า: ${pending["สินค้า"] ?? "(ไม่มี)"} · จำนวน: ${pending["จำนวน"] ?? "(ไม่มี)"} · ยอด: ${pending["ยอด"] ?? "(ไม่มี)"}`,
+    "———",
+    `LineOA: ${lineName}`,
+  ].join("\n");
 }
 
 /** ข้อความแจ้งกลุ่มแอดมินเมื่อออเดอร์สมบูรณ์ขึ้นชีต (push จุดที่ 2) */
