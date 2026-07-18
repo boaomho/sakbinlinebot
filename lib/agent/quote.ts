@@ -10,6 +10,7 @@ import {
   RuntimeVarContext,
   formatOrderSummary,
   formatPayment,
+  buildBreakdownVars,
   PRICING_RUNTIME_VARS,
 } from "@/lib/core/pricing";
 import { PendingOrder } from "@/lib/core/orders";
@@ -38,10 +39,13 @@ export function computeQuote(pending: PendingOrder, lib: BotLibrary | null, conf
     Object.fromEntries(config.raw),
   );
   const ok = price.error === null && !price.needsHandoff;
+  const bd = ok ? buildBreakdownVars(price) : null;
   const vars: RuntimeVarContext = {
     summary: ok ? formatOrderSummary(price.lines) : null,
     total: ok ? price.total : null,
     payment: pending["การชำระเงิน"] ? formatPayment(pending["การชำระเงิน"]) : null,
+    breakdown: bd ? bd.breakdown : null,
+    nextTierOffer: bd ? bd.nextTierOffer : null,
   };
   return { price, vars, ok };
 }
@@ -54,26 +58,24 @@ export function hasUnresolvedPricingVars(outgoing: string): boolean {
   return PRICING_RUNTIME_VARS.some((v) => outgoing.includes(v));
 }
 
+/** ดึงตัวเลข "ราคา" (3-5 หลัก) จากข้อความ */
+export function extractPriceNumbers(text: string): string[] {
+  return text.match(/\d{3,5}/g) ?? [];
+}
+
 /**
- * guard 2 — ตัวเลข "ราคา" (3-5 หลัก) ใน outgoing ต้องเป็นเลขที่ Core รู้จักเท่านั้น
- * allowed = total/subtotal/shippingFee/lineTotals + เลขที่อยู่ใน {สรุปรายการ} ที่ resolve มา
- * (เช่น "จากปกติ 475 ลดเหลือ 440" ใน ข้อความโชว์ = ถูกต้อง) · เลขแปลกปลอม = บอทมั่ว → บล็อก
- * คืน true = ผ่าน (เลขตรง Core) · false = มีเลขที่ Core ไม่รู้จัก
+ * guard 2 — ตัวเลขราคา (3-5 หลัก) ใน outgoing ต้องเป็นเลขที่ "อยู่ในบล็อกที่ inject ให้ pass 2" เท่านั้น
+ * 🔴 whitelist = regex ดึงจาก string จริงที่ inject ไป (ตัวเลขทุกตัวจาก calculatePrice ตัวเดียวกัน)
+ *    ไม่ใช่ลิสต์ field ที่เลือกมือ — เพราะเราสั่ง pass 2 ให้ "แจกแจง" ตัวเลขในบล็อกเอง
+ * @param allowedText ข้อความที่ Core inject ไป (note + ค่าตัวแปรที่ resolve: summary/total/breakdown/nextTierOffer)
+ * @param extraNums เลขเพิ่ม (เช่น qty จาก items)
  */
-export function replyNumbersConsistent(outgoing: string, price: PriceResult, resolvedSummary: string | null): boolean {
-  const allowed = new Set<string>();
-  const add = (n: number) => allowed.add(String(n));
-  add(price.total);
-  add(price.subtotal);
-  add(price.shippingFee);
-  for (const l of price.lines) {
-    add(l.lineTotal);
-    add(l.qty);
-  }
-  // เลขที่มากับข้อความโชว์ (auto) ที่ resolve มา = ราคาปกติ/ประหยัด ที่คนเทรนเขียนในชีต = ถูกต้อง
-  if (resolvedSummary) for (const m of resolvedSummary.match(/\d{3,5}/g) ?? []) allowed.add(m);
-  for (const m of outgoing.match(/\d{3,5}/g) ?? []) {
-    if (!allowed.has(m)) return false;
-  }
-  return true;
+export function checkReplyNumbers(
+  outgoing: string,
+  allowedText: string,
+  extraNums: number[] = [],
+): { ok: boolean; offending: string[]; allowed: string[] } {
+  const allowed = new Set<string>([...extractPriceNumbers(allowedText), ...extraNums.map(String)]);
+  const offending = extractPriceNumbers(outgoing).filter((n) => !allowed.has(n));
+  return { ok: offending.length === 0, offending, allowed: [...allowed] };
 }

@@ -55,6 +55,11 @@ export interface GeminiTurnOutput {
    * → โค้ดจะคำนวณราคาแล้วเรียก pass 2 ให้บอทแจกแจงยอดจริง (D-15 · 2-pass)
    */
   needsPriceQuote: boolean;
+  /**
+   * items มาจากไหน (D-15 §4): "customer" = ลูกค้าสั่ง/ยืนยันเอง → merge ลง pending
+   * "bot_proposal" = บอทเสนอ upsell เอง (เช่น "หรือรับ 5 ถ้วยดีคะ") → เก็บแยก ห้าม merge ห้าม pass 2
+   */
+  itemsSource: "customer" | "bot_proposal";
   /** ช่องทางชำระ "ล่าสุด" — AI ประเมินใหม่ทุกเทิร์น (โค้ดใช้ตัดสิน gate) */
   paymentMethod: PaymentMethod;
   /** true = ลูกค้าขอแก้ออเดอร์ที่ "บันทึกลงชีตแล้ว" (เปลี่ยนที่อยู่/COD↔โอน/เพิ่มลด/ยกเลิก) → โค้ด handoff */
@@ -99,6 +104,8 @@ const RESPONSE_SCHEMA = {
     },
     // บอทกำลังจะพูดยอดที่ยังคำนวณไม่ได้ (ลูกค้าเพิ่งบอก/เปลี่ยนจำนวน) → โค้ดคำนวณแล้ว pass 2
     needs_price_quote: { type: Type.BOOLEAN },
+    // items_source: "customer" (ลูกค้าสั่ง/ยืนยัน) | "bot_proposal" (บอทเสนอเอง — ห้าม merge)
+    items_source: { type: Type.STRING },
     payment_method: { type: Type.STRING },
     order_edit_request: { type: Type.BOOLEAN },
     image_intent: { type: Type.STRING },
@@ -112,6 +119,7 @@ const RESPONSE_SCHEMA = {
     "handoff_reason",
     "order_data",
     "needs_price_quote",
+    "items_source",
     "payment_method",
     "order_edit_request",
     "image_intent",
@@ -137,6 +145,7 @@ function fallback(stage: string): GeminiTurnOutput {
     handoffReason: "",
     orderData: {},
     needsPriceQuote: false,
+    itemsSource: "customer",
     paymentMethod: "",
     orderEditRequest: false,
     imageIntent: "other",
@@ -315,6 +324,7 @@ export async function runSalesTurn(input: GeminiTurnInput): Promise<GeminiTurnOu
       handoffReason: typeof parsed.handoff_reason === "string" ? parsed.handoff_reason : "",
       orderData: parseOrderData(parsed.order_data),
       needsPriceQuote: Boolean(parsed.needs_price_quote),
+      itemsSource: parsed.items_source === "bot_proposal" ? "bot_proposal" : "customer",
       paymentMethod: toPaymentMethod(parsed.payment_method),
       orderEditRequest: Boolean(parsed.order_edit_request),
       imageIntent: isValidImageIntent(parsed.image_intent) ? parsed.image_intent : "other",

@@ -41,19 +41,19 @@ tests/
 - `PendingOrder {ชื่อ?,ที่อยู่?,เบอร์?,การชำระเงิน?,items?}` · `normalizeItems`/`itemsEqual` (ตัดสิน "items เปลี่ยน")
 - `addressComplete(p)` · `nameComplete(p)` · `sanitizePhone(s)` · `buildNewOrderAdminText(summary,total,payment,name,phone)`/`buildBrokenOrderAdminText`
 
-**lib/core/pricing.ts** (pure · D-15) — `calculatePrice({items,paymentMethod,now?}, promoRows, productRows, config) → {lines, subtotal, shippingFee, total, error, needsHandoff}`
-- โปรฐาน = live+ในช่วงวันที่ จำนวนมากสุด≤qty · ต่อหน่วย=ราคาโปร/จำนวน · ceil ที่ line · เพดาน=floor(max(จำนวน live)×config) · อ่านชีตล้วน ห้าม hardcode
-- `formatOrderSummary`(" · ")/`formatLinesForSheet`(" | ") · `formatPayment` · `resolveRuntimeVars(text,{summary,total,payment})` แทน {สรุปรายการ}/{ยอดรวม}/{การชำระเงิน}
+**lib/core/pricing.ts** (pure · D-15) — `calculatePrice({items,paymentMethod,now?}, promoRows, productRows, config) → {lines(+basePromo/extraQty/extraAmount/isExactTier), subtotal, shippingFee, total, nextTier, error, needsHandoff}`
+- โปรฐาน = live+ในช่วงวันที่ จำนวนมากสุด≤qty · extraAmount=lineTotal−ฐาน (บวกแล้วเท่ายอดเสมอ) · nextTier=ชั้นสูงกว่าใกล้สุด (single-sku) · อ่านชีตล้วน ห้าม hardcode
+- `formatOrderSummary`(" · ")/`formatLinesForSheet`(" | ") · `formatPayment` · `buildBreakdownVars`→{วิธีคิดยอด}/{ทางเลือกถัดไป} · `buildProductNameMap` · `resolveRuntimeVars(text, 5 vars)`
 
-**lib/agent/quote.ts** — `computeQuote(pending, lib, config, now) → {price, vars, ok}|null` · `hasUnresolvedPricingVars` (guard 5) · `replyNumbersConsistent` (guard 2)
+**lib/agent/quote.ts** — `computeQuote(pending, lib, config, now) → {price, vars, ok}|null` · `hasUnresolvedPricingVars` (guard 5) · `checkReplyNumbers(reply, allowedText, extraNums)` (guard 2 · whitelist จากบล็อก inject)
 
 **lib/sheets/loader.ts** — `loadBotLibrary(): Promise<BotLibrary|null>` batchGet 8 แท็บ + cache · `BOTLIB_TABS`
 **lib/sheets/columns.ts** — `resolveColumns(header, required, label) → map|null` (all-or-nothing) · `cell` · `tabToText` · `rowFromValues` · `columnLetter`
 **lib/agent/inject.ts** — `buildStepInjection(rows, stage, msg)` สารบัญทุกประตู+เต็มที่เกี่ยว · `buildFaqInjection(rows, msg)` · `buildCatalogInjection(products, promo)` · `resolveDestinations(nextWhen, ids)`
 **lib/orders.ts** — `appendOrderRow(input)` · `listPendingOrders()` · `markOrderSent(row, num)` · `ORDERS_HEADER` (24 คอล A–X, header-driven)
-**lib/gemini.ts** — `runSalesTurn(GeminiTurnInput{...,pass2Note?}) → GeminiTurnOutput{reply, stage, tagsAdd, handoff, orderData:OrderDataFromAI{ชื่อ?,ที่อยู่?,เบอร์?,items?}, needsPriceQuote, paymentMethod, orderEditRequest, imageIntent, imageNote, degraded}`
+**lib/gemini.ts** — `runSalesTurn(GeminiTurnInput{...,pass2Note?}) → GeminiTurnOutput{reply, stage, tagsAdd, handoff, orderData:OrderDataFromAI{ชื่อ?,ที่อยู่?,เบอร์?,items?}, needsPriceQuote, itemsSource:"customer"|"bot_proposal", paymentMethod, orderEditRequest, imageIntent, imageNote, degraded}`
 **lib/config.ts** — `getConfig()` · `resolveFeatureSwitches(config) → FeatureSwitches` · `formatConfigForPrompt`
-**lib/db.ts** — `ensureCustomer`/`mergePendingOrder`/`reconcileWaitTags`/`resetCustomerMemory`/`getRecentHistory`/`insertPendingMessage`(debounce)/`nextOrderNumber`(atomic upsert counter · KI-05) ฯลฯ
+**lib/db.ts** — `ensureCustomer`/`mergePendingOrder`(items)/`setProposedOrder`(bot_proposal · คอลัมน์ `proposed_order` JSONB)/`reconcileWaitTags`(ลบเฉพาะ รอโอน/รอที่อยู่)/`resetCustomerMemory`/`nextOrderNumber`(atomic · KI-05) ฯลฯ · `CustomerState.tags` inject เข้า `<สถานะลูกค้า>` ทุกเทิร์น (คุมเงื่อนไขขายด้วยแท็กได้)
 
 ## 3. จุดประกอบ prompt (ตามลำดับ)
 1. `route.ts processMessage` → `loadBotLibrary()` ได้ CSV_Step/FAQ/Products/Promo/Config

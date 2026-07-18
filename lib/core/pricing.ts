@@ -10,7 +10,7 @@
  */
 
 // ── ชื่อคอลัมน์/คีย์ (identifier ไม่ใช่ค่าตัวเลข — ระบุชื่อได้) ──
-const PRODUCT_COLS = { sku: "sku", name: "ชื่อสินค้า", normalPrice: "ราคาปกติ_ต่อหน่วย", status: "สถานะ" };
+const PRODUCT_COLS = { sku: "sku", name: "ชื่อสินค้า", unit: "หน่วย", normalPrice: "ราคาปกติ_ต่อหน่วย", status: "สถานะ" };
 const PROMO_COLS = {
   promoId: "promo_id",
   sku: "sku",
@@ -35,11 +35,32 @@ export interface OrderItem {
   qty: number;
 }
 
+/** ชั้นโปรที่ใช้เป็นฐานคิดราคาของ line */
+export interface BasePromo {
+  promoId: string;
+  qty: number;
+  price: number; // ราคาโปรของชั้นฐาน
+}
+
+/** ชั้นโปรที่สูงกว่า qty ปัจจุบัน (ใช้เสนอทางเลือก upsell) — ระดับบิล (คิดเฉพาะออเดอร์ sku เดียว) */
+export interface NextTier {
+  promoId: string;
+  qty: number;
+  price: number; // ยอดรวมที่ลูกค้าจ่ายถ้าเลือกชั้นนี้
+  addQty: number; // qty ชั้นนี้ − qty ปัจจุบัน
+  addAmount: number; // price ชั้นนี้ − total ปัจจุบัน (บวกแล้วเท่ายอดชั้นนี้เสมอ)
+}
+
 export interface PriceLine {
   sku: string;
   name: string;
+  unit: string; // หน่วย (เช่น "ถ้วย") จาก CSV_Products — ใช้ในข้อความแจกแจง
   qty: number;
   basePromoId: string | null; // promo_id ของฐาน (null = คิดราคาปกติ)
+  basePromo: BasePromo | null; // ชั้นฐานแบบละเอียด
+  extraQty: number; // qty − qty ชั้นฐาน (0 ถ้าไม่มีฐาน/ตรงชั้น)
+  extraAmount: number; // 🔴 = lineTotal − basePromo.price เท่านั้น (บวกแล้วเท่ายอดเสมอ) · ไม่มีฐาน = 0
+  isExactTier: boolean; // qty ตรงชั้นโปรพอดี
   unitPrice: number; // ต่อหน่วยของฐาน (หรือราคาปกติ)
   lineTotal: number; // ceil เต็มบาทที่ระดับ line
   /** ข้อความโชว์ (auto) ของโปร เมื่อ qty ตรงชั้นโปรพอดี (ใช้เป็นคำพูดบอทตรง ๆ) · ไม่ตรง = null */
@@ -51,6 +72,8 @@ export interface PriceResult {
   subtotal: number;
   shippingFee: number;
   total: number;
+  /** ชั้นโปรถัดไปที่สูงกว่า (เสนอ upsell) · null = ตรงโปรใหญ่สุด/หลาย sku/ไม่มีโปร */
+  nextTier: NextTier | null;
   error: string | null; // != null → ห้ามเขียนชีต ห้ามพูดยอด → push แอดมิน
   needsHandoff: boolean; // เกินเพดาน / ไม่มีโปร live เลย → ห้ามปิดออเดอร์เอง
 }
@@ -117,7 +140,7 @@ export function calculatePrice(
   productRows: string[][],
   config: Record<string, string>,
 ): PriceResult {
-  const empty: PriceResult = { lines: [], subtotal: 0, shippingFee: 0, total: 0, error: null, needsHandoff: false };
+  const empty: PriceResult = { lines: [], subtotal: 0, shippingFee: 0, total: 0, nextTier: null, error: null, needsHandoff: false };
   const now = input.now ?? new Date();
   const today = toBangkokYMD(now);
 
@@ -133,15 +156,17 @@ export function calculatePrice(
   ]);
   if (!prCols) return { ...empty, error: "โครงสร้าง CSV_Promo ผิด (คอลัมน์ไม่ครบ)", needsHandoff: true };
   const showTextIdx = promoRows[prCols.headerRow].map(normHeader).indexOf(PROMO_COLS.showText);
+  const unitIdx = productRows[pCols.headerRow].map(normHeader).indexOf(PRODUCT_COLS.unit); // optional
 
   // ── product map (ข้าม sku ว่าง / แถวหมายเหตุ) ──
-  const products = new Map<string, { name: string; normalPrice: number; status: string }>();
+  const products = new Map<string, { name: string; unit: string; normalPrice: number; status: string }>();
   for (let i = pCols.headerRow + 1; i < productRows.length; i++) {
     const row = productRows[i];
     const sku = cleanCell(row[pCols.cols[PRODUCT_COLS.sku]]);
     if (!sku) continue;
     products.set(sku, {
       name: cleanCell(row[pCols.cols[PRODUCT_COLS.name]]),
+      unit: unitIdx !== -1 ? cleanCell(row[unitIdx]) || "ชิ้น" : "ชิ้น",
       normalPrice: toNum(row[pCols.cols[PRODUCT_COLS.normalPrice]]),
       status: cleanCell(row[pCols.cols[PRODUCT_COLS.status]]),
     });
@@ -214,8 +239,12 @@ export function calculatePrice(
       const unitPrice = base.promoPrice / base.qty;
       const lineTotal = Math.ceil(base.promoPrice + (qty - base.qty) * unitPrice);
       line = {
-        sku, name: product.name, qty,
+        sku, name: product.name, unit: product.unit, qty,
         basePromoId: base.promoId,
+        basePromo: { promoId: base.promoId, qty: base.qty, price: base.promoPrice },
+        extraQty: qty - base.qty,
+        extraAmount: lineTotal - base.promoPrice, // 🔴 บวกแล้วเท่ายอดเสมอ (ไม่ใช่ ceil ต่อหน่วย × extraQty)
+        isExactTier: qty === base.qty,
         unitPrice,
         lineTotal,
         exactPromoMessage: qty === base.qty && base.showText ? base.showText : null,
@@ -226,8 +255,12 @@ export function calculatePrice(
         return { ...empty, error: `ราคาปกติอ่านไม่ได้: ${sku}`, needsHandoff: true };
       }
       line = {
-        sku, name: product.name, qty,
+        sku, name: product.name, unit: product.unit, qty,
         basePromoId: null,
+        basePromo: null,
+        extraQty: qty,
+        extraAmount: 0,
+        isExactTier: false,
         unitPrice: product.normalPrice,
         lineTotal: Math.ceil(product.normalPrice * qty),
         exactPromoMessage: null,
@@ -242,7 +275,26 @@ export function calculatePrice(
   if (isCod) shippingFee += codSurcharge;
   const total = subtotal + shippingFee;
 
-  return { lines, subtotal, shippingFee, total, error: null, needsHandoff };
+  // ── ชั้นโปรถัดไป (upsell) — เฉพาะออเดอร์ sku เดียว (ธรรมชาติร้าน) ──
+  let nextTier: NextTier | null = null;
+  if (lines.length === 1) {
+    const sku = lines[0].sku;
+    const higher = livePromos.filter((p) => p.sku === sku && p.qty > lines[0].qty);
+    if (higher.length > 0) {
+      const near = higher.reduce((a, b) => (b.qty < a.qty ? b : a)); // ชั้นใกล้สุดที่สูงกว่า
+      // ยอดรวมถ้าเลือกชั้นนี้ = คิดใหม่ด้วยกฎเดียวกัน (เพื่อรวมค่าส่ง/COD ให้ถูก)
+      const tierPrice = calculatePrice({ items: [{ sku, qty: near.qty }], paymentMethod: input.paymentMethod, now }, promoRows, productRows, config).total;
+      nextTier = {
+        promoId: near.promoId,
+        qty: near.qty,
+        price: tierPrice,
+        addQty: near.qty - lines[0].qty,
+        addAmount: tierPrice - total,
+      };
+    }
+  }
+
+  return { lines, subtotal, shippingFee, total, nextTier, error: null, needsHandoff };
 }
 
 // ── formatters + runtime-variable resolver (D-15 · commit 2-pass) ──
@@ -268,17 +320,34 @@ export function formatPayment(payment: string): string {
   return p;
 }
 
-/** ตัวแปร runtime ที่ "โค้ดเป็นเจ้าของ" ในรอบนี้ (D-15) — เงิน/รายการเท่านั้น */
-export const PRICING_RUNTIME_VARS = ["{สรุปรายการ}", "{ยอดรวม}", "{การชำระเงิน}"] as const;
+/**
+ * ตัวแปร runtime ที่ "โค้ดเป็นเจ้าของ" ในรอบนี้ — เงิน/รายการ + แจกแจง/เสนอทางเลือก
+ * 🔴 ค่า(ถ้อยคำ)มาจากโค้ด แต่ "เมื่อไหร่/ประตูไหนใช้" อยู่ในชีต Step (ท่าขาย = ชีต · D-15/§3)
+ */
+export const PRICING_RUNTIME_VARS = ["{สรุปรายการ}", "{ยอดรวม}", "{การชำระเงิน}", "{วิธีคิดยอด}", "{ทางเลือกถัดไป}"] as const;
 
 export interface RuntimeVarContext {
   summary: string | null; // {สรุปรายการ} — null = ยังไม่มี items ให้ resolve (คงวงเล็บไว้)
   total: number | null; // {ยอดรวม}
   payment: string | null; // {การชำระเงิน}
+  breakdown: string | null; // {วิธีคิดยอด} — "" ถ้า qty ตรงชั้นโปร
+  nextTierOffer: string | null; // {ทางเลือกถัดไป} — "" ถ้าไม่มีชั้นสูงกว่า
+}
+
+/** สร้างค่า {วิธีคิดยอด}/{ทางเลือกถัดไป} จากผล pricing (ถ้อยคำในโค้ด · การใช้อยู่ในชีต) */
+export function buildBreakdownVars(price: PriceResult): { breakdown: string; nextTierOffer: string } {
+  const parts = price.lines
+    .filter((l) => l.basePromo && !l.isExactTier)
+    .map((l) => `(โปร ${l.basePromo!.qty} ${l.unit} ${l.basePromo!.price} บาท + เพิ่ม ${l.extraQty} ${l.unit} ${l.extraAmount} บาท)`);
+  const breakdown = parts.join(" · ");
+  const n = price.nextTier;
+  const unit = price.lines[0]?.unit ?? "ชิ้น";
+  const nextTierOffer = n ? `หรือรับโปร ${n.qty} ${unit} ${n.price} บาท เพิ่มอีก ${n.addAmount} บาท ได้เพิ่ม ${n.addQty} ${unit}ค่ะ` : "";
+  return { breakdown, nextTierOffer };
 }
 
 /**
- * แทนเฉพาะ 3 ตัวแปรเงิน/รายการ ({สรุปรายการ}/{ยอดรวม}/{การชำระเงิน}) ในข้อความ
+ * แทนตัวแปรเงิน/รายการที่โค้ดเป็นเจ้าของในข้อความ
  * 🔴 ตัวแปรอื่น ({ชื่อสินค้า}/{เลข อย.}/…) ปล่อยผ่าน — เป็นหน้าที่ AI ชั่วคราวจน resolver เต็ม (D-16)
  * ค่า null = ไม่แทน (คงวงเล็บ) เพื่อให้ guard ปลายทางจับได้ว่ายัง resolve ไม่ครบ
  */
@@ -287,5 +356,19 @@ export function resolveRuntimeVars(text: string, ctx: RuntimeVarContext): string
   if (ctx.summary !== null) out = out.split("{สรุปรายการ}").join(ctx.summary);
   if (ctx.total !== null) out = out.split("{ยอดรวม}").join(String(ctx.total));
   if (ctx.payment !== null) out = out.split("{การชำระเงิน}").join(ctx.payment);
+  if (ctx.breakdown !== null) out = out.split("{วิธีคิดยอด}").join(ctx.breakdown);
+  if (ctx.nextTierOffer !== null) out = out.split("{ทางเลือกถัดไป}").join(ctx.nextTierOffer);
   return out;
+}
+
+/** map sku → ชื่อสินค้า (CSV_Products) — ใช้แทน sku ในข้อความแจ้งแอดมิน (pure) */
+export function buildProductNameMap(productRows: string[][]): Map<string, string> {
+  const map = new Map<string, string>();
+  const pCols = resolveCols(productRows, [PRODUCT_COLS.sku, PRODUCT_COLS.name]);
+  if (!pCols) return map;
+  for (let i = pCols.headerRow + 1; i < productRows.length; i++) {
+    const sku = cleanCell(productRows[i][pCols.cols[PRODUCT_COLS.sku]]);
+    if (sku) map.set(sku, cleanCell(productRows[i][pCols.cols[PRODUCT_COLS.name]]));
+  }
+  return map;
 }
