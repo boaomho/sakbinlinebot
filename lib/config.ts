@@ -1,4 +1,6 @@
-import { getConfigCsv, parseCsvRows } from "./sheets";
+import { loadBotLibrary } from "./sheets/loader";
+// หมายเหตุ: cleanCell/stripKeyAnnotation ยังเป็น copy ในไฟล์นี้ (regex อักขระล่องหนแก้ยาก)
+// ตัวกลางอยู่ lib/sheets/clean.ts แล้ว — ตรงกัน 100% · ถ้าแก้ regex ต้องแก้ทั้ง 2 ที่
 
 export const DEFAULT_REPLY =
   "ขออภัยค่ะ ตอนนี้ปลาทูขัดข้องนิดหน่อย รอสักครู่แล้วลองทักมาใหม่นะคะ 🙏";
@@ -124,18 +126,24 @@ let cachedConfig: AppConfig | null = null;
 let cachedAt = 0;
 const CONFIG_MEMO_MS = 5_000;
 
+/** เฉพาะเทส — ล้าง memo ของ getConfig (config-parse unit test อ่านใหม่ทุกครั้ง) */
+export function __resetConfigCache(): void {
+  cachedConfig = null;
+  cachedAt = 0;
+}
+
 export async function getConfig(): Promise<AppConfig> {
   const now = Date.now();
   if (cachedConfig && now - cachedAt < CONFIG_MEMO_MS) {
     return cachedConfig;
   }
 
-  const csv = await getConfigCsv();
+  const lib = await loadBotLibrary();
+  const rows = lib?.CSV_Config ?? null;
   const raw = new Map<string, string>();
   let loadFailed = false;
 
-  if (csv) {
-    const rows = parseCsvRows(csv);
+  if (rows && rows.length > 0) {
     const { keyCol, valCol, headerRowIndex } = findKeyValueCols(rows);
     for (let i = 0; i < rows.length; i++) {
       if (i === headerRowIndex) continue; // ข้ามแถวหัวตาราง
@@ -150,7 +158,7 @@ export async function getConfig(): Promise<AppConfig> {
     }
   } else {
     loadFailed = true;
-    console.warn(JSON.stringify({ scope: "config", warning: "SHEET_CONFIG_URL missing or fetch failed, using defaults" }));
+    console.warn(JSON.stringify({ scope: "config", warning: "CSV_Config โหลดไม่ได้ (SHEET_BOTLIB_ID?) ใช้ค่า default" }));
   }
 
   // lookup แบบรับหลายชื่อ (alias) กันชื่อคีย์ในชีตเพี้ยนจากที่โค้ดคาด (เช่น มี/ไม่มี suffix หน่วย)
@@ -247,9 +255,12 @@ export function formatConfigForPrompt(config: AppConfig): string {
  * ขาดข้อใดข้อหนึ่ง = ปิดฟีเจอร์ทั้งดุ้น + log เตือน (ไม่ throw ไม่ crash)
  */
 export function resolveFeatureSwitches(config: AppConfig): FeatureSwitches {
-  const salesCore = Boolean(process.env.SHEET_STEP_URL && process.env.SHEET_FAQ_URL && process.env.SHEET_CONFIG_URL);
+  // 🔴 Step 1: อ่านทุกแท็บ (Step/FAQ/Config) จาก BotLibrary ตัวเดียว → เช็ค SHEET_BOTLIB_ID
+  // (เดิมเช็ค SHEET_STEP_URL + FAQ + CONFIG · ต้องเปลี่ยนพร้อม getConfig ในคอมมิตเดียว
+  //  ไม่งั้น deploy กลางคัน salesCore=false บอทตายทั้งตัว)
+  const salesCore = Boolean(process.env.SHEET_BOTLIB_ID);
   if (!salesCore) {
-    warnDisabled("salesCore", "ต้องมี SHEET_STEP_URL + SHEET_FAQ_URL + SHEET_CONFIG_URL ครบ");
+    warnDisabled("salesCore", "ต้องมี SHEET_BOTLIB_ID (BotLibrary spreadsheet)");
   }
 
   const memory = Boolean(process.env.DATABASE_URL);
@@ -284,10 +295,10 @@ export function resolveFeatureSwitches(config: AppConfig): FeatureSwitches {
     warnDisabled("orders", "ต้องมี ORDER_GROUP_ID + GOOGLE_SERVICE_ACCOUNT + SHEET_ORDERS_ID + BLOB_SLIPS_TOKEN + memory ครบทุกตัว");
   }
 
-  const followReady = Boolean(process.env.SHEET_FOLLOW_URL && memory);
+  const followReady = Boolean(process.env.SHEET_BOTLIB_ID && memory); // CSV_Follow อยู่ใน BotLibrary แล้ว
   const follow = config.rawSwitches.follow && followReady;
   if (config.rawSwitches.follow && !followReady) {
-    warnDisabled("follow", "ต้องมี SHEET_FOLLOW_URL + memory (DATABASE_URL)");
+    warnDisabled("follow", "ต้องมี SHEET_BOTLIB_ID + memory (DATABASE_URL)");
   }
 
   const flexCards = config.rawSwitches.flexCards;

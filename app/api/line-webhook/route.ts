@@ -8,7 +8,8 @@ import {
   AppConfig,
   FeatureSwitches,
 } from "@/lib/config";
-import { getStepCsv, getFaqCsv } from "@/lib/sheets";
+import { loadBotLibrary } from "@/lib/sheets/loader";
+import { tabToText } from "@/lib/sheets/columns";
 import {
   ensureCustomer,
   updateCustomerAfterTurn,
@@ -364,9 +365,11 @@ async function processMessage(
     }
   }
 
-  const [stepCsv, faqCsv] = await Promise.all([getStepCsv(), getFaqCsv()]);
-  const stepText = stepCsv ?? "(ไม่มีข้อมูลสเต็ป)";
-  const faqText = faqCsv ?? "(ไม่มีข้อมูล FAQ)";
+  // Step 1: อ่าน Step/FAQ จาก BotLibrary (batchGet 1 call, cache) — ยังส่งทั้งก้อน
+  // (Part 4 จะเปลี่ยนเป็น selective injection ที่ลด token + คงความฉลาดเห็นทุกประตู)
+  const lib = await loadBotLibrary();
+  const stepText = lib && lib.CSV_Step.length > 0 ? tabToText(lib.CSV_Step) : "(ไม่มีข้อมูลสเต็ป)";
+  const faqText = lib && lib.CSV_FAQ.length > 0 ? tabToText(lib.CSV_FAQ) : "(ไม่มีข้อมูล FAQ)";
   const configText = formatConfigForPrompt(config);
   const stateText = buildStateText(customer);
 

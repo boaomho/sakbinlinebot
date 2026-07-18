@@ -50,6 +50,18 @@ export function cell(row: string[], cols: ColumnMap, name: string): string {
   return (row[idx] ?? "").toString();
 }
 
+/**
+ * แปลงแท็บ (rows string[][]) กลับเป็น text ให้ prompt อ่าน — ทั้งก้อน
+ * (Part 3 ใช้ชั่วคราวสำหรับ Step/FAQ · Part 4 selective injection จะแทนที่)
+ * join เซลล์ด้วย " | " · ตัดคอลัมน์/แถวว่างท้าย ๆ ออกให้อ่านง่าย
+ */
+export function tabToText(rows: string[][]): string {
+  const lines = rows
+    .map((r) => r.map((c) => (c ?? "").toString().trim()).join(" | ").replace(/(\s*\|\s*)+$/, "").trim())
+    .filter((line) => line !== "");
+  return lines.join("\n");
+}
+
 /** index 0-based → ตัวอักษรคอลัมน์ (0→A, 23→X, 25→Z, 26→AA) — ใช้สร้าง A1 range */
 export function columnLetter(index: number): string {
   let n = index;

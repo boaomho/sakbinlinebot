@@ -61,15 +61,9 @@ vi.mock("@/lib/config", async () => {
   return { ...actual, getConfig: async () => testConfig() };
 });
 
-vi.mock("@/lib/sheets", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/sheets")>("@/lib/sheets");
-  const { STEP_CSV, FAQ_CSV } = await import("./fixtures");
-  return {
-    ...actual,
-    getStepCsv: async () => STEP_CSV,
-    getFaqCsv: async () => FAQ_CSV,
-  };
-});
+// Step 1: route อ่าน Step/FAQ ผ่าน loadBotLibrary (googleapis batchGet ถูก mock) แล้ว
+// ไม่ต้อง mock @/lib/sheets อีก · scenario ใช้ scripted Gemini → เนื้อ Step/FAQ ไม่กระทบผล
+// (ต้องการทดสอบ Step/FAQ จริง → ป้อนผ่าน sheetsCalls.botLibReturn)
 
 /**
  * mock ที่ชั้น googleapis (ต่ำสุด) ไม่ใช่ที่ lib/orders

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getConfig, resolveFeatureSwitches } from "@/lib/config";
-import { getFollowCsv, parseCsvRows } from "@/lib/sheets";
+import { loadBotLibrary } from "@/lib/sheets/loader";
 import { getStaleCustomers, hasFollowedRecently, logFollowSent } from "@/lib/db";
 import { pushRawText } from "@/lib/line";
 
@@ -43,8 +43,7 @@ function isHeaderRow(row: string[]): boolean {
   return first === "ชื่อกฎ";
 }
 
-function parseFollowRules(csv: string): FollowRule[] {
-  const rows = parseCsvRows(csv);
+function parseFollowRules(rows: string[][]): FollowRule[] {
   if (rows.length === 0) return [];
 
   const cols = findFollowCols(rows[0]);
@@ -76,12 +75,13 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ status: "skipped" }, { status: 200 });
   }
 
-  const csv = await getFollowCsv();
-  if (!csv) {
-    return NextResponse.json({ status: "skipped", reason: "SHEET_FOLLOW_URL missing or fetch failed" }, { status: 200 });
+  const lib = await loadBotLibrary();
+  const followRows = lib?.CSV_Follow ?? null;
+  if (!followRows || followRows.length === 0) {
+    return NextResponse.json({ status: "skipped", reason: "CSV_Follow โหลดไม่ได้ (SHEET_BOTLIB_ID?)" }, { status: 200 });
   }
 
-  const rules = parseFollowRules(csv);
+  const rules = parseFollowRules(followRows);
   let sent = 0;
 
   for (const rule of rules) {
