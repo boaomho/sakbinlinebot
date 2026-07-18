@@ -14,6 +14,7 @@ export interface GeminiTurnInput {
   configText: string;
   stepText: string;
   faqText: string;
+  catalogText: string;
   stateText: string;
   historyText: string;
   userMessage: string;
@@ -132,6 +133,7 @@ export async function runSalesTurn(input: GeminiTurnInput): Promise<GeminiTurnOu
     configText: input.configText,
     stepText: input.stepText,
     faqText: input.faqText,
+    catalogText: input.catalogText,
     stateText: input.stateText,
     historyText: input.historyText,
     userMessage: input.userMessage,

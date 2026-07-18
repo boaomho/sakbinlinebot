@@ -9,7 +9,7 @@ import {
   FeatureSwitches,
 } from "@/lib/config";
 import { loadBotLibrary } from "@/lib/sheets/loader";
-import { buildStepInjection, buildFaqInjection } from "@/lib/agent/inject";
+import { buildStepInjection, buildFaqInjection, buildCatalogInjection } from "@/lib/agent/inject";
 import {
   ensureCustomer,
   updateCustomerAfterTurn,
@@ -377,6 +377,8 @@ async function processMessage(
   const stepText =
     lib && lib.CSV_Step.length > 0 ? buildStepInjection(lib.CSV_Step, previousStage ?? "", userMessage) : "(ไม่มีข้อมูลสเต็ป)";
   const faqText = lib && lib.CSV_FAQ.length > 0 ? buildFaqInjection(lib.CSV_FAQ, userMessage) : "(ไม่มีข้อมูล FAQ)";
+  // ยัดสินค้า+ราคาโปรเสมอ (บอทห้ามแต่งราคา C6) — CSV_Products/CSV_Promo ไม่เคยถูกยัดมาก่อน
+  const catalogText = lib ? buildCatalogInjection(lib.CSV_Products, lib.CSV_Promo) : "(ไม่มีข้อมูลสินค้า)";
   const configText = formatConfigForPrompt(config);
   const stateText = buildStateText(customer);
 
@@ -392,6 +394,7 @@ async function processMessage(
       configText,
       stepText,
       faqText,
+      catalogText,
       stateText,
       historyText,
       userMessage,

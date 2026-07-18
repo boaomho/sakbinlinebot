@@ -204,6 +204,26 @@ export function buildStepInjection(rows: string[][], currentStage: string, userM
   ].join("\n");
 }
 
+// ---- Catalog (สินค้า + ราคาโปร) ----
+
+/**
+ * ยัดสินค้า+ราคาโปรเข้า prompt "เสมอ" (ตารางเล็ก) — บอทใช้ราคานี้เท่านั้น ห้ามแต่งเอง (C6)
+ * ใช้ tabToText ทั้งก้อน (ไม่ต้อง header-driven เพราะบอทอ่านตารางเอง + โครงคอลัมน์ยังไม่ล็อก)
+ * 🔴 หมายเหตุ: การ "คำนวณยอดจากจำนวน" ให้เป็นเลขสำเร็จรูป (C6 เต็มรูป) = Step 3 (pricing.ts)
+ *    ตอนนี้ยัดตารางโปรให้บอทเปิดดูราคาตรง ๆ (ดีกว่าบอทเดา · ราคาตรงชีต)
+ */
+export function buildCatalogInjection(productsRows: string[][], promoRows: string[][]): string {
+  const products = productsRows.length > 0 ? tabToText(productsRows) : "(ไม่มีข้อมูลสินค้า)";
+  const promo = promoRows.length > 0 ? tabToText(promoRows) : "(ไม่มีข้อมูลโปรโมชั่น)";
+  return [
+    "สินค้า:",
+    products,
+    "",
+    "ราคา/โปรโมชั่น (🔴 ใช้ราคาตามตารางนี้เท่านั้น ห้ามคิด/แต่งราคาเอง — ไม่มีในตาราง = ไม่มีโปร):",
+    promo,
+  ].join("\n");
+}
+
 // ---- FAQ ----
 
 const FAQ_COLS = ["คำถาม", "keywords", "action", "คำตอบ"];

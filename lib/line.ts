@@ -53,8 +53,11 @@ function parseSegmentToMessages(segment: string): Message[] {
     if (textPart) messages.push({ type: "text", text: textPart } as Message);
 
     const url = match[1].trim();
-    if (url) {
+    // ส่งรูปเฉพาะ URL http(s) จริง — กันบอทแต่ง URL/placeholder (รูปมั่ว) หลุดถึงลูกค้า
+    if (/^https?:\/\/\S+$/.test(url)) {
       messages.push({ type: "image", originalContentUrl: url, previewImageUrl: url } as Message);
+    } else if (url) {
+      console.warn(JSON.stringify({ scope: "line", warning: "ข้าม [[รูป:...]] URL ไม่ใช่ http(s)", url: url.slice(0, 60) }));
     }
     lastIndex = IMAGE_TOKEN.lastIndex;
   }
