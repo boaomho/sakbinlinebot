@@ -145,6 +145,21 @@ function toPaymentMethod(value: unknown): PaymentMethod {
 function parseOrderData(raw: unknown): OrderDataFromAI {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
   const o = raw as Record<string, unknown>;
+  // 🔬 DIAG: raw ที่ AI ส่ง "ก่อนกรอง" — ชี้ขาดว่า AI ส่ง items มั้ย + sku ว่าง/ผิดมั้ย + เบอร์มั่วมั้ย
+  //    sku = product code (ไม่ใช่ PII · log ค่าได้) · เบอร์ = อาจเป็นเบอร์จริง (PII) → log แค่ len/digits
+  if (process.env.DIAG_PROMPT_TOKENS === "1") {
+    const rawItems = Array.isArray(o["items"]) ? (o["items"] as unknown[]) : [];
+    const phone = typeof o["เบอร์"] === "string" ? (o["เบอร์"] as string).trim() : "";
+    console.log(JSON.stringify({
+      scope: "gemini", event: "orderdata-raw",
+      keys: Object.keys(o),
+      rawItems: rawItems.map((el) => {
+        const e = (el ?? {}) as Record<string, unknown>;
+        return { sku: e.sku ?? null, qty: e.qty ?? null };
+      }),
+      phoneShape: phone ? { len: phone.length, digits: /^\d+$/.test(phone) } : null,
+    }));
+  }
   const out: OrderDataFromAI = {};
   if (typeof o["ชื่อ"] === "string" && o["ชื่อ"].trim()) out["ชื่อ"] = o["ชื่อ"];
   if (typeof o["ที่อยู่"] === "string" && o["ที่อยู่"].trim()) out["ที่อยู่"] = o["ที่อยู่"];
