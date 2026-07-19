@@ -26,9 +26,13 @@ const CONFIG_KEYS = {
   standardShipping: "ค่าส่ง_มาตรฐาน",
   codSurcharge: "ค่าส่ง_COD_เพิ่ม",
   ceilingMultiplier: "เพดานจำนวน_คูณโปรใหญ่สุด",
+  extraPricing: "จำนวนที่ไม่มีโปร_คิดยังไง", // Step 3 · วิธีคิด "เศษ" ที่เกินชั้นโปรฐาน
 };
 const STATUS_LIVE = "live";
 const PAYMENT_COD = "COD";
+// ค่าที่ชีตพิมพ์ได้ในคีย์ extraPricing (เลือก "วิธี" ไม่ใช่ตัวเลข — ระบุค่าคงที่ได้)
+const EXTRA_METHOD_PROMO_BASE = "เทียบโปรฐาน"; // เศษ = ราคาต่อหน่วยของโปรฐาน (default · พฤติกรรมเดิม)
+const EXTRA_METHOD_NORMAL = "ราคาปกติ"; // เศษ = ราคาปกติต่อหน่วย
 
 export interface OrderItem {
   sku: string;
@@ -237,6 +241,20 @@ export function calculatePrice(
     return { ...empty, error: "CSV_Config ค่าส่ง_COD_เพิ่ม อ่านไม่ได้", needsHandoff: true };
   }
 
+  // ── วิธีคิด "เศษ" ที่เกินชั้นโปรฐาน (Step 3 · จำนวนที่ไม่มีโปร_คิดยังไง) ──
+  // 🔴 ว่าง/ไม่มี key = เทียบโปรฐาน (พฤติกรรมเดิม) — เลือก "วิธี" ที่ documented ไม่ใช่ hardcode ราคา
+  //    (ต่างจากคีย์ตัวเลขด้านบนที่ค่าเริ่มต้นไม่มี "วิธีปลอดภัย" · ที่นี่มี = พฤติกรรมเดิมที่พิสูจน์แล้ว)
+  //    ค่าอื่นที่พิมพ์มาแต่ไม่รู้จัก = misconfiguration → handoff (ห้ามเดาเงียบแบบ D-15)
+  const extraMethodRaw = cleanCell(config[CONFIG_KEYS.extraPricing]);
+  let extraMethod: "promoBase" | "normal";
+  if (extraMethodRaw === "" || extraMethodRaw === EXTRA_METHOD_PROMO_BASE) {
+    extraMethod = "promoBase";
+  } else if (extraMethodRaw === EXTRA_METHOD_NORMAL) {
+    extraMethod = "normal";
+  } else {
+    return { ...empty, error: `CSV_Config จำนวนที่ไม่มีโปร_คิดยังไง: ค่าไม่รู้จัก "${extraMethodRaw}" (ใช้ "${EXTRA_METHOD_PROMO_BASE}" หรือ "${EXTRA_METHOD_NORMAL}")`, needsHandoff: true };
+  }
+
   // ── เพดานจำนวน (กฎ j) ──
   let needsHandoff = false;
   if (livePromos.length === 0) {
@@ -267,8 +285,13 @@ export function calculatePrice(
     let line: PriceLine;
     if (skuPromos.length > 0) {
       const base = skuPromos.reduce((a, b) => (b.qty > a.qty ? b : a));
-      const unitPrice = base.promoPrice / base.qty;
-      const lineTotal = Math.ceil(base.promoPrice + (qty - base.qty) * unitPrice);
+      const basePerUnit = base.promoPrice / base.qty;
+      // เศษที่เกินชั้นฐาน (qty − base.qty) คิดตามวิธีที่ชีตกำหนด · ตรงชั้นพอดี = ไม่มีเศษ (สองวิธีเท่ากัน)
+      if (qty > base.qty && extraMethod === "normal" && !Number.isFinite(product.normalPrice)) {
+        return { ...empty, error: `ราคาปกติอ่านไม่ได้ (วิธีคิดเศษ "${EXTRA_METHOD_NORMAL}" ต้องใช้): ${sku}`, needsHandoff: true };
+      }
+      const extraUnitPrice = extraMethod === "normal" ? product.normalPrice : basePerUnit;
+      const lineTotal = Math.ceil(base.promoPrice + (qty - base.qty) * extraUnitPrice);
       line = {
         sku, name: product.name, unit: product.unit, qty,
         basePromoId: base.promoId,
@@ -276,7 +299,7 @@ export function calculatePrice(
         extraQty: qty - base.qty,
         extraAmount: lineTotal - base.promoPrice, // 🔴 บวกแล้วเท่ายอดเสมอ (ไม่ใช่ ceil ต่อหน่วย × extraQty)
         isExactTier: qty === base.qty,
-        unitPrice,
+        unitPrice: basePerUnit,
         lineTotal,
         exactPromoMessage: qty === base.qty && base.showText ? base.showText : null,
       };
