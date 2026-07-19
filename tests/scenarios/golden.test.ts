@@ -15,7 +15,7 @@ import { readCustomer } from "../harness/db";
  */
 
 const U = "Uharnesstestcustomer0000000000001";
-const NPT = (qty: number) => ({ items: [{ sku: "NPT-10G", qty }] });
+const NPT = (qty: number) => ({ items: [{ qty }] });
 
 beforeEach(() => seedBotLib());
 

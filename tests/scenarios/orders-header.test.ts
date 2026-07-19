@@ -32,7 +32,7 @@ describe("appendOrderRow — สลับคอลัมน์ Orders → ยั
         stage: "4b",
         paymentMethod: "COD",
         orderData: {
-          items: [{ sku: "NPT-10G", qty: 3 }],
+          items: [{ qty: 3 }],
           ชื่อ: "สมหญิง ใจดี",
           เบอร์: "0811122334",
           ที่อยู่: "1 ถนนเจริญ ช่องนนทรี ยานนาวา กทม. 10120",

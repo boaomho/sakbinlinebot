@@ -35,6 +35,37 @@ export interface OrderItem {
   qty: number;
 }
 
+/** สิ่งที่ AI ส่ง (D-20): แค่ qty — โค้ดใส่ sku เอง (ลดภาระ AI · sku code AI แมปไม่เก่ง) */
+export interface AiOrderItem {
+  qty: number;
+}
+
+/** sku ของสินค้า live ทั้งหมดใน CSV_Products (pure) */
+export function liveProductSkus(productRows: string[][]): string[] {
+  const pCols = resolveCols(productRows, [PRODUCT_COLS.sku, PRODUCT_COLS.status]);
+  if (!pCols) return [];
+  const out: string[] = [];
+  for (let i = pCols.headerRow + 1; i < productRows.length; i++) {
+    const sku = cleanCell(productRows[i][pCols.cols[PRODUCT_COLS.sku]]);
+    const status = cleanCell(productRows[i][pCols.cols[PRODUCT_COLS.status]]);
+    if (sku && status === STATUS_LIVE) out.push(sku);
+  }
+  return out;
+}
+
+/**
+ * ใส่ sku ให้ items ที่ AI ส่งมา (มีแค่ qty) — D-20
+ * 🔴 live ตัวเดียว → ใส่ sku นั้นทุก element (รองรับหลายรายการ) · live หลาย/ไม่มี → log เตือน + [] (ไม่เดา)
+ */
+export function resolveAiItems(aiItems: AiOrderItem[] | undefined, productRows: string[][]): OrderItem[] {
+  const clean = (aiItems ?? []).filter((it) => it && Number.isFinite(it.qty) && it.qty > 0);
+  if (clean.length === 0) return [];
+  const live = liveProductSkus(productRows);
+  if (live.length === 1) return clean.map((it) => ({ sku: live[0], qty: it.qty }));
+  console.warn(JSON.stringify({ scope: "pricing", warning: "resolveAiItems: สินค้า live ไม่ใช่ 1 ตัว — ใส่ sku อัตโนมัติไม่ได้ (ไม่เดา)", liveCount: live.length }));
+  return [];
+}
+
 /** ชั้นโปรที่ใช้เป็นฐานคิดราคาของ line */
 export interface BasePromo {
   promoId: string;

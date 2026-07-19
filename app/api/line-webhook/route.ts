@@ -64,7 +64,7 @@ import {
 import { uploadSlip, getSlipSignedUrl } from "@/lib/blob";
 import { appendOrderRow } from "@/lib/orders";
 import { evaluateOrderGate, buildNewOrderAdminText, buildBrokenOrderAdminText, itemsEqual, normalizeItems, PendingOrder } from "@/lib/core/orders";
-import { resolveRuntimeVars, formatLinesForSheet, formatOrderSummary, buildProductNameMap, RuntimeVarContext, PriceResult } from "@/lib/core/pricing";
+import { resolveRuntimeVars, formatLinesForSheet, formatOrderSummary, buildProductNameMap, resolveAiItems, RuntimeVarContext, PriceResult } from "@/lib/core/pricing";
 import { computeQuote, hasUnresolvedPricingVars, extractBahtNumbers, extractPriceNumbers } from "@/lib/agent/quote";
 
 export const maxDuration = 30;
@@ -524,25 +524,27 @@ async function processMessage(
   let pending: PendingOrder = customer?.pendingOrder ?? {};
   let postQuote = preQuote;
   if (runOrders && customer) {
-    // 🔬 DIAG: raw order_data ที่ AI ส่งจริงเทิร์นนี้ (ชี้ขาด "AI ไม่ส่ง items / ส่งเบอร์มั่ว")
-    //    PII-safe: string field = {len,digits} ไม่ log ค่าจริง · items = จำนวน + sku (sku ไม่ใช่ PII)
+    // D-20: AI ส่งแค่ qty → โค้ดใส่ sku จากสินค้า live (แมป sku ไม่ใช่งาน AI)
+    const { items: aiItems, ...receiverFields } = geminiOutput.orderData;
+    const resolvedItems = resolveAiItems(aiItems, lib?.CSV_Products ?? []);
+
     if (process.env.DIAG_PROMPT_TOKENS === "1") {
-      const od = geminiOutput.orderData;
       const shape: Record<string, { len: number; digits: boolean }> = {};
       for (const k of ["ชื่อ", "ที่อยู่", "เบอร์"] as const) {
-        const v = od[k];
+        const v = receiverFields[k];
         if (typeof v === "string" && v.trim() !== "") shape[k] = { len: v.trim().length, digits: /^\d+$/.test(v.trim()) };
       }
       console.log(JSON.stringify({
         scope: "orders", event: "ai-orderdata-raw",
-        aiSentKeys: Object.keys(od),
+        aiSentKeys: Object.keys(geminiOutput.orderData),
         stringShape: shape,
-        itemsCount: normalizeItems(od.items).length,
-        itemsSku: normalizeItems(od.items).map((it) => `${it.sku}x${it.qty}`),
-        needsPriceQuote_removed: true,
+        aiQtys: (aiItems ?? []).map((it) => it.qty),
+        resolvedItems: resolvedItems.map((it) => `${it.sku}x${it.qty}`),
       }));
     }
-    const fields: PendingOrder = { ...geminiOutput.orderData };
+
+    const fields: PendingOrder = { ...receiverFields };
+    if (resolvedItems.length > 0) fields.items = resolvedItems;
     if (geminiOutput.paymentMethod) fields["การชำระเงิน"] = geminiOutput.paymentMethod; // "" = คงเดิม
     pending = await mergePendingOrder(userId, fields);
     postQuote = computeQuote(pending, lib, config, nowDate);

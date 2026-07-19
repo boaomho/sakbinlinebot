@@ -1,17 +1,18 @@
 import { GoogleGenAI, ThinkingLevel, Type } from "@google/genai";
 import { buildStaticSystemInstruction, buildUserContent } from "@/prompt/system";
 import { AppConfig, DEFAULT_REPLY } from "./config";
-import { OrderItem } from "./core/pricing";
+import { AiOrderItem } from "./core/pricing";
 
 /**
- * order_data ที่ AI ส่งกลับ (D-15) — 3 ช่องผู้รับ + items:[{sku,qty}]
- * 🔴 ไม่มี ยอด/จำนวน(ข้อความ) แล้ว — ตัวเลขเงินคิดโดย lib/core/pricing เท่านั้น
+ * order_data ที่ AI ส่งกลับ (D-20) — 3 ช่องผู้รับ + items:[{qty}] (AI ส่งแค่ qty · โค้ดใส่ sku เอง)
+ * 🔴 ไม่มี ยอด/สินค้า/sku — โค้ดคิดเงิน+แมป sku ให้ (ลดภาระ AI = thinking ไม่วน)
+ * ทุกช่อง optional · ลูกค้ายังไม่ให้ = ไม่ต้องส่ง (ห้ามเดา placeholder)
  */
 export interface OrderDataFromAI {
   ชื่อ?: string;
   ที่อยู่?: string;
   เบอร์?: string;
-  items?: OrderItem[];
+  items?: AiOrderItem[];
 }
 
 const MODEL = "gemini-3.5-flash";
@@ -76,14 +77,12 @@ const RESPONSE_SCHEMA = {
         ชื่อ: { type: Type.STRING },
         ที่อยู่: { type: Type.STRING },
         เบอร์: { type: Type.STRING },
-        // 🔴 D-15: order line = items:[{sku,qty}] · sku จาก CSV_Products (live) · qty ตัวเลขล้วน
-        //   ไม่มี ยอด/จำนวน(ข้อความ) — ตัวเลขเงินคิดโดย lib/core/pricing เท่านั้น
+        // 🔴 D-20: AI ส่งแค่ qty (โค้ดใส่ sku + คิดเงินเอง · ลดภาระ AI) · หลายรายการได้
         items: {
           type: Type.ARRAY,
           items: {
             type: Type.OBJECT,
             properties: {
-              sku: { type: Type.STRING },
               qty: { type: Type.NUMBER },
             },
           },
@@ -165,13 +164,13 @@ function parseOrderData(raw: unknown): OrderDataFromAI {
   if (typeof o["ที่อยู่"] === "string" && o["ที่อยู่"].trim()) out["ที่อยู่"] = o["ที่อยู่"];
   if (typeof o["เบอร์"] === "string" && o["เบอร์"].trim()) out["เบอร์"] = o["เบอร์"];
   if (Array.isArray(o["items"])) {
-    const items: OrderItem[] = [];
+    // D-20: AI ส่งแค่ qty (sku โค้ดใส่เอง) · รับเฉพาะ qty>0
+    const items: AiOrderItem[] = [];
     for (const el of o["items"] as unknown[]) {
       if (!el || typeof el !== "object") continue;
       const e = el as Record<string, unknown>;
-      const sku = typeof e.sku === "string" ? e.sku.trim() : "";
       const qty = typeof e.qty === "number" ? e.qty : Number(e.qty);
-      if (sku && Number.isFinite(qty) && qty > 0) items.push({ sku, qty });
+      if (Number.isFinite(qty) && qty > 0) items.push({ qty });
     }
     if (items.length > 0) out.items = items;
   }
