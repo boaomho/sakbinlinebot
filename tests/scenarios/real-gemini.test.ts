@@ -32,8 +32,13 @@ describe.skipIf(!RUN)("real Gemini — AI ต้องส่ง items[{qty}] เ
     expect(out.orderData.items, "🔴 AI ต้องส่ง items (นี่คือบั๊ก production)").toBeDefined();
     expect((out.orderData.items ?? []).length, "items ไม่ว่าง").toBeGreaterThan(0);
     expect(out.orderData.items?.[0].qty, "qty=3").toBe(3);
-    // ห้ามเดา placeholder: ลูกค้ายังไม่ให้ชื่อ/ที่อยู่/เบอร์
-    expect(out.orderData.ชื่อ, "ยังไม่ให้ชื่อ = ไม่เดา").toBeUndefined();
-    expect(out.orderData.เบอร์, "ยังไม่ให้เบอร์ = ไม่เดา").toBeUndefined();
+    // 🔴 ห้ามเดา/ลอกตัวอย่าง: ลูกค้ายังไม่ให้ชื่อ/ที่อยู่/เบอร์ → ต้องไม่มี key เลย
+    expect(out.orderData.ชื่อ, "ยังไม่ให้ชื่อ = ไม่มี key").toBeUndefined();
+    expect(out.orderData.ที่อยู่, "ยังไม่ให้ที่อยู่ = ไม่มี key").toBeUndefined();
+    expect(out.orderData.เบอร์, "ยังไม่ให้เบอร์ = ไม่มี key").toBeUndefined();
+    // จับการลอกค่าปลอมจากตัวอย่างใน prompt โดยตรง (ถ้าเจอ = ลอก)
+    const raw = JSON.stringify(out.orderData);
+    expect(raw, "ห้ามลอก 0000000000 จากตัวอย่าง B").not.toContain("0000000000");
+    expect(raw, "ห้ามลอก 0912345678 (ตัวอย่างเก่า)").not.toContain("0912345678");
   }, 20_000);
 });
