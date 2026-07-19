@@ -311,6 +311,23 @@ export async function runSalesTurn(input: GeminiTurnInput): Promise<GeminiTurnOu
 
     const text = response.text;
     if (!text) {
+      // 🔬 candidates ว่าง/ไม่มี text = Gemini ไม่ผลิต output (prompt ถูกบล็อก / safety / อื่นๆ)
+      //    ก่อนหน้านี้ตกลง fallback เงียบ ไม่รู้สาเหตุ — log ตัวชี้ขาด (ไม่มี PII: enum + คะแนน category)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const r = response as any;
+      const raw = {
+        blockReason: r.promptFeedback?.blockReason,
+        promptSafety: r.promptFeedback?.safetyRatings,
+        candidatesLen: response.candidates?.length ?? 0,
+        candFinishReason: response.candidates?.[0]?.finishReason,
+        candSafety: response.candidates?.[0]?.safetyRatings,
+        candFinishMessage: r.candidates?.[0]?.finishMessage,
+      };
+      console.error(JSON.stringify({ scope: "gemini", warning: "no text — candidates ว่าง/ถูกบล็อก", ...raw, ...budget }));
+      if (process.env.DIAG_PROMPT_TOKENS === "1") {
+        // dump ทั้ง promptFeedback + candidate[0] (ไม่รวม content ที่อาจมี echo ข้อความลูกค้า)
+        console.log(JSON.stringify({ scope: "gemini", event: "raw-empty", promptFeedback: r.promptFeedback ?? null, candidate0: r.candidates?.[0] ? { ...r.candidates[0], content: undefined } : null }));
+      }
       return fallback(input.currentStage);
     }
 
