@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { buildStepInjection, buildFaqInjection, buildCatalogInjection, resolveDestinations } from "@/lib/agent/inject";
 import { tabToText } from "@/lib/sheets/columns";
 
@@ -19,20 +19,32 @@ function step(o: Partial<Record<string, string>>): string[] {
   return STEP_HEADER.map((h) => o[h] ?? `${o.step_id ?? ""}-${h}`);
 }
 
+/** funnel_stage ตรงกับชีตจริง · S3_* = quoted (สรุปยอด) · X1/X2 = ประตูข้าม (ไม่มีใครชี้มา) */
 function stepSheet(): string[][] {
   return [
     STEP_HEADER,
-    step({ step_id: "S1", funnel_stage: "lead", ชื่อประตู: "ทักทาย", เข้าเมื่อ: 'ทักทายลอยๆ เช่น "สวัสดี"', ไปประตูถัดไปเมื่อ: "รู้ว่าสนใจตัวไหน → S2", หลักการนำพา: "ทักทายอบอุ่น", ห้ามทำ: "ห้ามรีบขาย" }),
-    step({ step_id: "S2", funnel_stage: "qualified", ชื่อประตู: "นำเสนอ", เข้าเมื่อ: "รู้แล้วว่าสนใจตัวไหน", ไปประตูถัดไปเมื่อ: "ลูกค้าแจ้งจำนวน → S3", หลักการนำพา: "สรุปยอดชวนตัดสินใจ", ห้ามทำ: "ห้ามกดดัน" }),
-    step({ step_id: "S2_DIRECT", funnel_stage: "qualified", ชื่อประตู: "สั่งตรง", เข้าเมื่อ: 'บอกจำนวนเลย เช่น "สั่ง 3 ถ้วยครับ"', ไปประตูถัดไปเมื่อ: "เลือกวิธีชำระ → S3" }),
-    step({ step_id: "S3_TRANSFER", funnel_stage: "awaiting_payment", ชื่อประตู: "โอน", เข้าเมื่อ: "เลือกโอนแล้ว", ไปประตูถัดไปเมื่อ: "ได้สลิป → S4A · ที่อยู่ครบก่อน → S4C" }),
-    step({ step_id: "S3_COD", funnel_stage: "awaiting_payment", ชื่อประตู: "ปลายทาง", เข้าเมื่อ: "เลือกเก็บปลายทาง", ไปประตูถัดไปเมื่อ: "ที่อยู่ครบ → S4B" }),
-    step({ step_id: "S4A", funnel_stage: "awaiting_address", ชื่อประตู: "รับสลิป", เข้าเมื่อ: "ส่งสลิปแล้ว", ไปประตูถัดไปเมื่อ: "ที่อยู่ครบ → S4B" }),
+    step({ step_id: "S1", funnel_stage: "lead", ชื่อประตู: "ทักทาย", เข้าเมื่อ: 'ทักทายลอยๆ เช่น "สวัสดี"', ไปประตูถัดไปเมื่อ: "รู้ว่าสนใจ → S2", หลักการนำพา: "ทักทายอบอุ่น", ห้ามทำ: "ห้ามรีบขาย" }),
+    step({ step_id: "S2", funnel_stage: "qualified", ชื่อประตู: "นำเสนอ", เข้าเมื่อ: "รู้แล้วว่าสนใจตัวไหน", ไปประตูถัดไปเมื่อ: "แจ้งจำนวน → S2_CONFIRM", หลักการนำพา: "เสนอโปร", ห้ามทำ: "ห้ามกดดัน" }),
+    step({ step_id: "S2_DIRECT", funnel_stage: "qualified", ชื่อประตู: "สั่งตรง", เข้าเมื่อ: 'บอกจำนวนเลย เช่น "สั่ง 3 ถ้วยครับ"', ไปประตูถัดไปเมื่อ: "→ S2_CONFIRM" }),
+    step({ step_id: "S2_CONFIRM", funnel_stage: "qualified", ชื่อประตู: "สรุปยอด", เข้าเมื่อ: "มีจำนวนแล้ว", ไปประตูถัดไปเมื่อ: "เลือกวิธีจ่าย → S3", หลักการนำพา: "สรุปยอดชวนเลือกจ่าย", ห้ามทำ: "ห้ามข้ามยอด" }),
+    step({ step_id: "S3_TRANSFER", funnel_stage: "quoted", ชื่อประตู: "โอน", เข้าเมื่อ: "เลือกโอนแล้ว", ไปประตูถัดไปเมื่อ: "รอสลิป → S4C" }),
+    step({ step_id: "S3_COD", funnel_stage: "quoted", ชื่อประตู: "ปลายทาง", เข้าเมื่อ: "เลือกเก็บปลายทาง COD", ไปประตูถัดไปเมื่อ: "ที่อยู่ครบ → S4A" }),
+    step({ step_id: "X1", funnel_stage: "quoted", ชื่อประตู: "เปลี่ยนวิธีจ่าย", เข้าเมื่อ: 'ขอเปลี่ยนวิธีจ่าย เช่น "เปลี่ยนเป็นโอน"', ไปประตูถัดไปเมื่อ: "" }),
+    step({ step_id: "S4C", funnel_stage: "awaiting_payment", ชื่อประตู: "รอสลิปโอน", เข้าเมื่อ: "โอนแล้วรอสลิป", ไปประตูถัดไปเมื่อ: "ได้สลิป → S4A" }),
+    step({ step_id: "S4A", funnel_stage: "awaiting_address", ชื่อประตู: "เก็บที่อยู่", เข้าเมื่อ: "ต้องเก็บที่อยู่", ไปประตูถัดไปเมื่อ: "ครบ → S4B" }),
     step({ step_id: "S4B", funnel_stage: "won", ชื่อประตู: "ปิดจบ", เข้าเมื่อ: "ครบแล้ว", ไปประตูถัดไปเมื่อ: "" }),
-    step({ step_id: "H1", funnel_stage: "handoff", ชื่อประตู: "เคลม", เข้าเมื่อ: "ของเสีย/แพ้อาหาร", ห้ามทำ: "ห้ามตอบเอง ห้ามมั่ว", "ตัวอย่างคำตอบ (บอลลูน)": "ขอตามแอดมินมาดูแลนะคะ", ความรู้สึกลูกค้าตอนนี้: "กังวลมาก", ทำไมประตูนี้สำคัญ: "ความปลอดภัย" }),
+    step({ step_id: "X2", funnel_stage: "post_sale", ชื่อประตู: "หลังขาย", เข้าเมื่อ: 'ถามหลังซื้อ เช่น "ของถึงยัง"', ไปประตูถัดไปเมื่อ: "" }),
+    step({ step_id: "H1", funnel_stage: "handoff", ชื่อประตู: "เคลม", เข้าเมื่อ: 'ของเสีย/แพ้อาหาร เช่น "แพ้อาหาร"', ห้ามทำ: "ห้ามตอบเอง ห้ามมั่ว", "ตัวอย่างคำตอบ (บอลลูน)": "ขอตามแอดมินมาดูแลนะคะ", ความรู้สึกลูกค้าตอนนี้: "กังวลมาก", ทำไมประตูนี้สำคัญ: "ความปลอดภัย" }),
     step({ step_id: "H2", funnel_stage: "handoff", ชื่อประตู: "ต่อรอง", เข้าเมื่อ: "ขอส่วนลด", ห้ามทำ: "ห้ามลดเอง", "ตัวอย่างคำตอบ (บอลลูน)": "ขอส่งต่อแอดมินนะคะ" }),
   ];
 }
+
+/** นับ block เต็ม [Sx]/[Hx] ในผลลัพธ์ (เนื้อเต็ม ไม่ใช่สารบัญ) */
+function fullIds(out: string): string[] {
+  const after = out.split("=== ประตูที่เกี่ยวข้องตอนนี้")[1] ?? "";
+  return [...after.matchAll(/\[([A-Z0-9_]+)\]/g)].map((m) => m[1]);
+}
+const PRE: (u: string) => Parameters<typeof buildStepInjection>[1] = (u) => ({ quoted: false, payment: "", userMessage: u });
 
 describe("resolveDestinations — parse ปลายทาง (regex + prefix + หลายปลายทาง)", () => {
   const ids = new Set(["S1", "S2", "S2_DIRECT", "S3_TRANSFER", "S3_COD", "S4A", "S4B", "S4C"]);
@@ -54,87 +66,95 @@ describe("resolveDestinations — parse ปลายทาง (regex + prefix + 
   });
 });
 
-describe("buildStepInjection — สารบัญครบ + เต็มเฉพาะที่เกี่ยว", () => {
+describe("buildStepInjection — region routing (D-18)", () => {
   it("🔴 สารบัญมีทุกประตูเสมอ (เห็นทางเข้าทุกประตู)", () => {
-    const out = buildStepInjection(stepSheet(), "S2", "เอาสองถ้วย");
-    for (const id of ["S1", "S2", "S2_DIRECT", "S3_TRANSFER", "S3_COD", "S4A", "S4B", "H1", "H2"]) {
+    const out = buildStepInjection(stepSheet(), PRE("เอาสองถ้วย"));
+    for (const id of ["S1", "S2", "S2_DIRECT", "S3_TRANSFER", "S3_COD", "X1", "S4A", "S4B", "X2", "H1", "H2"]) {
       expect(out, `สารบัญต้องมี ${id}`).toContain(id);
     }
-    expect(out).toContain("เข้าเมื่อ:"); // สารบัญมี "เข้าเมื่อ" ทุกประตู
   });
 
-  it("ปัจจุบัน S2 → เนื้อเต็ม S2 (หลักการนำพา + ห้ามทำ ไม่ถูกย่อ)", () => {
-    const out = buildStepInjection(stepSheet(), "S2", "เอาสองถ้วย");
-    expect(out).toContain("หลักการนำพา: สรุปยอดชวนตัดสินใจ");
-    expect(out).toContain("ห้ามทำ: ห้ามกดดัน");
+  it("🔴 ไม่ข้าม S3: ยังไม่มี items (quoted=false) → region มี quoted → S3 (สรุปยอด/quoted) เข้าถึงได้", () => {
+    const out = buildStepInjection(stepSheet(), PRE("เอา 3 ถ้วย"));
+    const full = fullIds(out);
+    // S2_CONFIRM (สรุปยอด) หรือ S3_* (quoted) ต้องมีเนื้อเต็มอย่างน้อยหนึ่ง — ไม่โดนข้าม
+    expect(full.some((id) => ["S2_CONFIRM", "S3_TRANSFER", "S3_COD"].includes(id)), "S3/สรุปยอด ต้องเต็ม").toBe(true);
+    // S4 (post-quote) ยังไม่เต็ม
+    expect(full).not.toContain("S4A");
+    expect(full).not.toContain("S4B");
   });
 
-  it("🔴 ปลายทาง S2 '→ S3' → เนื้อเต็ม S3_TRANSFER + S3_COD (prefix)", () => {
-    const out = buildStepInjection(stepSheet(), "S2", "เอาสองถ้วย");
-    // เนื้อเต็มมี block header [S3_TRANSFER] / [S3_COD]
-    expect(out).toContain("[S3_TRANSFER]");
-    expect(out).toContain("[S3_COD]");
+  it("🔴 มี items แล้ว (quoted=true) + COD → region S4 · S3_TRANSFER(quoted) ไม่เต็ม", () => {
+    const out = buildStepInjection(stepSheet(), { quoted: true, payment: "COD", userMessage: "โอเคค่ะ" });
+    const full = fullIds(out);
+    expect(full).toContain("S4A"); // awaiting_address (COD ต้องเก็บที่อยู่)
+    expect(full, "S3_TRANSFER = quoted stage นอก region").not.toContain("S3_TRANSFER");
+    expect(full, "S3_COD = quoted stage นอก region").not.toContain("S3_COD");
   });
 
-  it("เนื้อเต็มไม่ครบทุกประตู (selective ทำงาน — S4B ไม่เต็มตอนอยู่ S2)", () => {
-    const out = buildStepInjection(stepSheet(), "S2", "เอาสองถ้วย");
-    expect(out, "S4B ไม่ควรมี block เต็ม").not.toContain("[S4B]");
+  it("🔴 filter วิธีจ่าย: quoted=true payment=COD → S4C (โอน) ไม่เต็ม", () => {
+    const out = buildStepInjection(stepSheet(), { quoted: true, payment: "COD", userMessage: "โอเคค่ะ" });
+    expect(fullIds(out), "S4C ผูกโอน (รอสลิป) → ไม่ยัดตอน COD").not.toContain("S4C");
   });
 
-  it("🔴 handoff H1/H2 เต็ม(lean)เสมอ แม้ stage=S2 · มี ห้ามทำ+ตัวอย่าง · ไม่มี ความรู้สึก/ทำไมสำคัญ", () => {
-    const out = buildStepInjection(stepSheet(), "S2", "เอาสองถ้วย");
-    expect(out).toContain("[H1] เคลม (handoff)");
-    expect(out).toContain("ห้ามทำ: ห้ามตอบเอง ห้ามมั่ว"); // รั้ว ห้ามหาย
-    expect(out).toContain("ตัวอย่างคำตอบ: ขอตามแอดมินมาดูแลนะคะ");
-    // ตัดสมองการขายออกจาก handoff
-    expect(out, "handoff ไม่ยัด ความรู้สึกลูกค้า").not.toContain("ความรู้สึกลูกค้า: กังวลมาก");
-    expect(out, "handoff ไม่ยัด ทำไมสำคัญ").not.toContain("ทำไมสำคัญ: ความปลอดภัย");
+  it("🔴 X1 (crossover) เต็มเฉพาะพูดถึง + ไม่นับ cap · ปกติไม่เต็ม", () => {
+    const noMention = buildStepInjection(stepSheet(), PRE("เอา 3 ถ้วย"));
+    expect(fullIds(noMention), "ไม่พูดถึง = X1 ไม่เต็ม").not.toContain("X1");
+    const mention = buildStepInjection(stepSheet(), { quoted: true, payment: "COD", userMessage: "ขอเปลี่ยนเป็นโอน" });
+    expect(fullIds(mention), "พูดถึงเปลี่ยนวิธีจ่าย → X1 เต็ม").toContain("X1");
   });
 
-  it("กระโดด: อยู่ S2 พิมพ์ 'สั่ง 3 ถ้วยครับ' → entry match S2_DIRECT เต็ม", () => {
-    const out = buildStepInjection(stepSheet(), "S2", "สั่ง 3 ถ้วยครับ");
-    expect(out).toContain("[S2_DIRECT]");
+  it("🔴 handoff เต็มเฉพาะ entry-match (ไม่ใช่เต็มตลอด) · มี ห้ามทำ · ไม่มี ความรู้สึก/ทำไมสำคัญ", () => {
+    const noMatch = buildStepInjection(stepSheet(), PRE("เอา 3 ถ้วย"));
+    expect(fullIds(noMatch), "ไม่ match = H1 ไม่เต็ม").not.toContain("H1");
+    const match = buildStepInjection(stepSheet(), PRE("แพ้อาหาร กินได้มั้ย"));
+    expect(match).toContain("[H1] เคลม (handoff)");
+    expect(match).toContain("ห้ามทำ: ห้ามตอบเอง ห้ามมั่ว");
+    expect(match, "handoff ไม่ยัด ความรู้สึก").not.toContain("ความรู้สึกลูกค้า: กังวลมาก");
+    expect(match, "handoff ไม่ยัด ทำไมสำคัญ").not.toContain("ทำไมสำคัญ");
   });
 
-  it("🔴 กำกวม: stage เพี้ยน/ว่าง → ยัดเต็ม funnel ต้น ๆ (lead/qualified) ไม่โง่", () => {
-    const out = buildStepInjection(stepSheet(), "2", "อยากได้ข้อมูล"); // "2" = stage เก่า หา exact ไม่เจอ
-    expect(out).toContain("[S1]");
-    expect(out).toContain("[S2]");
+  it("🔴 cap 4: ปลายทางได้ slot ก่อนประตูร่วม stage · full ≤ 4 (ไม่นับ crossover/handoff)", () => {
+    const out = buildStepInjection(stepSheet(), PRE("ราคาเท่าไหร่"));
+    const full = fullIds(out).filter((id) => !["X1", "X2", "H1", "H2"].includes(id));
+    expect(full.length, "region full ≤ cap 4").toBeLessThanOrEqual(4);
+    // S2_CONFIRM (ปลายทางของ S2/S2_DIRECT) ต้องได้ slot ก่อนเพื่อน qualified
+    expect(full, "ปลายทาง S2_CONFIRM ต้องเต็ม").toContain("S2_CONFIRM");
   });
 
-  it("parse ปลายทางพลาด → fallback funnel_stage ถัดไป", () => {
+  it("🔴 fullSalesBlock: ตัด 'ทำไมสำคัญ' · คง หลักการ/ห้ามทำ · ตัวอย่างชุดแรก", () => {
     const rows = stepSheet();
-    // ทำให้ S2 ปลายทางพัง (ไม่มี step_id) → ต้อง fallback ไป awaiting_payment (S3_*)? No: S2=qualified → next=quoted
-    // ปรับ S2 nextWhen เป็นข้อความล้วน + เพิ่มประตู quoted
-    rows[2][STEP_HEADER.indexOf("ไปประตูถัดไปเมื่อ")] = "คุยรู้เรื่องแล้ว"; // S2 row (index 2 = header+S1+S2)
-    rows.splice(3, 0, step({ step_id: "SQ", funnel_stage: "quoted", ชื่อประตู: "เสนอราคา", เข้าเมื่อ: "ถามราคา", ไปประตูถัดไปเมื่อ: "→ S3" }));
-    const out = buildStepInjection(rows, "S2", "อะไรก็ได้");
-    expect(out, "fallback funnel ถัดไป (quoted) → SQ เต็ม").toContain("[SQ]");
+    rows[4][STEP_HEADER.indexOf("ตัวอย่างคำตอบ (บอลลูน)")] = "ชุดแรกค่ะ[[เว้น]]ชุดสองไม่ควรมา";
+    rows[4][STEP_HEADER.indexOf("ทำไมประตูนี้สำคัญ")] = "เหตุผลคนเทรน";
+    const out = buildStepInjection(rows, { quoted: false, payment: "", userMessage: "สรุปยอด" });
+    expect(out, "ต้องมีตัวอย่างชุดแรก").toContain("ตัวอย่างคำตอบ: ชุดแรกค่ะ");
+    expect(out, "ชุดสองต้องไม่มา").not.toContain("ชุดสองไม่ควรมา");
+    expect(out, "ตัด ทำไมสำคัญ ออกจากเนื้อเต็ม").not.toContain("ทำไมสำคัญ: เหตุผลคนเทรน");
   });
 
-  it("growth: เพิ่ม H3 (funnel_stage=handoff) → เต็ม(lean)อัตโนมัติ ไม่แตะโค้ด", () => {
+  it("growth: เพิ่มประตูเท่าตัว → region full ยังคุมที่ cap 4 (ไม่ unbounded)", () => {
     const rows = stepSheet();
-    rows.push(step({ step_id: "H3", funnel_stage: "handoff", ชื่อประตู: "โมโห", เข้าเมื่อ: "ลูกค้าโมโห", ห้ามทำ: "ห้ามเถียง", "ตัวอย่างคำตอบ (บอลลูน)": "ขอโทษค่ะ ตามแอดมินให้นะคะ" }));
-    const out = buildStepInjection(rows, "S2", "ปกติ");
-    expect(out).toContain("[H3] โมโห (handoff)");
-    expect(out).toContain("ห้ามทำ: ห้ามเถียง");
+    for (let i = 0; i < 8; i++) rows.push(step({ step_id: `EX${i}`, funnel_stage: "qualified", ชื่อประตู: `พิเศษ${i}`, เข้าเมื่อ: "x", ไปประตูถัดไปเมื่อ: "→ S2_CONFIRM" }));
+    const out = buildStepInjection(rows, PRE("ราคาเท่าไหร่"));
+    const full = fullIds(out).filter((id) => !["X1", "X2", "H1", "H2"].includes(id));
+    expect(full.length, "cap คุมไว้แม้ประตูเยอะ").toBeLessThanOrEqual(4);
+  });
+
+  it("🔴 funnel_stage ว่าง/ไม่รู้จัก → log เตือน (ไม่เงียบ)", () => {
+    const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const rows = stepSheet();
+    rows.push(step({ step_id: "BAD", funnel_stage: "", ชื่อประตู: "พัง", เข้าเมื่อ: "x" }));
+    buildStepInjection(rows, PRE("hi"));
+    const logged = spy.mock.calls.map((c) => String(c[0])).join(" ");
+    expect(logged).toContain("funnel_stage");
+    expect(logged).toContain("BAD");
+    spy.mockRestore();
   });
 
   it("header ไม่ครบ → fallback ยัดทั้งก้อน (ไม่ตาบอด)", () => {
-    const broken = [["step_id", "ชื่อประตู"], ["S1", "ทักทาย"]]; // ขาดคอลัมน์เพียบ
-    const out = buildStepInjection(broken, "S1", "hi");
+    const broken = [["step_id", "ชื่อประตู"], ["S1", "ทักทาย"]];
+    const out = buildStepInjection(broken, PRE("hi"));
     expect(out).toBe(tabToText(broken));
-  });
-
-  it("token: selective สั้นกว่ายัดทั้งก้อนชัดเจน (char-proxy)", () => {
-    const rows = stepSheet();
-    const whole = tabToText(rows);
-    const selective = buildStepInjection(rows, "S2", "เอาสองถ้วย");
-    // sheet เล็กในเทส แต่ selective ต้องไม่ยาวกว่า whole (มี index + เต็มบางส่วน)
-    expect(selective.length, "selective ต้องไม่ยัดเต็มทุกประตู").toBeLessThan(whole.length + 500);
-    // พิสูจน์เชิงโครงสร้าง: มีหัวข้อสารบัญ + เนื้อเต็ม
-    expect(selective).toContain("=== สารบัญประตูทั้งหมด");
-    expect(selective).toContain("=== ประตูที่เกี่ยวข้องตอนนี้");
   });
 });
 

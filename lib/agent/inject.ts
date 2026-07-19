@@ -1,5 +1,5 @@
 import { resolveColumns, cell, tabToText, ColumnMap } from "@/lib/sheets/columns";
-import { cleanCell } from "@/lib/sheets/clean";
+import { cleanCell, cleanHeader } from "@/lib/sheets/clean";
 
 /**
  * lib/agent/inject.ts — Selective injection (Part 4) แก้ราก MAX_TOKENS ที่ prompt ใหญ่
@@ -130,16 +130,21 @@ function indexLine(s: StepRow): string {
   return `${s.stepId} | ${s.name} | ${s.funnelStage} | เข้าเมื่อ: ${s.entryWhen} | ไปต่อ: ${s.nextWhen}`;
 }
 
+/** เอาบอลลูนแรกของ "ตัวอย่างคำตอบ" (คั่นด้วย [[เว้น]]/[[แยก]]) — ลด token คงตัวอย่าง 1 ชุด */
+function firstBubble(example: string): string {
+  return example.split(/\[\[เว้น\]\]|\[\[แยก\]\]/)[0].trim();
+}
+
 function fullSalesBlock(s: StepRow): string {
+  // 🔴 ตัด "ทำไมสำคัญ" (meta สำหรับคนเทรน) · คง ความรู้สึก/หลักการ/ห้ามทำ (สมองการขาย) · ตัวอย่างชุดแรก
   const parts = [
     `[${s.stepId}] ${s.name} (funnel: ${s.funnelStage})`,
     `เข้าเมื่อ: ${s.entryWhen}`,
     s.feeling && `ความรู้สึกลูกค้า: ${s.feeling}`,
-    s.why && `ทำไมสำคัญ: ${s.why}`,
     s.principle && `หลักการนำพา: ${s.principle}`,
     s.dont && `ห้ามทำ: ${s.dont}`,
     s.collect && `ต้องเก็บข้อมูล: ${s.collect}`,
-    s.example && `ตัวอย่างคำตอบ: ${s.example}`,
+    s.example && `ตัวอย่างคำตอบ: ${firstBubble(s.example)}`,
     s.closing && `ประโยคปิดท้าย: ${s.closing}`,
     `ไปต่อ: ${s.nextWhen}`,
   ];
@@ -157,44 +162,98 @@ function leanHandoffBlock(s: StepRow): string {
   return parts.filter(Boolean).join("\n");
 }
 
+/** region routing (D-18): โค้ดตัดสิน funnel จาก pending ไม่พึ่ง AI stage */
+const PRE_QUOTE_REGION = ["lead", "qualified", "quoted"]; // ยังไม่สรุปยอด (items ยังไม่เข้า) — S3 สรุปยอดเข้าถึงได้
+const POST_QUOTE_REGION = ["awaiting_payment", "awaiting_address", "won"]; // สรุปยอดแล้ว (มี items) — เก็บของ/ปิดจบ
+const FULL_CAP = 4;
+
+export interface StepInjectionInput {
+  /** pending_order (ก่อน merge เทิร์นนี้) มี items แล้วหรือยัง = "สรุปยอดแล้ว" */
+  quoted: boolean;
+  /** ช่องทางชำระที่เลือกแล้วใน pending ("COD"/"โอน"/"") — filter ประตูอีกฝั่งออก */
+  payment: string;
+  userMessage: string;
+}
+
+/** ประตูนี้ผูกกับวิธีจ่ายไหน — อ่านจาก "เข้าเมื่อ" (data-driven ไม่ hardcode step_id) */
+function gatePayment(s: StepRow): "COD" | "โอน" | "" {
+  const cod = /COD|ปลายทาง/i.test(s.entryWhen);
+  const transfer = /โอน/.test(s.entryWhen);
+  if (cod && !transfer) return "COD";
+  if (transfer && !cod) return "โอน";
+  return "";
+}
+
 /**
- * ประกอบเนื้อ Step ที่จะยัดเข้า prompt สำหรับเทิร์นนี้
- * @param currentStage stage ที่เก็บไว้ (step_id) — ถ้าหา exact ไม่เจอ = กำกวม → ยัดมากขึ้น
+ * ประกอบเนื้อ Step สำหรับเทิร์นนี้ — region routing จาก pending (โค้ด) ไม่ใช่ stage ที่ AI ตอบ
+ *  - สารบัญ = ทุกประตูเสมอ · เนื้อเต็ม = region ปัจจุบัน (cap 4 ตาม priority)
+ *  - handoff + ประตูข้าม (crossover: ไม่มีใครชี้มา · ไม่ใช่ lead) = เต็มเฉพาะ entry-match · ไม่นับ cap
  */
-export function buildStepInjection(rows: string[][], currentStage: string, userMessage: string): string {
+export function buildStepInjection(rows: string[][], input: StepInjectionInput): string {
   const parsed = parseStepRows(rows);
   if (!parsed) {
     const whole = tabToText(rows);
-    // 🔴 fallback = selective ไม่ทำงาน (header ไม่ match) → prompt ไม่ลด · resolveColumns log missing/available แล้ว
     console.warn(JSON.stringify({ scope: "inject", tab: "CSV_Step", mode: "fallback-whole", chars: whole.length }));
     return whole;
   }
   const { steps, stepIds } = parsed;
-  const cur = steps.find((s) => s.stepId === (currentStage ?? "").trim());
+  const { quoted, payment, userMessage } = input;
 
-  const fullIds = new Set<string>();
-  if (cur) {
-    fullIds.add(cur.stepId);
-    const dests = resolveDestinations(cur.nextWhen, stepIds);
-    if (dests.size === 0) {
-      const next = nextFunnelStage(cur.funnelStage); // parse ปลายทางพลาด → funnel ถัดไป
-      if (next) for (const id of gatesInStages(steps, [next])) fullIds.add(id);
-    } else {
-      for (const id of dests) fullIds.add(id);
-    }
-  } else {
-    // กำกวม: ไม่รู้ลูกค้าอยู่ประตูไหน → ยัดเต็ม funnel ต้น ๆ (บอทจับทางเอง)
-    for (const id of gatesInStages(steps, AMBIGUOUS_STAGES)) fullIds.add(id);
+  // funnel_stage ว่าง/ไม่รู้จัก → log เตือน (region routing พึ่ง funnel_stage · ว่าง = ประตูไม่เข้า region ไหน = พังเงียบ)
+  const validStages = new Set([...FUNNEL_ORDER, HANDOFF]);
+  const badStage = steps.filter((s) => !validStages.has(s.funnelStage));
+  if (badStage.length > 0) {
+    console.warn(JSON.stringify({ scope: "inject", warning: "funnel_stage ว่าง/ไม่รู้จัก — ประตูจะไม่เห็นเนื้อเต็มตลอดกาล", stepIds: badStage.map((s) => s.stepId) }));
   }
-  // entry match (bonus) — ประตูขายที่ตัวอย่าง "เข้าเมื่อ" ตรงข้อความลูกค้า
-  for (const s of steps) {
-    if (s.funnelStage !== HANDOFF && matchesEntry(s.entryWhen, userMessage)) fullIds.add(s.stepId);
-  }
+
+  // ประตูข้าม (crossover) = ไม่มีประตูอื่นชี้มาใน "ไปประตูถัดไปเมื่อ" และไม่ใช่ lead (ทางเข้าปกติ)
+  const incoming = new Set<string>();
+  for (const s of steps) for (const d of resolveDestinations(s.nextWhen, stepIds)) incoming.add(d);
+  const isCrossover = (s: StepRow) => s.funnelStage !== HANDOFF && s.funnelStage !== FUNNEL_ORDER[0] && !incoming.has(s.stepId);
+
+  const region = quoted ? POST_QUOTE_REGION : PRE_QUOTE_REGION;
+  const anchor = quoted ? (payment === "" ? "awaiting_payment" : "awaiting_address") : "qualified";
+  const anchorIdx = FUNNEL_ORDER.indexOf(anchor);
+
+  const regionGates = steps.filter((s) => region.includes(s.funnelStage) && !isCrossover(s));
+
+  // entry-match ใน region · ถ้า match > 2 ประตู = คำกว้างเกิน ถือว่าไม่ match (กันบาน)
+  const matched = new Set(regionGates.filter((s) => matchesEntry(s.entryWhen, userMessage)).map((s) => s.stepId));
+  const entryActive = matched.size <= 2 ? matched : new Set<string>();
+
+  // ปลายทางของประตูใน region (priority #2)
+  const regionDest = new Set<string>();
+  for (const s of regionGates) for (const d of resolveDestinations(s.nextWhen, stepIds)) regionDest.add(d);
+
+  // filter วิธีจ่าย (C): ประตูผูกวิธีจ่าย "อีกฝั่ง" ตัดออก เว้นแต่ลูกค้าพูดถึง (entry-match = เปลี่ยนใจ)
+  const candidates = regionGates.filter((s) => {
+    const gp = gatePayment(s);
+    const otherPayment = payment !== "" && gp !== "" && gp !== payment;
+    return !(otherPayment && !entryActive.has(s.stepId));
+  });
+
+  // priority (น้อย = สำคัญ): 0 match วิธีจ่ายเป๊ะ · 1 ปลายทาง · 2 entry-match · 3 อื่น (proximity ตัดสิน)
+  const score = (s: StepRow): number => {
+    if (payment !== "" && gatePayment(s) === payment) return 0;
+    if (regionDest.has(s.stepId)) return 1;
+    if (entryActive.has(s.stepId)) return 2;
+    return 3;
+  };
+  const proximity = (s: StepRow) => Math.abs(FUNNEL_ORDER.indexOf(s.funnelStage) - anchorIdx);
+  const ranked = [...candidates].sort(
+    (a, b) => score(a) - score(b) || proximity(a) - proximity(b) || FUNNEL_ORDER.indexOf(a.funnelStage) - FUNNEL_ORDER.indexOf(b.funnelStage),
+  );
+  const fullRegionIds = new Set(ranked.slice(0, FULL_CAP).map((s) => s.stepId));
 
   const fullBlocks: string[] = [];
   for (const s of steps) {
-    if (s.funnelStage === HANDOFF) fullBlocks.push(leanHandoffBlock(s)); // เสมอ (lean)
-    else if (fullIds.has(s.stepId)) fullBlocks.push(fullSalesBlock(s));
+    if (s.funnelStage === HANDOFF) {
+      if (matchesEntry(s.entryWhen, userMessage)) fullBlocks.push(leanHandoffBlock(s)); // เต็มเฉพาะ entry-match · ไม่นับ cap
+    } else if (isCrossover(s)) {
+      if (matchesEntry(s.entryWhen, userMessage)) fullBlocks.push(fullSalesBlock(s)); // ประตูข้าม: เต็มเฉพาะพูดถึง · ไม่นับ cap
+    } else if (fullRegionIds.has(s.stepId)) {
+      fullBlocks.push(fullSalesBlock(s));
+    }
   }
 
   return [
@@ -208,14 +267,25 @@ export function buildStepInjection(rows: string[][], currentStage: string, userM
 
 // ---- Catalog (สินค้า + ราคาโปร) ----
 
+/** เก็บเฉพาะคอลัมน์สินค้าที่ใช้ตอนขาย · ตัด ขนาด/อย./ส่วนประกอบ/สารก่อภูมิแพ้/วิธีเก็บ/อายุ/รูป (D-18) */
+const CATALOG_PRODUCT_COLS = ["sku", "ชื่อสินค้า", "หน่วย", "ราคาปกติ_ต่อหน่วย", "สถานะ"];
+
+/** project ตารางเหลือเฉพาะคอลัมน์ที่ระบุ (จับหัวด้วย cleanHeader · ไม่เจอ = ข้าม) */
+function projectColumns(rows: string[][], keep: string[]): string[][] {
+  if (rows.length === 0) return rows;
+  const header = rows[0].map(cleanHeader);
+  const idxs = keep.map((k) => header.indexOf(k)).filter((i) => i >= 0);
+  if (idxs.length === 0) return rows; // หัวไม่ตรงเลย = อย่าตัดมั่ว ยัดทั้งก้อน
+  return rows.map((r) => idxs.map((i) => r[i] ?? ""));
+}
+
 /**
- * ยัดสินค้า+ราคาโปรเข้า prompt "เสมอ" (ตารางเล็ก) — บอทใช้ราคานี้เท่านั้น ห้ามแต่งเอง (C6)
- * ใช้ tabToText ทั้งก้อน (ไม่ต้อง header-driven เพราะบอทอ่านตารางเอง + โครงคอลัมน์ยังไม่ล็อก)
- * 🔴 หมายเหตุ: การ "คำนวณยอดจากจำนวน" ให้เป็นเลขสำเร็จรูป (C6 เต็มรูป) = Step 3 (pricing.ts)
- *    ตอนนี้ยัดตารางโปรให้บอทเปิดดูราคาตรง ๆ (ดีกว่าบอทเดา · ราคาตรงชีต)
+ * ยัดสินค้า+ราคาโปรเข้า prompt "เสมอ" — บอทใช้ราคานี้เท่านั้น ห้ามแต่งเอง (C6)
+ * 🔴 D-18: สินค้าเหลือคอลัมน์ที่ใช้ตอนขาย (ตัดวิธีเก็บ/ส่วนประกอบ/รูป ฯลฯ ลด token) · โปรยัดครบ (ทุกคอลัมน์ราคา)
+ *    รายละเอียดเชิงลึก (ส่วนประกอบ/แพ้อาหาร) = ดึงเข้าเฉพาะเทิร์นที่ถามจริง (งานถัดไป)
  */
 export function buildCatalogInjection(productsRows: string[][], promoRows: string[][]): string {
-  const products = productsRows.length > 0 ? tabToText(productsRows) : "(ไม่มีข้อมูลสินค้า)";
+  const products = productsRows.length > 0 ? tabToText(projectColumns(productsRows, CATALOG_PRODUCT_COLS)) : "(ไม่มีข้อมูลสินค้า)";
   const promo = promoRows.length > 0 ? tabToText(promoRows) : "(ไม่มีข้อมูลโปรโมชั่น)";
   return [
     "สินค้า:",

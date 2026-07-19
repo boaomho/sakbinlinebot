@@ -49,7 +49,7 @@ tests/
 
 **lib/sheets/loader.ts** — `loadBotLibrary(): Promise<BotLibrary|null>` batchGet 8 แท็บ + cache · `BOTLIB_TABS`
 **lib/sheets/columns.ts** — `resolveColumns(header, required, label) → map|null` (all-or-nothing) · `cell` · `tabToText` · `rowFromValues` · `columnLetter`
-**lib/agent/inject.ts** — `buildStepInjection(rows, stage, msg)` สารบัญทุกประตู+เต็มที่เกี่ยว · `buildFaqInjection(rows, msg)` · `buildCatalogInjection(products, promo)` · `resolveDestinations(nextWhen, ids)`
+**lib/agent/inject.ts** — `buildStepInjection(rows, {quoted,payment,userMessage})` **region routing (D-19)**: โค้ดตัดสิน funnel จาก pending (quoted=มี items → S4 · ไม่มี → S1-S3) ไม่พึ่ง AI stage · สารบัญทุกประตู + เต็ม cap 4 (priority: match วิธีจ่าย>ปลายทาง>entry-match>proximity) · handoff+crossover(ประตูข้าม ไม่มีใครชี้มา) เต็มเฉพาะ entry-match ไม่นับ cap · `buildCatalogInjection` (สินค้าเหลือคอลัมน์ขาย) · `buildFaqInjection` · `resolveDestinations`
 **lib/orders.ts** — `appendOrderRow(input)` · `listPendingOrders()` · `markOrderSent(row, num)` · `ORDERS_HEADER` (24 คอล A–X, header-driven)
 **lib/gemini.ts** — `runSalesTurn(GeminiTurnInput{...,pass2Note?}) → GeminiTurnOutput{reply, stage, tagsAdd, handoff, orderData:OrderDataFromAI{ชื่อ?,ที่อยู่?,เบอร์?,items?}, needsPriceQuote, itemsSource:"customer"|"bot_proposal", paymentMethod, orderEditRequest, imageIntent, imageNote, degraded}`
 **lib/config.ts** — `getConfig()` · `resolveFeatureSwitches(config) → FeatureSwitches` · `formatConfigForPrompt`

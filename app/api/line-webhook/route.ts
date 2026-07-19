@@ -425,12 +425,15 @@ async function processMessage(
 
   const previousStage = customer?.stage ?? null;
 
-  // Step 1 · Part 4: selective injection — ลด prompt (แก้ราก MAX_TOKENS) + คงความฉลาดเห็นทุกประตู
-  // Step: สารบัญทุกประตูเสมอ + เนื้อเต็มเฉพาะ ปัจจุบัน/ปลายทาง/entry-match/handoff(lean)
+  // D-18 region injection: โค้ดตัดสิน funnel จาก pending (ก่อน merge) ไม่พึ่ง stage ที่ AI ตอบ
+  //   quoted = pending มี items แล้ว (= สรุปยอดไปแล้ว → S4) · ยังไม่มี = S1-S3 (สรุปยอดเข้าถึงได้)
   // FAQ: สารบัญทุกข้อ + เต็มเฉพาะที่ keyword ตรง
   const lib = await loadBotLibrary();
+  const preItems = normalizeItems(customer?.pendingOrder.items);
   const stepTextRaw =
-    lib && lib.CSV_Step.length > 0 ? buildStepInjection(lib.CSV_Step, previousStage ?? "", userMessage) : "(ไม่มีข้อมูลสเต็ป)";
+    lib && lib.CSV_Step.length > 0
+      ? buildStepInjection(lib.CSV_Step, { quoted: preItems.length > 0, payment: customer?.pendingOrder["การชำระเงิน"] ?? "", userMessage })
+      : "(ไม่มีข้อมูลสเต็ป)";
 
   // D-15 pre-resolve: ถ้า pending มี items อยู่แล้ว (จากเทิร์นก่อน) → คำนวณยอด แล้วเติม
   // {สรุปรายการ}/{ยอดรวม}/{การชำระเงิน} ในสเต็ป → บอทพูดยอดได้ในเทิร์นเดียว (ไม่ต้อง pass 2)
