@@ -63,7 +63,7 @@ import {
 } from "@/lib/admin-commands";
 import { uploadSlip, getSlipSignedUrl } from "@/lib/blob";
 import { appendOrderRow } from "@/lib/orders";
-import { evaluateOrderGate, buildNewOrderAdminText, buildBrokenOrderAdminText, itemsEqual, normalizeItems, PendingOrder } from "@/lib/core/orders";
+import { evaluateOrderGate, buildNewOrderAdminText, buildBrokenOrderAdminText, buildPriceStuckAdminText, itemsEqual, normalizeItems, PendingOrder } from "@/lib/core/orders";
 import { resolveRuntimeVars, formatLinesForSheet, formatOrderSummary, buildProductNameMap, resolveAiItems, RuntimeVarContext, PriceResult } from "@/lib/core/pricing";
 import { computeQuote, hasUnresolvedPricingVars, extractBahtNumbers, extractPriceNumbers } from "@/lib/agent/quote";
 
@@ -101,7 +101,12 @@ function itemsToNames(items: PendingOrder["items"], nameMap: Map<string, string>
   return norm.length > 0 ? norm.map((it) => `${nameMap.get(it.sku) ?? it.sku} x${it.qty}`).join(" · ") : "(ไม่มี)";
 }
 
-function buildStateText(customer: CustomerState | null): string {
+/**
+ * @param priceStuck true = เทิร์นนี้ pending มี items แต่ระบบคำนวณยอดไม่ได้ (config ราคาพัง/เกินเพดาน)
+ *   → บอกสถานะตรง ๆ ว่า "ยังบันทึกไม่ได้ รอแอดมินตรวจยอด" เพื่อให้ AI ไม่สัญญาว่าบันทึก/แจ้งวันส่ง
+ *   (แก้ที่ state ไม่ใช่ guard — โค้ดไม่บล็อกคำพูด แค่บอกความจริงให้ AI ตัดสินเอง · ท่ารับมือเทรนในชีต Step ได้)
+ */
+function buildStateText(customer: CustomerState | null, priceStuck = false): string {
   if (!customer) {
     return "(ไม่มีความจำลูกค้า ระบบความจำปิดอยู่ ถือว่าเป็นการเริ่มบทสนทนาใหม่ทุกครั้ง)";
   }
@@ -113,14 +118,20 @@ function buildStateText(customer: CustomerState | null): string {
   }
   const normItems = normalizeItems(po.items);
   if (normItems.length > 0) pendingKeys.push(`รายการ=${normItems.map((it) => `${it.sku} x${it.qty}`).join(", ")}`);
-  return [
+  const lines = [
     `ประตูปัจจุบัน: ${customer.stage ?? "(ยังไม่เคยเข้าประตูไหน)"}`,
     `แท็ก: ${customer.tags.length > 0 ? customer.tags.join(", ") : "(ยังไม่มีแท็ก)"}`,
     `สถานะ: ${customer.isReturning ? "ลูกค้าเก่า (เคยคุยมาก่อน)" : "ลูกค้าใหม่ (ทักครั้งแรก)"}`,
     `ข้อมูลออเดอร์ที่เก็บแล้ว: ${pendingKeys.length ? pendingKeys.join(", ") : "(ยังไม่มี)"}`,
     `มีสลิปที่ยังไม่ผูกออเดอร์: ${customer.lastSlipPathname ? "มี" : "ไม่มี"}`,
     `มีออเดอร์บันทึกลงระบบแล้ว: ${customer.hasWrittenOrder ? "ใช่ (ถ้าลูกค้าขอแก้ออเดอร์เดิม ให้ตั้ง order_edit_request=true)" : "ยัง"}`,
-  ].join("\n");
+  ];
+  if (priceStuck) {
+    lines.push(
+      "⚠️ สถานะการบันทึกออเดอร์นี้: ยังบันทึกไม่ได้ — ระบบคำนวณยอดไม่สำเร็จ กำลังให้แอดมินตรวจยอด · ยังไม่ถือว่าสั่งซื้อสำเร็จ อย่าเพิ่งยืนยันการบันทึกหรือแจ้งวันจัดส่ง บอกลูกค้าตามจริงว่ากำลังให้ทีมงานตรวจยอดแล้วจะรีบแจ้งกลับ",
+    );
+  }
+  return lines.join("\n");
 }
 
 async function pushHandoffNotice(
@@ -354,15 +365,18 @@ async function runOrderGate(
   // ---- ยังไม่ครบ → ติดแท็กรอ (D-11: ไม่ push ตอนจัดส่งยังไม่ครบ) ----
   await reconcileWaitTags(userId, gate.waitTag);
 
-  // ปัญหาที่ต้องแจ้งแอดมิน (กัน spam ด้วย flag เดียว):
+  // ปัญหาที่ต้องแจ้งแอดมิน (กัน spam ด้วย flag เดียว · แจ้ง "ตอนสรุปครบ" ไม่ใช่ระหว่างทาง):
   //  - D-13 brokenOrder: จัดส่งครบ แต่ AI ไม่ extract items
-  //  - price ล้ม (error/needsHandoff) ทั้งที่มี items = ราคาคำนวณไม่ได้/เกินเพดาน (กฎ j/k)
-  const priceStuck = normItems.length > 0 && price !== null && (price.error !== null || price.needsHandoff);
-  if ((gate.brokenOrder || priceStuck) && !customer.paidNoAddressNotified) {
+  //  - price ล้ม ทั้งที่ "ข้อมูลลูกค้าครบพร้อมปิดยกเว้นราคา" = ราคาคำนวณไม่ได้/เกินเพดาน (กฎ j/k)
+  //    🔴 ใช้ readyExceptPrice (ไม่ใช่แค่ items>0) — กันแจ้งเร็วตอนยังไม่มีที่อยู่แล้วเผา flag
+  //       จนตอนข้อมูลครบจริงไม่ได้แจ้ง (แอดมินเลยไม่มีข้อมูลติดต่อลูกค้า)
+  const priceFailed = price !== null && (price.error !== null || price.needsHandoff);
+  const priceStuckReady = gate.readyExceptPrice && priceFailed;
+  if ((gate.brokenOrder || priceStuckReady) && !customer.paidNoAddressNotified) {
     if (adminGroupId) {
       const name = await getProfileName(userId);
-      const text = priceStuck
-        ? `⚠️ ออเดอร์ต้องตรวจราคา (${price?.error ?? "เกินเพดาน/ต้องมีคนดู"})\nรายการ: ${itemsToNames(pending.items, nameMap)}\n———\nLineOA: ${name}`
+      const text = priceStuckReady
+        ? buildPriceStuckAdminText(pending, price?.error ?? "เกินเพดาน/ต้องมีคนดู", name, itemsToNames(pending.items, nameMap))
         : buildBrokenOrderAdminText(pending, gate.missing, name);
       await pushRawText(adminGroupId, text);
     }
@@ -442,12 +456,14 @@ async function processMessage(
   const preQuote = ordersActive && customer ? computeQuote(customer.pendingOrder, lib, config, nowDate) : null;
   const preVars: RuntimeVarContext = preQuote?.vars ?? EMPTY_VARS;
   const stepText = resolveRuntimeVars(stepTextRaw, preVars);
+  // มี items แล้วแต่ราคาคำนวณไม่ได้ (config พัง/เกินเพดาน) → บอก AI ว่ายังบันทึกไม่ได้ (กันสัญญาวันส่งเท็จ)
+  const preOrderPriceStuck = preQuote !== null && !preQuote.ok;
 
   const faqText = lib && lib.CSV_FAQ.length > 0 ? buildFaqInjection(lib.CSV_FAQ, userMessage) : "(ไม่มีข้อมูล FAQ)";
   // ยัดสินค้า+ราคาโปรเสมอ (บอทห้ามแต่งราคา C6) — CSV_Products/CSV_Promo ไม่เคยถูกยัดมาก่อน
   const catalogText = lib ? buildCatalogInjection(lib.CSV_Products, lib.CSV_Promo) : "(ไม่มีข้อมูลสินค้า)";
   const configText = formatConfigForPrompt(config);
-  const stateText = buildStateText(customer);
+  const stateText = buildStateText(customer, preOrderPriceStuck);
 
   let historyText = "(ระบบความจำปิดอยู่)";
   if (switches.memory) {

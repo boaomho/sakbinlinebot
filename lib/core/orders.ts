@@ -119,6 +119,12 @@ export interface OrderGateResult {
    * → ควรแจ้งแอดมินให้ช่วย (ไม่ใช่เคส D-11 early ที่ยังไม่มีที่อยู่)
    */
   brokenOrder: boolean;
+  /**
+   * "พร้อมปิดทุกอย่างยกเว้นราคา" = complete ถ้าสมมติ priceOk=true (ชื่อ+ที่อยู่+เบอร์+items+วิธีจ่าย
+   * [+สลิปถ้าโอน] ครบ) — ใช้ตัดสินว่าจะแจ้งแอดมิน "ราคาคำนวณไม่ได้ พร้อมข้อมูลลูกค้าเต็ม" ตอนไหน
+   * 🔴 กันเคสแจ้งเร็ว (มีแค่ items ยังไม่มีที่อยู่) แล้วเผา flag จนตอนข้อมูลครบจริงไม่ได้แจ้งซ้ำ
+   */
+  readyExceptPrice: boolean;
 }
 
 /**
@@ -161,6 +167,10 @@ export function evaluateOrderGate({ pending, slipPresent, priceOk }: OrderGateIn
   // (กรณี items มีแต่ pricing ล้ม → ผู้เรียกจัดการแยกจาก priceResult.error/needsHandoff โดยตรง)
   const brokenOrder = !complete && payment !== "" && shipping && !itemsOk;
 
+  // พร้อมปิดทุกอย่างยกเว้นราคา = complete โดยสมมติ priceOk=true (มี items จริง + จัดส่ง/วิธีจ่าย/สลิปครบ)
+  const readyExceptPrice =
+    (payment === "COD" && shipping && itemsOk) || (payment === "โอน" && shipping && itemsOk && slipPresent);
+
   let waitTag: WaitTag = null;
   if (!complete) {
     if (payment === "โอน" && addr && !slipPresent) {
@@ -174,7 +184,7 @@ export function evaluateOrderGate({ pending, slipPresent, priceOk }: OrderGateIn
     }
   }
 
-  return { payment, complete, waitTag, missing, brokenOrder };
+  return { payment, complete, waitTag, missing, brokenOrder, readyExceptPrice };
 }
 
 /** สรุป items ที่คนอ่านได้จาก pending (เช่น "NPT-10G x4 · NPT-20G x2") — ใช้ในข้อความแอดมินตอน pricing ยังคำนวณไม่ได้ */
@@ -193,6 +203,31 @@ export function buildBrokenOrderAdminText(pending: PendingOrder, missing: string
     `เบอร์: ${sanitizePhone(pending["เบอร์"])}`,
     `ที่อยู่: ${pending["ที่อยู่"] ?? ""}`,
     `รายการ: ${itemsToText(pending.items)}`,
+    "———",
+    `LineOA: ${lineName}`,
+  ].join("\n");
+}
+
+/**
+ * ข้อความแจ้งแอดมินเมื่อ "ข้อมูลลูกค้าครบแต่ราคาคำนวณไม่ได้" (เกินเพดาน/config ราคาพัง)
+ * → แอดมินได้ข้อมูลติดต่อเต็มเพื่อยืนยันยอดแล้วปิดออเดอร์เอง (เหมือน brokenOrder แต่คนละสาเหตุ)
+ * @param itemsText สรุปรายการที่ผู้เรียก resolve ชื่อสินค้าแล้ว (route มี nameMap)
+ */
+export function buildPriceStuckAdminText(
+  pending: PendingOrder,
+  priceError: string,
+  lineName: string,
+  itemsText: string,
+): string {
+  return [
+    `⚠️ ออเดอร์รอตรวจยอด (ระบบคำนวณราคาไม่ได้: ${priceError})`,
+    "ข้อมูลลูกค้าครบแล้ว — ยอดยังไม่ถูกบันทึก รอแอดมินยืนยันยอดแล้วปิดออเดอร์เอง",
+    "———",
+    `ชื่อ: ${pending["ชื่อ"] ?? ""}`,
+    `เบอร์: ${sanitizePhone(pending["เบอร์"])}`,
+    `ที่อยู่: ${pending["ที่อยู่"] ?? ""}`,
+    `การชำระเงิน: ${(pending["การชำระเงิน"] ?? "").trim()}`,
+    `รายการ: ${itemsText}`,
     "———",
     `LineOA: ${lineName}`,
   ].join("\n");

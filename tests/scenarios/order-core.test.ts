@@ -4,6 +4,7 @@ import {
   nameComplete,
   addressComplete,
   evaluateOrderGate,
+  buildPriceStuckAdminText,
 } from "@/lib/core/orders";
 
 /**
@@ -132,5 +133,60 @@ describe("evaluateOrderGate (D-15: items + priceOk)", () => {
     expect(g.complete).toBe(false);
     expect(g.missing).toContain("ชื่อ");
     expect(g.missing).toContain("เบอร์");
+  });
+});
+
+describe("🔴 readyExceptPrice — แจ้งแอดมิน 'ราคาคำนวณไม่ได้' ตอนข้อมูลครบ ไม่ใช่ระหว่างทาง", () => {
+  const full = {
+    ชื่อ: "สมหญิง ใจดี",
+    ที่อยู่: "123/45 ม.6 บางพลี สมุทรปราการ 10540",
+    เบอร์: "0811122334",
+    items: [{ sku: "NPT-10G", qty: 3 }],
+  };
+
+  it("COD + ข้อมูลลูกค้าครบ + items (priceOk=false) → readyExceptPrice=true (แจ้งแอดมินพร้อมข้อมูลเต็ม)", () => {
+    const g = evaluateOrderGate({ pending: { ...full, การชำระเงิน: "COD" }, slipPresent: false, priceOk: false });
+    expect(g.readyExceptPrice).toBe(true);
+    expect(g.complete).toBe(false); // ราคายังไม่ผ่าน = ยังไม่เขียนชีต
+  });
+
+  it("🔴 เทิร์นแรก: มีแค่ items ยังไม่มีที่อยู่/เบอร์ → readyExceptPrice=false (ห้ามแจ้งเร็ว-เผา flag)", () => {
+    const g = evaluateOrderGate({ pending: { items: full.items, การชำระเงิน: "COD" }, slipPresent: false, priceOk: false });
+    expect(g.readyExceptPrice, "ข้อมูลติดต่อยังไม่ครบ = ยังไม่ต้องแจ้ง").toBe(false);
+  });
+
+  it("โอน: ครบทุกอย่าง + สลิป → true · ไม่มีสลิป → false", () => {
+    const withSlip = evaluateOrderGate({ pending: { ...full, การชำระเงิน: "โอน" }, slipPresent: true, priceOk: false });
+    const noSlip = evaluateOrderGate({ pending: { ...full, การชำระเงิน: "โอน" }, slipPresent: false, priceOk: false });
+    expect(withSlip.readyExceptPrice).toBe(true);
+    expect(noSlip.readyExceptPrice).toBe(false);
+  });
+
+  it("ยังไม่เลือกวิธีจ่าย → false", () => {
+    const g = evaluateOrderGate({ pending: { ...full }, slipPresent: false, priceOk: false });
+    expect(g.readyExceptPrice).toBe(false);
+  });
+
+  it("ไม่มี items (brokenOrder แทน) → readyExceptPrice=false", () => {
+    const g = evaluateOrderGate({ pending: { ชื่อ: "บูม", ที่อยู่: "1 ถ.เจริญ", เบอร์: "0811122334", การชำระเงิน: "COD" }, slipPresent: false, priceOk: false });
+    expect(g.readyExceptPrice).toBe(false);
+    expect(g.brokenOrder).toBe(true); // คนละเคส — ไม่มี items
+  });
+});
+
+describe("buildPriceStuckAdminText — แอดมินได้ข้อมูลติดต่อลูกค้าเต็ม", () => {
+  it("มี ชื่อ/เบอร์/ที่อยู่/รายการ + เหตุผลราคา + บอกว่ายังไม่บันทึก", () => {
+    const text = buildPriceStuckAdminText(
+      { ชื่อ: "สมหญิง ใจดี", เบอร์: "081-112 2334", ที่อยู่: "123/45 ม.6 สมุทรปราการ", การชำระเงิน: "COD" },
+      "เกินเพดานจำนวน",
+      "LINE สมหญิง",
+      "น้ำพริกปลาทู x12",
+    );
+    expect(text).toContain("สมหญิง ใจดี");
+    expect(text).toContain("0811122334"); // sanitize เบอร์
+    expect(text).toContain("123/45 ม.6 สมุทรปราการ");
+    expect(text).toContain("น้ำพริกปลาทู x12");
+    expect(text).toContain("เกินเพดานจำนวน");
+    expect(text).toMatch(/ยังไม่ถูกบันทึก|รอแอดมิน/);
   });
 });
