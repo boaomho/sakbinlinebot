@@ -55,7 +55,7 @@ describe("prompt/system.ts — นิยาม 'ครบ' ต้องไม่
  * 🔴 D-15 guard: AI ต้องไม่คิดเลข/ส่ง "ยอด" อีก (ยอดคิดโดย lib/core/pricing)
  * ถ้ากฎพวกนี้กลับมา = โมเดลจะมั่วยอดเหมือนบั๊กเดิม
  */
-describe("prompt/system.ts — order_data = items · AI ห้ามคิดยอด (D-15)", () => {
+describe("prompt/system.ts — order_data = items · ราคายึดตาราง (D-18)", () => {
   const src = readFileSync(resolve(process.cwd(), "prompt/system.ts"), "utf8");
 
   it("order_data JSON example ต้องเป็น items ไม่ใช่ สินค้า/จำนวน/ยอด(ข้อความ)", () => {
@@ -66,11 +66,13 @@ describe("prompt/system.ts — order_data = items · AI ห้ามคิดย
     expect(example, "order_data example ต้องไม่มีช่อง สินค้า(ข้อความ)").not.toContain('"สินค้า"');
   });
 
-  it("ต้องมีกฎบอก AI ว่า 'ระบบเติมยอดให้ ห้ามคิดเลข' (โครงสร้างบังคับ C6)", () => {
-    expect(src, "ต้องมีกฎห้าม AI คิด/เดายอด").toMatch(/ระบบเติมให้แล้ว|ระบบคิดให้|ห้ามคิดเลข|ห้ามเดายอด/);
+  it("🔴 D-18: ต้องไม่มีกฎ 2-pass เหลือค้าง (needs_price_quote/items_source/คิดยอดสักครู่)", () => {
+    expect(src, "needs_price_quote ต้องถูกลบ").not.toContain("needs_price_quote");
+    expect(src, "items_source ต้องถูกลบ").not.toContain("items_source");
+    expect(src, "บอลลูน 'คิดยอด' ต้องถูกลบ").not.toContain("คิดยอดให้สักครู่");
   });
 
-  it("needs_price_quote ต้องถูกอธิบายใน prompt (2-pass signal)", () => {
-    expect(src).toContain("needs_price_quote");
+  it("ยังต้องมีกฎ 'ราคายึดตาราง ห้ามคิดเลขนอกตาราง' (C6)", () => {
+    expect(src, "ต้องมีกฎยึดตารางราคา").toMatch(/ยึดตาราง|ห้ามคิดเลขนอกตาราง|ห้ามคิดเลขเอง/);
   });
 });

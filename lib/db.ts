@@ -40,7 +40,6 @@ export async function ensureSchema(): Promise<void> {
   await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS display_name TEXT`;
   await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS resume_notice_pending BOOLEAN NOT NULL DEFAULT false`;
   await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS pending_order JSONB`;
-  await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS proposed_order JSONB`;
   await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS has_written_order BOOLEAN NOT NULL DEFAULT false`;
   await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS paid_no_address_notified BOOLEAN NOT NULL DEFAULT false`;
   await sql`CREATE INDEX IF NOT EXISTS customers_last_seen_idx ON customers (last_seen DESC)`;
@@ -116,8 +115,6 @@ export interface CustomerState {
   displayName: string | null;
   resumeNoticePending: boolean;
   pendingOrder: PendingOrder;
-  /** รายการที่ "บอทเสนอเอง" (upsell) รอลูกค้ายืนยัน — ไม่ merge ลง pending (D-15 §4) */
-  proposedOrder: PendingOrder;
   hasWrittenOrder: boolean;
   paidNoAddressNotified: boolean;
   createdAt: Date;
@@ -133,7 +130,6 @@ function rowToCustomer(r: Record<string, unknown>): CustomerState {
     displayName: (r.display_name as string | null) ?? null,
     resumeNoticePending: Boolean(r.resume_notice_pending),
     pendingOrder: (r.pending_order as PendingOrder | null) ?? {},
-    proposedOrder: (r.proposed_order as PendingOrder | null) ?? {},
     hasWrittenOrder: Boolean(r.has_written_order),
     paidNoAddressNotified: Boolean(r.paid_no_address_notified),
     humanMode: Boolean(r.human_mode),
@@ -184,7 +180,6 @@ function emptyCustomer(userId: string): CustomerState {
     displayName: null,
     resumeNoticePending: false,
     pendingOrder: {},
-    proposedOrder: {},
     hasWrittenOrder: false,
     paidNoAddressNotified: false,
     createdAt: new Date(),
@@ -382,22 +377,11 @@ export async function mergePendingOrder(userId: string, fields: PendingOrder): P
   return merged;
 }
 
-/**
- * เก็บ/ล้าง "รายการที่บอทเสนอเอง" (D-15 §4) — ไม่แตะ pending_order
- * items ว่าง/undefined = ล้าง (proposed = {})
- */
-export async function setProposedOrder(userId: string, items: PendingOrder["items"] | null): Promise<void> {
-  await ensureSchema();
-  const sql = getSql();
-  const val = items && items.length > 0 ? JSON.stringify({ items }) : null;
-  await sql`UPDATE customers SET proposed_order = ${val}::jsonb WHERE user_id = ${userId}`;
-}
-
-/** ออเดอร์สมบูรณ์ขึ้นชีตแล้ว → ล้าง pending_order + proposed + สลิป พร้อมกัน */
+/** ออเดอร์สมบูรณ์ขึ้นชีตแล้ว → ล้าง pending_order + สลิป พร้อมกัน */
 export async function clearPendingOrderAndSlip(userId: string): Promise<void> {
   await ensureSchema();
   const sql = getSql();
-  await sql`UPDATE customers SET pending_order = NULL, proposed_order = NULL, last_slip_pathname = NULL WHERE user_id = ${userId}`;
+  await sql`UPDATE customers SET pending_order = NULL, last_slip_pathname = NULL WHERE user_id = ${userId}`;
 }
 
 export async function setHasWrittenOrder(userId: string): Promise<void> {
@@ -436,7 +420,7 @@ export async function resetCustomerMemory(userId: string): Promise<void> {
   await sql`
     UPDATE customers
     SET stage = NULL, tags = '{}', last_slip_pathname = NULL,
-        pending_order = NULL, proposed_order = NULL, has_written_order = false, paid_no_address_notified = false
+        pending_order = NULL, has_written_order = false, paid_no_address_notified = false
     WHERE user_id = ${userId}
   `;
   await sql`DELETE FROM messages WHERE user_id = ${userId}`;

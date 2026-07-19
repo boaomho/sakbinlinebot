@@ -70,8 +70,6 @@ export function turn(partial: Partial<GeminiTurnOutput> = {}): GeminiTurnOutput 
     handoff: false,
     handoffReason: "",
     orderData: {},
-    needsPriceQuote: false,
-    itemsSource: "customer",
     paymentMethod: "" as PaymentMethod,
     orderEditRequest: false,
     imageIntent: "other" as ImageIntent,

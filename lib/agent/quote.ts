@@ -64,6 +64,14 @@ export function extractPriceNumbers(text: string): string[] {
 }
 
 /**
+ * ดึงตัวเลขที่บอท "นำเสนอเป็นยอดเงิน" — เลข 2-5 หลักที่ตามด้วย "บาท"
+ * 🔴 เจาะจงบริบทเงินเท่านั้น กันเลขที่อยู่/รหัสไปรษณีย์/เบอร์มา false-positive (D-18 guard 2)
+ */
+export function extractBahtNumbers(text: string): string[] {
+  return [...text.matchAll(/(\d{2,5})\s*บาท/g)].map((m) => m[1]);
+}
+
+/**
  * guard 2 — ตัวเลขราคา (3-5 หลัก) ใน outgoing ต้องเป็นเลขที่ "อยู่ในบล็อกที่ inject ให้ pass 2" เท่านั้น
  * 🔴 whitelist = regex ดึงจาก string จริงที่ inject ไป (ตัวเลขทุกตัวจาก calculatePrice ตัวเดียวกัน)
  *    ไม่ใช่ลิสต์ field ที่เลือกมือ — เพราะเราสั่ง pass 2 ให้ "แจกแจง" ตัวเลขในบล็อกเอง

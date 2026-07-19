@@ -28,10 +28,9 @@ describe("appendOrderRow — สลับคอลัมน์ Orders → ยั
 
     scriptGemini([
       turn({
-        reply: "ขอคิดยอดสักครู่นะคะ",
-        stage: "3",
+        reply: "รับ 3 ถ้วย 275 บาท ส่งของให้เลยนะคะ",
+        stage: "4b",
         paymentMethod: "COD",
-        needsPriceQuote: true,
         orderData: {
           items: [{ sku: "NPT-10G", qty: 3 }],
           ชื่อ: "สมหญิง ใจดี",
@@ -39,7 +38,6 @@ describe("appendOrderRow — สลับคอลัมน์ Orders → ยั
           ที่อยู่: "1 ถนนเจริญ ช่องนนทรี ยานนาวา กทม. 10120",
         },
       }),
-      turn({ reply: "รับ 3 ถ้วย 275 บาท ส่งของให้เลยนะคะ", stage: "4b", paymentMethod: "COD" }),
     ]);
 
     await sendText(U, "เอา 3 ถ้วย สมหญิง ใจดี 1 ถนนเจริญ ช่องนนทรี ยานนาวา กทม. 10120 0811122334 เก็บปลายทาง");
