@@ -9,7 +9,7 @@ import {
   FeatureSwitches,
 } from "@/lib/config";
 import { loadBotLibrary } from "@/lib/sheets/loader";
-import { buildStepInjection, buildFaqInjection, buildCatalogInjection } from "@/lib/agent/inject";
+import { buildStepInjection, buildFaqInjection, buildCatalogInjection, readConfigDescription } from "@/lib/agent/inject";
 import {
   ensureCustomer,
   updateCustomerAfterTurn,
@@ -461,7 +461,15 @@ async function processMessage(
 
   const faqText = lib && lib.CSV_FAQ.length > 0 ? buildFaqInjection(lib.CSV_FAQ, userMessage) : "(ไม่มีข้อมูล FAQ)";
   // ยัดสินค้า+ราคาโปรเสมอ (บอทห้ามแต่งราคา C6) — CSV_Products/CSV_Promo ไม่เคยถูกยัดมาก่อน
-  const catalogText = lib ? buildCatalogInjection(lib.CSV_Products, lib.CSV_Promo) : "(ไม่มีข้อมูลสินค้า)";
+  // ตารางราคาสำเร็จรูป (D-24): เลขทุกตัวจาก calculatePrice (แหล่งเดียวกับ gate) · payment ตาม pending เพื่อให้ตรงที่จะบันทึก
+  const catalogText = lib
+    ? buildCatalogInjection(lib.CSV_Products, lib.CSV_Promo, {
+        config: Object.fromEntries(config.raw),
+        payment: customer?.pendingOrder["การชำระเงิน"] ?? "",
+        now: nowDate,
+        methodDescription: readConfigDescription(lib.CSV_Config, "จำนวนที่ไม่มีโปร_คิดยังไง"),
+      })
+    : "(ไม่มีข้อมูลสินค้า)";
   const configText = formatConfigForPrompt(config);
   const stateText = buildStateText(customer, preOrderPriceStuck);
 

@@ -351,6 +351,57 @@ export function calculatePrice(
   return { lines, subtotal, shippingFee, total, nextTier, error: null, needsHandoff };
 }
 
+// ── ตารางราคาสำเร็จรูป (D-24 · C6 เต็มรูป: โค้ดคำนวณ ยัดให้บอทหยิบเลข ไม่ต้องคิดเอง) ──
+
+export interface PriceTableRow {
+  qty: number;
+  subtotal: number; // ยอดสินค้า (ก่อนค่าส่ง)
+  shippingFee: number;
+  total: number; // ยอดที่ลูกค้าจ่ายจริง (= เลขที่ gate เขียนชีต)
+  freeShip: boolean;
+}
+
+export interface PriceTable {
+  sku: string;
+  name: string;
+  unit: string;
+  ceiling: number; // จำนวนสูงสุดที่ปิดออเดอร์เองได้ (เกินนี้ = handoff)
+  rows: PriceTableRow[];
+  error: string | null; // != null → คำนวณไม่ได้ (config พัง/ไม่มีโปร) → ผู้เรียกไม่ยัดตาราง + บอก handoff
+}
+
+/**
+ * enumerate ราคา qty 1..เพดาน ของ sku เดียว — เรียก calculatePrice ตัวเดียวกับ gate ทุกแถว
+ * 🔴 เลขในตาราง = เลขที่ระบบจะบันทึกเป๊ะ (แหล่งเดียว) · เปลี่ยน config → ตารางเปลี่ยนตาม ไม่ต้อง deploy
+ * หยุดที่ needsHandoff (เกินเพดาน) · เจอ error (config พัง) → คืน error ทันที (ผู้เรียกไม่ยัดตาราง)
+ * @param paymentMethod ใช้ตัวเดียวกับ pending (COD บวกค่าส่งเพิ่ม) → ตารางตรงกับที่จะบันทึก
+ */
+export function buildPriceTable(
+  sku: string,
+  promoRows: string[][],
+  productRows: string[][],
+  config: Record<string, string>,
+  paymentMethod: string,
+  now?: Date,
+): PriceTable {
+  const rows: PriceTableRow[] = [];
+  let name = sku;
+  let unit = "";
+  const SAFETY = 500; // กันวนไม่จบถ้า config เพี้ยน (ปกติหยุดที่ needsHandoff)
+  for (let qty = 1; qty <= SAFETY; qty++) {
+    const p = calculatePrice({ items: [{ sku, qty }], paymentMethod, now }, promoRows, productRows, config);
+    if (p.error !== null) return { sku, name, unit, ceiling: rows.length, rows: [], error: p.error };
+    if (p.needsHandoff) break; // qty นี้เกินเพดาน = จบตาราง (เพดาน = qty ก่อนหน้า)
+    if (p.lines[0]) {
+      name = p.lines[0].name;
+      unit = p.lines[0].unit;
+    }
+    rows.push({ qty, subtotal: p.subtotal, shippingFee: p.shippingFee, total: p.total, freeShip: p.shippingFee === 0 });
+  }
+  if (rows.length === 0) return { sku, name, unit, ceiling: 0, rows: [], error: "คำนวณราคาไม่ได้ (ไม่มีโปร live/เพดานเป็น 0)" };
+  return { sku, name, unit, ceiling: rows[rows.length - 1].qty, rows, error: null };
+}
+
 // ── formatters + runtime-variable resolver (D-15 · commit 2-pass) ──
 
 /** "<ชื่อ> x<qty>" ต่อรายการ · คั่นด้วย sep — คนอ่าน (" · ") vs ชีต (" | ") */

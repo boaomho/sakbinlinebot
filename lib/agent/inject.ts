@@ -265,10 +265,12 @@ export function buildStepInjection(rows: string[][], input: StepInjectionInput):
   ].join("\n");
 }
 
-// ---- Catalog (สินค้า + ราคาโปร) ----
+// ---- Catalog (สินค้า + ตารางราคาสำเร็จรูป · D-24 C6 เต็มรูป) ----
 
-/** เก็บเฉพาะคอลัมน์สินค้าที่ใช้ตอนขาย · ตัด ขนาด/อย./ส่วนประกอบ/สารก่อภูมิแพ้/วิธีเก็บ/อายุ/รูป (D-18) */
-const CATALOG_PRODUCT_COLS = ["sku", "ชื่อสินค้า", "หน่วย", "ราคาปกติ_ต่อหน่วย", "สถานะ"];
+import { buildPriceTable, liveProductSkus, PriceTable } from "@/lib/core/pricing";
+
+/** คอลัมน์สินค้าที่ยัด (ไม่รวมราคา — ราคาทุกตัวมาจากตารางราคาสำเร็จรูปที่เดียว กันบอทหยิบเลขผิดตาราง) */
+const CATALOG_PRODUCT_COLS = ["sku", "ชื่อสินค้า", "หน่วย", "สถานะ"];
 
 /** project ตารางเหลือเฉพาะคอลัมน์ที่ระบุ (จับหัวด้วย cleanHeader · ไม่เจอ = ข้าม) */
 function projectColumns(rows: string[][], keep: string[]): string[][] {
@@ -279,21 +281,89 @@ function projectColumns(rows: string[][], keep: string[]): string[][] {
   return rows.map((r) => idxs.map((i) => r[i] ?? ""));
 }
 
+/** ตัดคำอธิบายในวงเล็บท้ายคีย์ (เหมือน config.ts) — "จำนวนที่ไม่มีโปร (auto)" → "จำนวนที่ไม่มีโปร" */
+function stripKeyAnnotation(key: string): string {
+  return key.replace(/\s*\([^)]*\)\s*$/, "").trim();
+}
+
 /**
- * ยัดสินค้า+ราคาโปรเข้า prompt "เสมอ" — บอทใช้ราคานี้เท่านั้น ห้ามแต่งเอง (C6)
- * 🔴 D-18: สินค้าเหลือคอลัมน์ที่ใช้ตอนขาย (ตัดวิธีเก็บ/ส่วนประกอบ/รูป ฯลฯ ลด token) · โปรยัดครบ (ทุกคอลัมน์ราคา)
- *    รายละเอียดเชิงลึก (ส่วนประกอบ/แพ้อาหาร) = ดึงเข้าเฉพาะเทิร์นที่ถามจริง (งานถัดไป)
+ * อ่าน "คำอธิบาย" (คอลัมน์ E ของ CSV_Config) ของคีย์ที่ระบุ — เจ้าของเขียนวิธีคิดไว้ที่นี่
+ * โค้ดอ่านค่า (คอลัมน์ C) ไปคำนวณ แต่คำอธิบายไม่เคยถึงบอท → ดึงมายัด prompt (อ่านจากชีต ไม่ hardcode)
+ * ไม่มี header/คีย์/คำอธิบาย → คืน "" (graceful — บอทยังมีตารางราคาไว้ตอบได้)
  */
-export function buildCatalogInjection(productsRows: string[][], promoRows: string[][]): string {
-  const products = productsRows.length > 0 ? tabToText(projectColumns(productsRows, CATALOG_PRODUCT_COLS)) : "(ไม่มีข้อมูลสินค้า)";
-  const promo = promoRows.length > 0 ? tabToText(promoRows) : "(ไม่มีข้อมูลโปรโมชั่น)";
+export function readConfigDescription(configRows: string[][], key: string): string {
+  if (!configRows || configRows.length === 0) return "";
+  for (let h = 0; h < Math.min(configRows.length, 5); h++) {
+    const header = configRows[h].map((c) => cleanHeader(c).toLowerCase());
+    let keyCol = -1;
+    let descCol = -1;
+    for (let j = 0; j < header.length; j++) {
+      if (keyCol === -1 && (header[j].includes("key") || header[j] === "ค่า")) keyCol = j;
+      if (descCol === -1 && header[j].includes("อธิบาย")) descCol = j;
+    }
+    if (keyCol === -1 || descCol === -1) continue;
+    for (let i = h + 1; i < configRows.length; i++) {
+      const k = stripKeyAnnotation(cleanCell(configRows[i][keyCol] ?? ""));
+      if (k === key) return cleanCell(configRows[i][descCol] ?? "");
+    }
+    return ""; // เจอ header แต่ไม่มีคีย์นั้น
+  }
+  return "";
+}
+
+export interface CatalogInput {
+  /** CSV_Config เป็น key→value (Object.fromEntries(config.raw)) — ให้ buildPriceTable คำนวณ */
+  config: Record<string, string>;
+  /** ช่องทางชำระใน pending ("COD"/"โอน"/"") — ตารางต้องใช้ตัวเดียวกับที่ gate จะบันทึก */
+  payment: string;
+  now?: Date;
+  /** วิธีคิด (คอลัมน์คำอธิบายของ `จำนวนที่ไม่มีโปร_คิดยังไง` ในชีต) — บอทใช้อธิบายลูกค้าเท่านั้น */
+  methodDescription?: string;
+}
+
+/** format ตารางราคาของ sku เดียวเป็นบรรทัดให้บอทหยิบเลข */
+function formatPriceTable(t: PriceTable): string {
+  const lines = t.rows.map((r) =>
+    r.freeShip
+      ? `${r.qty} ${t.unit} ${r.total} บาท (ส่งฟรี)`
+      : `${r.qty} ${t.unit} ${r.subtotal} + ค่าส่ง ${r.shippingFee} = ${r.total} บาท`,
+  );
   return [
-    "สินค้า:",
-    products,
-    "",
-    "ราคา/โปรโมชั่น (🔴 ใช้ราคาตามตารางนี้เท่านั้น ห้ามคิด/แต่งราคาเอง — ไม่มีในตาราง = ไม่มีโปร):",
-    promo,
+    `${t.name}:`,
+    ...lines,
+    `จำนวนเกิน ${t.ceiling} ${t.unit} → ส่งต่อแอดมิน (บอทปิดออเดอร์เองไม่ได้ อย่าเดายอด)`,
   ].join("\n");
+}
+
+/**
+ * ยัดสินค้า + "ตารางราคาสำเร็จรูป" เข้า prompt เสมอ (C6 เต็มรูป · D-24)
+ * 🔴 เลขทุกตัวมาจาก calculatePrice (แหล่งเดียวกับ gate) — บอทหยิบเลข ไม่คำนวณเอง
+ *    (LLM เข้าใจ logic แต่ปัดเศษ/ทศนิยมไม่แม่น เช่น หยิบ 95 แทน 91.67 → ต้องให้คำตอบ ไม่ใช่สอนวิธี)
+ *    calculatePrice ล้ม (config พัง) → ไม่ยัดตาราง + สั่ง handoff (ตรงกับ priceStuck ฝั่ง gate)
+ * ⚠️ ตาราง enumerate ได้เพราะสินค้า live ตัวเดียว · หลาย sku (ตะกร้าผสม) = ต้องใช้ function calling (ดู DECISIONS D-24)
+ */
+export function buildCatalogInjection(productsRows: string[][], promoRows: string[][], input: CatalogInput): string {
+  const products = productsRows.length > 0 ? tabToText(projectColumns(productsRows, CATALOG_PRODUCT_COLS)) : "(ไม่มีข้อมูลสินค้า)";
+
+  // ตารางราคาของสินค้า live ทุกตัว (ปัจจุบันตัวเดียว) — คำนวณจริงจาก calculatePrice
+  const liveSkus = productsRows.length > 0 ? liveProductSkus(productsRows) : [];
+  const tables = liveSkus.map((sku) => buildPriceTable(sku, promoRows, productsRows, input.config, input.payment, input.now));
+  const okTables = tables.filter((t) => t.error === null && t.rows.length > 0);
+
+  const priceBlock =
+    okTables.length > 0
+      ? [
+          "ตารางราคา (🔴 ยอดสำเร็จรูปจากระบบ — หยิบเลขจากตารางนี้เท่านั้น ห้ามคำนวณ/บวก/ลบ/คูณ/ปัดเศษเอง · เลขนี้คือยอดที่ระบบจะบันทึกเป๊ะ):",
+          ...okTables.map(formatPriceTable),
+        ].join("\n")
+      : "ตารางราคา: ⚠️ ระบบคำนวณราคาไม่ได้ตอนนี้ — ห้ามบอกราคา/ปิดออเดอร์ ให้ส่งต่อแอดมินตรวจสอบ";
+
+  const parts = ["สินค้า:", products, "", priceBlock];
+  const desc = (input.methodDescription ?? "").trim();
+  if (desc && okTables.length > 0) {
+    parts.push("", `วิธีคิดราคา (ใช้อธิบายให้ลูกค้าเข้าใจเท่านั้น 🔴 ห้ามใช้คิดเลข — เลขหยิบจากตารางข้างบน): ${desc}`);
+  }
+  return parts.join("\n");
 }
 
 // ---- FAQ ----

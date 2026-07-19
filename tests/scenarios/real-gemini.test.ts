@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { runSalesTurn } from "@/lib/gemini";
 import { buildCatalogInjection } from "@/lib/agent/inject";
-import { productsRows, promoRows } from "../harness/botlib-fixture";
+import { productsRows, promoRows, PRICING_CONFIG } from "../harness/botlib-fixture";
 import { testConfig } from "../harness/fixtures";
 
 /**
@@ -13,7 +13,7 @@ import { testConfig } from "../harness/fixtures";
 const RUN = process.env.HARNESS_REAL_GEMINI === "1" && Boolean(process.env.GEMINI_API_KEY);
 
 describe.skipIf(!RUN)("real Gemini — AI ต้องส่ง items[{qty}] เมื่อลูกค้าบอกจำนวน (D-20)", () => {
-  const catalog = buildCatalogInjection(productsRows(), promoRows());
+  const catalog = buildCatalogInjection(productsRows(), promoRows(), { config: PRICING_CONFIG, payment: "", now: new Date("2026-07-18T03:00:00Z") });
 
   it('"เอา 3 ถ้วยครับ" → rawItems ไม่ว่าง + qty=3 · ไม่ degraded', async () => {
     const out = await runSalesTurn({

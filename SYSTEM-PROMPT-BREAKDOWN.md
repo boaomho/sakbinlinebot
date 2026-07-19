@@ -44,8 +44,9 @@
 | กฎ 10 (ไม่รู้ = handoff) | 🟡 **มีแค่เจตนา ไม่ใช่กฎที่ตั้งชื่อ** — กระจายใน guardrails (line 117–118) + เงื่อนไขส่งต่อแอดมิน (line 131) · ยังไม่มีประโยคมาตรฐาน "ไม่มีข้อมูล=บอกตรงๆ+handoff" แบบ CONTRACTS §5 |
 | claims blocklist (พ.ร.บ.อาหาร / คำต้องห้ามโฆษณา) | 🔴 **ไม่มีในprompt** — มีแค่ "ห้ามแต่งสรรพคุณที่ไม่มีข้อมูล" (guardrails line 117) แบบกว้าง · blocklist คำเฉพาะ (บำรุง/รักษา/ฯลฯ) **ยังไม่ทำ** = KI (Step 4/5) |
 
-## catalogInjection — Products ที่ยัดเข้า prompt
-- `buildCatalogInjection(CSV_Products, CSV_Promo)` = **`tabToText()` ดัมพ์ทั้งตารางดิบ ทุกคอลัมน์** (ไม่ได้ select คอลัมน์)
-- คอลัมน์ CSV_Products จริง: **?** (ไม่ได้อ่านหัวตารางในโค้ด — โค้ดไม่ parse ต่อคอลัมน์) · ต้องดูหัวตาราง CSV_Products ในชีตจริง
-- คอลัมน์ที่บอท "ไม่ได้ใช้ตอนขาย" (เดาจาก CONTRACTS §8): `image_url`, `status`, `updated_at`, `sku`(?) — **ยัดเข้า prompt ทั้งที่บอทไม่ต้องใช้** = token เปล่า · **ยืนยันไม่ได้จนเห็นหัวตาราง CSV_Products จริง**
-- ⚠️ ปัจจุบันไม่ select → ถ้า CSV_Products มีคอลัมน์บรรยายยาว (ส่วนประกอบ/วิธีเก็บ) จะยัดหมด
+## catalogInjection — Products + ตารางราคาสำเร็จรูป (D-24)
+- `buildCatalogInjection(CSV_Products, CSV_Promo, {config,payment,now,methodDescription})`:
+  - **สินค้า** = project `[sku, ชื่อสินค้า, หน่วย, สถานะ]` (ตัดราคา/รูป/ส่วนประกอบ — ราคาทุกตัวมาจากตารางราคาที่เดียว)
+  - **ตารางราคา** = `buildPriceTable` enumerate qty 1..เพดาน เรียก `calculatePrice` ทุกแถว (เลข = ที่ gate บันทึกเป๊ะ · เปลี่ยน config → ตารางเปลี่ยน) · calc ล้ม → ไม่ยัดตาราง + สั่ง handoff
+  - **วิธีคิด** = `readConfigDescription` อ่านคอลัมน์คำอธิบายของ `จำนวนที่ไม่มีโปร_คิดยังไง` (บอทใช้อธิบายลูกค้า ห้ามคิดเลข)
+- ⚠️ ตาราง enumerate ได้เพราะ live ตัวเดียว · ตะกร้าผสมหลาย sku → function calling (DECISIONS D-24)

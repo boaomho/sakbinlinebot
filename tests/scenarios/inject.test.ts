@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
-import { buildStepInjection, buildFaqInjection, buildCatalogInjection, resolveDestinations } from "@/lib/agent/inject";
+import { buildStepInjection, buildFaqInjection, buildCatalogInjection, readConfigDescription, resolveDestinations } from "@/lib/agent/inject";
 import { tabToText } from "@/lib/sheets/columns";
+import { productsRows, promoRows, PRICING_CONFIG } from "../harness/botlib-fixture";
 
 /**
  * Part 4 — Selective injection: ลด token + คงความฉลาด (บอทเห็นทางเข้าทุกประตูเสมอ)
@@ -158,28 +159,63 @@ describe("buildStepInjection — region routing (D-18)", () => {
   });
 });
 
-describe("buildCatalogInjection — ยัดราคาโปรเสมอ (บอทห้ามแต่งราคา C6)", () => {
-  const products = [["sku", "ชื่อ", "ราคาปกติ"], ["NPT-10G", "น้ำพริกปลาทู", "95"]];
-  const promo = [
-    ["โปร", "จำนวน", "ราคา", "หมายเหตุ"],
-    ["P1", "1", "95", ""],
-    ["P3", "3", "275", "ส่งฟรี"],
-    ["P5", "5", "440", ""],
-    ["P10", "10", "850", ""],
-  ];
+describe("buildCatalogInjection — ตารางราคาสำเร็จรูปจาก calculatePrice จริง (C6 เต็มรูป · D-24)", () => {
+  const NOW = new Date("2026-07-18T03:00:00Z"); // โปร fixture live
+  const base = (extra?: Record<string, string>, payment = "โอน") =>
+    buildCatalogInjection(productsRows(), promoRows(), {
+      config: { ...PRICING_CONFIG, ...(extra ?? {}) },
+      payment,
+      now: NOW,
+      methodDescription: "เศษที่เกินโปรคิดตามเรทโปรฐาน",
+    });
 
-  it("มีราคาโปรครบ 95/275/440/850 จาก CSV_Promo", () => {
-    const out = buildCatalogInjection(products, promo);
-    for (const price of ["95", "275", "440", "850"]) {
-      expect(out, `ต้องมีราคา ${price}`).toContain(price);
-    }
-    expect(out, "มีคำสั่งห้ามแต่งราคา").toContain("ห้ามคิด");
+  it("🔴 4 ถ้วย = 367 (เทียบโปรฐาน default) — บอทหยิบเลข ไม่ต้องคิดเอง", () => {
+    const out = base();
+    expect(out, "ต้องมีแถว 4 ถ้วย 367").toMatch(/4 ถ้วย 367/);
+    expect(out, "3 ถ้วย ส่งฟรี 275").toMatch(/3 ถ้วย 275 บาท \(ส่งฟรี\)/);
+    expect(out, "1 ถ้วย แสดงค่าส่งแยก").toMatch(/1 ถ้วย 95 \+ ค่าส่ง 30 = 125/);
+    expect(out, "ห้ามคำนวณเอง").toContain("ห้ามคำนวณ");
+    expect(out, "วิธีคิดจากชีต").toContain("เศษที่เกินโปรคิดตามเรทโปรฐาน");
   });
 
-  it("ไม่มีข้อมูล → บอกว่าไม่มี (ไม่ทำให้บอทเดา)", () => {
-    const out = buildCatalogInjection([], []);
+  it("🔴 เปลี่ยน config = ราคาปกติ → 4 ถ้วย = 370 (ตารางเปลี่ยนตามชีต ไม่ deploy)", () => {
+    const out = base({ จำนวนที่ไม่มีโปร_คิดยังไง: "ราคาปกติ" });
+    expect(out).toMatch(/4 ถ้วย 370/);
+    expect(out, "ไม่มี 367 แล้ว").not.toMatch(/4 ถ้วย 367/);
+  });
+
+  it("เพดาน 20 (10×2) → มีแถวถึง 20 · แจ้ง handoff เกินเพดาน", () => {
+    const out = base();
+    expect(out).toMatch(/20 ถ้วย .* \(ส่งฟรี\)/);
+    expect(out).not.toMatch(/21 ถ้วย/);
+    expect(out).toContain("จำนวนเกิน 20");
+  });
+
+  it("🔴 config ราคาพัง (คำนวณไม่ได้) → ไม่ยัดตาราง + สั่ง handoff (ตรงกับ priceStuck)", () => {
+    const out = base({ ยอดขั้นต่ำส่งฟรี_บาท: "" }); // ตัวเลขหาย → calculatePrice error
+    expect(out).toContain("ระบบคำนวณราคาไม่ได้");
+    expect(out).toContain("ส่งต่อแอดมิน");
+    expect(out, "ห้ามมียอดหลุดออกมา").not.toMatch(/\d+ บาท/);
+  });
+
+  it("ไม่มีข้อมูลสินค้า → บอกว่าไม่มี (ไม่ทำให้บอทเดา)", () => {
+    const out = buildCatalogInjection([], [], { config: PRICING_CONFIG, payment: "" });
     expect(out).toContain("ไม่มีข้อมูลสินค้า");
-    expect(out).toContain("ไม่มีข้อมูลโปรโมชั่น");
+  });
+});
+
+describe("readConfigDescription — ดึงคอลัมน์คำอธิบายของคีย์ (วิธีคิดจากชีต)", () => {
+  const rows = [
+    ["หมวด", "key", "ค่าที่ตั้ง", "หน่วย", "คำอธิบาย"],
+    ["ราคา", "จำนวนที่ไม่มีโปร_คิดยังไง", "เทียบโปรฐาน", "", "เศษคิดตามเรทโปรฐาน ไม่ใช่ราคาเต็ม"],
+    ["ราคา", "ค่าส่ง_มาตรฐาน", "30", "บาท", "ค่าส่งเมื่อยอดไม่ถึงเกณฑ์"],
+  ];
+  it("คืนคำอธิบายของคีย์ที่ตรง", () => {
+    expect(readConfigDescription(rows, "จำนวนที่ไม่มีโปร_คิดยังไง")).toBe("เศษคิดตามเรทโปรฐาน ไม่ใช่ราคาเต็ม");
+  });
+  it("คีย์มีวงเล็บกำกับก็ยังจับได้ · ไม่มีคีย์/ไม่มีคอลัมน์ → ''", () => {
+    expect(readConfigDescription(rows, "ไม่มีคีย์นี้")).toBe("");
+    expect(readConfigDescription([["key", "ค่าที่ตั้ง"], ["ค่าส่ง_มาตรฐาน", "30"]], "ค่าส่ง_มาตรฐาน")).toBe(""); // ไม่มีคอลัมน์คำอธิบาย
   });
 });
 

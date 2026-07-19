@@ -37,19 +37,20 @@ tests/
 
 ## 2. Export หลัก (ชื่อ · หน้าที่)
 **lib/core/orders.ts** (pure)
-- `evaluateOrderGate({pending, slipPresent, priceOk}) → {payment, complete, waitTag, missing, brokenOrder}` — ตัดสินออเดอร์ครบ/ไม่ครบ (COD: ชื่อ+ที่อยู่+เบอร์+items ไม่ว่าง+priceOk · โอน: +สลิป)
+- `evaluateOrderGate({pending, slipPresent, priceOk}) → {payment, complete, waitTag, missing, brokenOrder, readyExceptPrice}` — ตัดสินออเดอร์ครบ/ไม่ครบ (COD: ชื่อ+ที่อยู่+เบอร์+items ไม่ว่าง+priceOk · โอน: +สลิป) · `readyExceptPrice`=complete ถ้าสมมติ priceOk (D-23 · แจ้งแอดมิน "ราคาคำนวณไม่ได้" ตอนข้อมูลครบ)
 - `PendingOrder {ชื่อ?,ที่อยู่?,เบอร์?,การชำระเงิน?,items?}` · `normalizeItems`/`itemsEqual` (ตัดสิน "items เปลี่ยน")
-- `addressComplete(p)` · `nameComplete(p)` · `sanitizePhone(s)` · `buildNewOrderAdminText(summary,total,payment,name,phone)`/`buildBrokenOrderAdminText`
+- `addressComplete(p)` · `nameComplete(p)` · `sanitizePhone(s)` · `buildNewOrderAdminText(summary,total,payment,name,phone)`/`buildBrokenOrderAdminText`/`buildPriceStuckAdminText(pending,error,name,itemsText)` (D-23 · ข้อมูลลูกค้าเต็ม)
 
 **lib/core/pricing.ts** (pure · D-15) — `calculatePrice({items,paymentMethod,now?}, promoRows, productRows, config) → {lines(+basePromo/extraQty/extraAmount/isExactTier), subtotal, shippingFee, total, nextTier, error, needsHandoff}`
 - โปรฐาน = live+ในช่วงวันที่ จำนวนมากสุด≤qty · extraAmount=lineTotal−ฐาน (บวกแล้วเท่ายอดเสมอ) · nextTier=ชั้นสูงกว่าใกล้สุด (single-sku) · อ่านชีตล้วน ห้าม hardcode
 - `formatOrderSummary`(" · ")/`formatLinesForSheet`(" | ") · `formatPayment` · `buildBreakdownVars`→{วิธีคิดยอด}/{ทางเลือกถัดไป} · `buildProductNameMap` · `resolveRuntimeVars(text, 5 vars)`
+- `buildPriceTable(sku, promoRows, productRows, config, payment, now?) → {sku,name,unit,ceiling,rows[{qty,subtotal,shippingFee,total,freeShip}],error}` (D-24 · enumerate 1..เพดาน เรียก calculatePrice ทุกแถว = เลขเดียวกับ gate) · `liveProductSkus`/`resolveAiItems`(D-20)
 
 **lib/agent/quote.ts** — `computeQuote(pending, lib, config, now) → {price, vars, ok}|null` · `hasUnresolvedPricingVars` (guard 5) · `checkReplyNumbers(reply, allowedText, extraNums)` (guard 2 · whitelist จากบล็อก inject)
 
 **lib/sheets/loader.ts** — `loadBotLibrary(): Promise<BotLibrary|null>` batchGet 8 แท็บ + cache · `BOTLIB_TABS`
 **lib/sheets/columns.ts** — `resolveColumns(header, required, label) → map|null` (all-or-nothing) · `cell` · `tabToText` · `rowFromValues` · `columnLetter`
-**lib/agent/inject.ts** — `buildStepInjection(rows, {quoted,payment,userMessage})` **region routing (D-19)**: โค้ดตัดสิน funnel จาก pending (quoted=มี items → S4 · ไม่มี → S1-S3) ไม่พึ่ง AI stage · สารบัญทุกประตู + เต็ม cap 4 (priority: match วิธีจ่าย>ปลายทาง>entry-match>proximity) · handoff+crossover(ประตูข้าม ไม่มีใครชี้มา) เต็มเฉพาะ entry-match ไม่นับ cap · `buildCatalogInjection` (สินค้าเหลือคอลัมน์ขาย) · `buildFaqInjection` · `resolveDestinations`
+**lib/agent/inject.ts** — `buildStepInjection(rows, {quoted,payment,userMessage})` **region routing (D-19)**: โค้ดตัดสิน funnel จาก pending (quoted=มี items → S4 · ไม่มี → S1-S3) ไม่พึ่ง AI stage · สารบัญทุกประตู + เต็ม cap 4 (priority: match วิธีจ่าย>ปลายทาง>entry-match>proximity) · handoff+crossover(ประตูข้าม ไม่มีใครชี้มา) เต็มเฉพาะ entry-match ไม่นับ cap · `buildCatalogInjection(products, promo, {config,payment,now,methodDescription})` **D-24 C6 เต็ม**: ยัด "ตารางราคาสำเร็จรูป" (สินค้า+ทุกจำนวน 1..เพดาน จาก `buildPriceTable`→calculatePrice ตัวเดียวกับ gate · payment ตาม pending · calc ล้ม→ไม่ยัดตาราง+handoff) แทนตารางโปรดิบ · `readConfigDescription(configRows, key)` อ่านคอลัมน์คำอธิบาย (วิธีคิดจากชีต) · `buildFaqInjection` · `resolveDestinations`
 **lib/orders.ts** — `appendOrderRow(input)` · `listPendingOrders()` · `markOrderSent(row, num)` · `ORDERS_HEADER` (24 คอล A–X, header-driven)
 **lib/gemini.ts** — `runSalesTurn(GeminiTurnInput{...,pass2Note?}) → GeminiTurnOutput{reply, stage, tagsAdd, handoff, orderData:OrderDataFromAI{ชื่อ?,ที่อยู่?,เบอร์?,items?}, needsPriceQuote, itemsSource:"customer"|"bot_proposal", paymentMethod, orderEditRequest, imageIntent, imageNote, degraded}`
 **lib/config.ts** — `getConfig()` · `resolveFeatureSwitches(config) → FeatureSwitches` · `formatConfigForPrompt`
