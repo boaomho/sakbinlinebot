@@ -58,6 +58,50 @@ export function hasUnresolvedPricingVars(outgoing: string): boolean {
   return PRICING_RUNTIME_VARS.some((v) => outgoing.includes(v));
 }
 
+// ---- ตัวแปรข้อมูลโอนเงิน (โค้ด resolve จาก CSV_Config · guard ร้ายแรง ต่างจากราคาที่แค่ log) ----
+// {เลขที่บัญชี} = ชื่อใหม่ · {เลขพร้อมเพย์} = alias เก่า (กันหน้าต่างที่ชีต/สเต็ปยังไม่ตรงกัน)
+// 🔴 ค่าจริงเป็นเลขบัญชีธนาคาร ไม่ใช่พร้อมเพย์ — ปล่อยให้บอทพูด "โอนเข้าพร้อมเพย์ <เลข>" = ลูกค้าโอนไม่ได้
+const ACCOUNT_NO_TOKENS = ["{เลขที่บัญชี}", "{เลขพร้อมเพย์}"];
+const ACCOUNT_NAME_TOKEN = "{ชื่อบัญชี}";
+const BANK_TOKEN = "{ธนาคาร}";
+/** ตัวแปรโอนเงินทั้งหมด — ถ้าเหลือค้างในข้อความส่งออก = resolve ไม่ได้ (config ขาด) → ห้ามส่ง */
+export const TRANSFER_VARS = [...ACCOUNT_NO_TOKENS, ACCOUNT_NAME_TOKEN, BANK_TOKEN] as const;
+
+const TRANSFER_KEYS = {
+  accountNo: ["เลขที่บัญชี", "เลขพร้อมเพย์"], // อ่านค่าใหม่ก่อน · เก่าเป็น fallback
+  accountName: ["ชื่อบัญชี"],
+  bank: ["ธนาคาร"],
+};
+
+/** อ่านค่าจาก config.raw ตามลำดับ candidate · คืน "" ถ้าไม่มี/ว่าง (ว่าง = ถือว่า resolve ไม่ได้) */
+function pickConfig(config: AppConfig, keys: string[]): string {
+  for (const k of keys) {
+    const v = config.raw.get(k);
+    if (v && v.trim() !== "") return v.trim();
+  }
+  return "";
+}
+
+/**
+ * แทนตัวแปรข้อมูลโอนเงินในข้อความด้วยค่าจริงจาก CSV_Config (โค้ด resolve เอง ไม่พึ่ง AI)
+ * 🔴 แทนเฉพาะเมื่อ config มีค่า (ไม่ว่าง) · ค่าว่าง/ไม่มี = ปล่อยวงเล็บค้างไว้ให้ guard จับ (กันส่ง "โอนเข้า ")
+ */
+export function resolveTransferVars(text: string, config: AppConfig): string {
+  const accountNo = pickConfig(config, TRANSFER_KEYS.accountNo);
+  const accountName = pickConfig(config, TRANSFER_KEYS.accountName);
+  const bank = pickConfig(config, TRANSFER_KEYS.bank);
+  let out = text;
+  if (accountNo) for (const t of ACCOUNT_NO_TOKENS) out = out.split(t).join(accountNo);
+  if (accountName) out = out.split(ACCOUNT_NAME_TOKEN).join(accountName);
+  if (bank) out = out.split(BANK_TOKEN).join(bank);
+  return out;
+}
+
+/** ตัวแปรโอนเงินที่ยัง resolve ไม่ได้ (เหลือค้าง) — ไม่ว่าง = ห้ามส่งข้อความออก + แจ้งแอดมิน */
+export function unresolvedTransferVars(outgoing: string): string[] {
+  return TRANSFER_VARS.filter((t) => outgoing.includes(t));
+}
+
 /** ดึงตัวเลข "ราคา" (3-5 หลัก) จากข้อความ */
 export function extractPriceNumbers(text: string): string[] {
   return text.match(/\d{3,5}/g) ?? [];

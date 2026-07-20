@@ -65,7 +65,7 @@ import { uploadSlip, getSlipSignedUrl } from "@/lib/blob";
 import { appendOrderRow } from "@/lib/orders";
 import { evaluateOrderGate, buildNewOrderAdminText, buildBrokenOrderAdminText, buildPriceStuckAdminText, itemsEqual, normalizeItems, PendingOrder } from "@/lib/core/orders";
 import { resolveRuntimeVars, formatLinesForSheet, formatOrderSummary, buildProductNameMap, resolveAiItems, RuntimeVarContext, PriceResult } from "@/lib/core/pricing";
-import { computeQuote, hasUnresolvedPricingVars, extractBahtNumbers, extractPriceNumbers } from "@/lib/agent/quote";
+import { computeQuote, hasUnresolvedPricingVars, resolveTransferVars, unresolvedTransferVars, extractBahtNumbers, extractPriceNumbers } from "@/lib/agent/quote";
 
 export const maxDuration = 30;
 
@@ -422,6 +422,14 @@ async function processMessage(
         customer = { ...customer, humanMode: false, humanModeSince: null };
         // resume_notice_pending ยัง true (arm ตอนเข้า human_mode) → จะไปเกริ่นประโยคเปลี่ยนมือตอนสร้าง reply
       } else {
+        // 🔴 log ให้ชัดว่าบอท "ถูกปิดอยู่" (human_mode) — เดิม return เงียบ = debug ไม่ได้ เข้าใจผิดว่าระบบล่ม
+        console.log(JSON.stringify({
+          scope: "handoff", event: "bot-silent-human-mode",
+          reason: "อยู่โหมดแอดมินดูแล (human_mode) — บอทไม่ตอบ",
+          silentMinutes: Math.floor(silentMs / 60000),
+          returnAfterMinutes: config.adminSilenceReturnMinutes,
+          hint: "คืนบอท: พิมพ์ 'เปิดบอท <ชื่อ>' ในกลุ่มแอดมิน หรือ /reset (โหมดเทสต์)",
+        }));
         await addMessage(userId, "user", userMessage);
         return; // แอดมินกำลังดูแลลูกค้ารายนี้อยู่ ไม่ตอบอัตโนมัติ
       }
@@ -581,10 +589,27 @@ async function processMessage(
 
   // เติมตัวแปรราคา (template ที่เจ้าของเขียนในชีต) ด้วยเลข Core · มี items = ใช้ค่าล่าสุด, ยังไม่มี = preVars
   const outVars = postQuote?.ok ? postQuote.vars : preVars;
-  const outReply = resolveRuntimeVars(baseReply, outVars);
+  let outReply = resolveRuntimeVars(baseReply, outVars);
+  // ตัวแปรข้อมูลโอนเงิน (เลขที่บัญชี/ชื่อบัญชี/ธนาคาร) — โค้ด resolve จาก CSV_Config
+  outReply = resolveTransferVars(outReply, config);
   // guard 5 = LOG อย่างเดียว ไม่บล็อก (ยังไม่มี items = AI เติมเอง · ตัวแปรอื่นคงพฤติกรรมเดิม)
   if (hasUnresolvedPricingVars(outReply)) {
     console.warn(JSON.stringify({ scope: "orders", warning: "reply เหลือตัวแปรราคา resolve ไม่ได้ (ยังไม่มี items) — ปล่อยผ่าน ไม่บล็อก" }));
+  }
+  // 🔴 guard ร้ายแรง (ต่างจากราคา): ตัวแปรโอนเงิน resolve ไม่ได้ → ห้ามส่งข้อความจริง (ลูกค้าโอนไม่ได้ + เสียเครดิต)
+  //    → ส่งข้อความพักสายปลอดภัยแทน + push แจ้งแอดมินให้แก้ CSV_Config
+  const unresolvedTransfer = unresolvedTransferVars(outReply);
+  if (unresolvedTransfer.length > 0) {
+    console.error(JSON.stringify({ scope: "orders", event: "transfer-vars-unresolved", tokens: unresolvedTransfer, hint: "ตรวจ CSV_Config: เลขที่บัญชี/ชื่อบัญชี/ธนาคาร" }));
+    const adminGroupId = process.env.ADMIN_GROUP_ID;
+    if (adminGroupId) {
+      const name = await getProfileName(userId);
+      await pushRawText(
+        adminGroupId,
+        `⚠️ ข้อมูลโอนเงิน resolve ไม่ได้: ${unresolvedTransfer.join(" ")} — บอทงดส่งข้อความโอนให้ลูกค้า\nตรวจ CSV_Config: เลขที่บัญชี / ชื่อบัญชี / ธนาคาร\n———\nLineOA: ${name}`,
+      );
+    }
+    outReply = TRANSFER_UNRESOLVED_REPLY;
   }
   const assistantSaved = outReply;
   await deliverReply(replyToken, userId, withResume(outReply), config.quotaSaver);
@@ -827,6 +852,9 @@ async function handleAdminGroupCommand(
       return;
   }
 }
+
+/** ข้อความพักสายตอนตัวแปรโอนเงิน resolve ไม่ได้ — ไม่ให้ลูกค้าเงียบ แต่ก็ไม่ส่งเลขบัญชีผิด (แอดมินถูก push แล้ว) */
+const TRANSFER_UNRESOLVED_REPLY = "ขอสักครู่นะคะ ปลาทูขอเช็คข้อมูลการโอนให้แน่ใจก่อน เดี๋ยวรีบแจ้งกลับเลยค่ะ 🙏";
 
 const RESET_COMMAND = "/reset";
 

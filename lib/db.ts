@@ -411,8 +411,11 @@ export async function reconcileWaitTags(userId: string, keep: "รอโอน" 
 /**
  * คำสั่งเทสต์ /reset — ล้างความจำเฉพาะ userId ที่พิมพ์เข้ามาเท่านั้น (สถานะ/stage/tags/
  * last_slip_pathname + ประวัติแชท) รวมถึง pending_messages ค้างของ user นั้น กันข้อความ
- * เก่าที่ debounce ค้างอยู่มาเขียนทับหลัง reset ไม่แตะ human_mode เพราะเป็นคนละเรื่องกับ
- * ความจำการขาย (ไม่ควรแย่งสิทธิ์แอดมินคืนเองจากคำสั่งเทสต์)
+ * เก่าที่ debounce ค้างอยู่มาเขียนทับหลัง reset
+ *
+ * 🔴 ล้าง human_mode/resume_notice ด้วย (เปลี่ยนจากเดิมที่ตั้งใจไม่แตะ): /reset เป็นคำสั่ง "เทสต์"
+ *    (ปิดตอนขายจริงด้วย testCommandsEnabled) → คนเทสรีเซ็ต session ตัวเอง · เดิมพอเทสชน handoff
+ *    แล้ว /reset ไม่คืนบอท = บอทเงียบสนิท เข้าใจผิดว่าระบบล่ม เสียเวลา debug (จริง ๆ ถูกปิดอยู่)
  */
 export async function resetCustomerMemory(userId: string): Promise<void> {
   await ensureSchema();
@@ -420,7 +423,8 @@ export async function resetCustomerMemory(userId: string): Promise<void> {
   await sql`
     UPDATE customers
     SET stage = NULL, tags = '{}', last_slip_pathname = NULL,
-        pending_order = NULL, has_written_order = false, paid_no_address_notified = false
+        pending_order = NULL, has_written_order = false, paid_no_address_notified = false,
+        human_mode = false, human_mode_since = NULL, resume_notice_pending = false
     WHERE user_id = ${userId}
   `;
   await sql`DELETE FROM messages WHERE user_id = ${userId}`;
