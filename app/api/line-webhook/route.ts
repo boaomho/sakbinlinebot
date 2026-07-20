@@ -65,7 +65,7 @@ import { uploadSlip, getSlipSignedUrl } from "@/lib/blob";
 import { appendOrderRow } from "@/lib/orders";
 import { evaluateOrderGate, buildNewOrderAdminText, buildBrokenOrderAdminText, buildPriceStuckAdminText, itemsEqual, normalizeItems, PendingOrder } from "@/lib/core/orders";
 import { resolveRuntimeVars, formatLinesForSheet, formatOrderSummary, buildProductNameMap, resolveAiItems, RuntimeVarContext, PriceResult } from "@/lib/core/pricing";
-import { computeQuote, hasUnresolvedPricingVars, resolveTransferVars, unresolvedTransferVars, extractBahtNumbers, extractPriceNumbers } from "@/lib/agent/quote";
+import { computeQuote, hasUnresolvedPricingVars, resolveTransferVars, unresolvedTransferVars, findBannedClaims, parseClaimsList, extractBahtNumbers, extractPriceNumbers } from "@/lib/agent/quote";
 
 export const maxDuration = 30;
 
@@ -611,6 +611,27 @@ async function processMessage(
     }
     outReply = TRANSFER_UNRESOLVED_REPLY;
   }
+  // claims guard (พ.ร.บ.อาหาร · D-26): วลีโฆษณาต้องห้ามจากชีต · โหมด เตือน(default)=ส่ง+log+push · บล็อก=ไม่ส่ง+พักสาย+push
+  const bannedClaims = findBannedClaims(
+    outReply,
+    parseClaimsList(config.raw.get("คำต้องห้าม_โฆษณา")),
+    parseClaimsList(config.raw.get("คำยกเว้น_โฆษณา")),
+  );
+  if (bannedClaims.length > 0) {
+    const claimsMode = (config.raw.get("โหมดคำต้องห้าม") ?? "เตือน").trim();
+    const blockClaim = claimsMode === "บล็อก";
+    // 🔴 log วลีที่ชน + ข้อความเต็ม (เจ้าของตัดสิน false positive) — นี่คือ reply ของบอท ไม่ใช่ PII ลูกค้า
+    console.warn(JSON.stringify({ scope: "claims", event: "banned-claim", mode: claimsMode, blocked: blockClaim, phrases: bannedClaims, reply: outReply }));
+    const adminGroupId = process.env.ADMIN_GROUP_ID;
+    if (adminGroupId) {
+      const name = await getProfileName(userId);
+      await pushRawText(
+        adminGroupId,
+        `⚠️ พบคำโฆษณาต้องห้าม (พ.ร.บ.อาหาร) · โหมด: ${claimsMode}\nวลีที่ชน: ${bannedClaims.join(", ")}\nข้อความบอท: ${outReply}\n———\nLineOA: ${name}`,
+      );
+    }
+    if (blockClaim) outReply = CLAIMS_BLOCKED_REPLY;
+  }
   const assistantSaved = outReply;
   await deliverReply(replyToken, userId, withResume(outReply), config.quotaSaver);
 
@@ -855,6 +876,9 @@ async function handleAdminGroupCommand(
 
 /** ข้อความพักสายตอนตัวแปรโอนเงิน resolve ไม่ได้ — ไม่ให้ลูกค้าเงียบ แต่ก็ไม่ส่งเลขบัญชีผิด (แอดมินถูก push แล้ว) */
 const TRANSFER_UNRESOLVED_REPLY = "ขอสักครู่นะคะ ปลาทูขอเช็คข้อมูลการโอนให้แน่ใจก่อน เดี๋ยวรีบแจ้งกลับเลยค่ะ 🙏";
+
+/** ข้อความพักสายตอน claims guard โหมด "บล็อก" จับคำโฆษณาต้องห้าม — ไม่ส่งของจริง (แอดมินถูก push แล้ว) */
+const CLAIMS_BLOCKED_REPLY = "ขอสักครู่นะคะ ปลาทูขอเช็คข้อมูลให้ชัดเจนก่อน เดี๋ยวรีบแจ้งกลับค่ะ 🙏";
 
 const RESET_COMMAND = "/reset";
 

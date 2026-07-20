@@ -102,6 +102,28 @@ export function unresolvedTransferVars(outgoing: string): string[] {
   return TRANSFER_VARS.filter((t) => outgoing.includes(t));
 }
 
+// ---- claims blocklist (พ.ร.บ.อาหาร · D-26) — คำโฆษณาต้องห้ามจากชีต ----
+
+/** แยกลิสต์คั่นด้วย comma จาก config → วลี (trim · ตัดว่าง) */
+export function parseClaimsList(raw: string | undefined): string[] {
+  return (raw ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+}
+
+/**
+ * หา "วลีโฆษณาต้องห้าม" ในข้อความส่งออก — match แบบ **วลี** ไม่ใช่คำเดี่ยว (เจ้าของตั้งลิสต์เป็นวลี)
+ * 🔴 ยกเว้นชนะ: ถ้าวลีต้องห้าม b เป็นส่วนหนึ่งของ "วลียกเว้น" e ที่ปรากฏในข้อความ → ไม่นับ
+ *    (กัน "รักษา" ใน "วิธีเก็บรักษา" ชนแบบ KI-01 ซ้ำรอย · เจ้าของคุมทั้ง 2 ลิสต์ในชีต)
+ */
+export function findBannedClaims(text: string, banned: string[], exceptions: string[]): string[] {
+  const hits: string[] = [];
+  for (const b of banned) {
+    if (!b || !text.includes(b)) continue;
+    const excused = exceptions.some((e) => e.includes(b) && text.includes(e));
+    if (!excused) hits.push(b);
+  }
+  return hits;
+}
+
 /** ดึงตัวเลข "ราคา" (3-5 หลัก) จากข้อความ */
 export function extractPriceNumbers(text: string): string[] {
   return text.match(/\d{3,5}/g) ?? [];

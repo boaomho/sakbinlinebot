@@ -8,7 +8,7 @@ import {
   liveProductSkus,
   buildPriceTable,
 } from "@/lib/core/pricing";
-import { computeQuote, hasUnresolvedPricingVars, checkReplyNumbers, resolveTransferVars, unresolvedTransferVars } from "@/lib/agent/quote";
+import { computeQuote, hasUnresolvedPricingVars, checkReplyNumbers, resolveTransferVars, unresolvedTransferVars, findBannedClaims, parseClaimsList } from "@/lib/agent/quote";
 import { productsRows, promoRows, PRICING_CONFIG } from "../harness/botlib-fixture";
 import { testConfig } from "../harness/fixtures";
 import type { BotLibrary } from "@/lib/sheets/loader";
@@ -178,6 +178,43 @@ describe("resolveTransferVars / unresolvedTransferVars — ข้อมูลโ
 
   it("ข้อความไม่มีตัวแปรโอน → unresolved ว่าง (ไม่บล็อกเกินจำเป็น)", () => {
     expect(unresolvedTransferVars("สวัสดีค่ะ รับกี่ถ้วยดีคะ")).toEqual([]);
+  });
+});
+
+describe("findBannedClaims — claims blocklist วลี + คำยกเว้นชนะ (D-26 · พ.ร.บ.อาหาร)", () => {
+  // ลิสต์จริงจากชีตเจ้าของ
+  const BANNED = ["ช่วยรักษา", "รักษาโรค", "บำบัดโรค", "บรรเทาอาการ", "ป้องกันโรค", "ลดน้ำหนัก", "เสริมภูมิคุ้มกัน", "บำรุงร่างกาย", "ปลอดสารพิษ 100%", "รักษาหาย", "หายขาด", "ไม่มีสารเคมี 100%"];
+  const EXCEPT = ["เก็บรักษา", "วิธีเก็บรักษา", "ลดราคา", "ลดเหลือ", "ส่วนลด"];
+
+  it("🔴 'วิธีเก็บรักษา...' → ไม่ถูกจับ (วลี ไม่ใช่คำเดี่ยว 'รักษา')", () => {
+    expect(findBannedClaims("เก็บในตู้เย็น วิธีเก็บรักษาให้อยู่ได้นาน 1 เดือนค่ะ", BANNED, EXCEPT)).toEqual([]);
+  });
+
+  it("🔴 'ช่วยรักษาโรค...' → จับได้", () => {
+    const hits = findBannedClaims("น้ำพริกนี้ช่วยรักษาโรคกระเพาะได้ค่ะ", BANNED, EXCEPT);
+    expect(hits).toContain("ช่วยรักษา");
+    expect(hits).toContain("รักษาโรค");
+  });
+
+  it("ลดราคา (คำยกเว้น) → ไม่ชน 'ลดน้ำหนัก'", () => {
+    expect(findBannedClaims("ช่วงนี้ลดราคาพิเศษค่ะ", BANNED, EXCEPT)).toEqual([]);
+  });
+
+  it("🔴 คำยกเว้นซ้อนคำต้องห้าม → ยกเว้นชนะ", () => {
+    // สมมติ blocklist มีคำสั้น 'รักษา' · ปรากฏในวลียกเว้น 'วิธีเก็บรักษา' → ไม่นับ
+    expect(findBannedClaims("วิธีเก็บรักษาในตู้เย็น", ["รักษา"], ["วิธีเก็บรักษา"])).toEqual([]);
+    // แต่ถ้าโผล่นอกวลียกเว้น → นับ
+    expect(findBannedClaims("ช่วยรักษาให้หาย", ["รักษา"], ["วิธีเก็บรักษา"])).toEqual(["รักษา"]);
+  });
+
+  it("ข้อความปกติ (ขายด้วยรสชาติ) → ไม่จับ", () => {
+    expect(findBannedClaims("น้ำพริกปลาทูหอมอร่อย ทานกับข้าวสวยร้อน ๆ ดีค่ะ", BANNED, EXCEPT)).toEqual([]);
+  });
+
+  it("parseClaimsList — split comma + trim + ตัดว่าง", () => {
+    expect(parseClaimsList("ช่วยรักษา, รักษาโรค ,,ลดน้ำหนัก")).toEqual(["ช่วยรักษา", "รักษาโรค", "ลดน้ำหนัก"]);
+    expect(parseClaimsList("")).toEqual([]);
+    expect(parseClaimsList(undefined)).toEqual([]);
   });
 });
 

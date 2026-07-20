@@ -46,7 +46,7 @@ tests/
 - `formatOrderSummary`(" · ")/`formatLinesForSheet`(" | ") · `formatPayment` · `buildBreakdownVars`→{วิธีคิดยอด}/{ทางเลือกถัดไป} · `buildProductNameMap` · `resolveRuntimeVars(text, 5 vars)`
 - `buildPriceTable(sku, promoRows, productRows, config, payment, now?) → {sku,name,unit,ceiling,rows[{qty,subtotal,shippingFee,total,freeShip}],error}` (D-24 · enumerate 1..เพดาน เรียก calculatePrice ทุกแถว = เลขเดียวกับ gate) · `liveProductSkus`/`resolveAiItems`(D-20)
 
-**lib/agent/quote.ts** — `computeQuote(pending, lib, config, now) → {price, vars, ok}|null` · `hasUnresolvedPricingVars` (guard 5) · `checkReplyNumbers(reply, allowedText, extraNums)` (guard 2 · whitelist จากบล็อก inject) · **D-25** `resolveTransferVars(text, config)` แทน {เลขที่บัญชี}/{ชื่อบัญชี}/{ธนาคาร}+alias{เลขพร้อมเพย์} จาก config.raw · `unresolvedTransferVars(text)` เหลือค้าง→route บล็อกส่ง+push แอดมิน (guard ร้ายแรง)
+**lib/agent/quote.ts** — `computeQuote(pending, lib, config, now) → {price, vars, ok}|null` · `hasUnresolvedPricingVars` (guard 5) · `checkReplyNumbers(reply, allowedText, extraNums)` (guard 2 · whitelist จากบล็อก inject) · **D-25** `resolveTransferVars(text, config)` แทน {เลขที่บัญชี}/{ชื่อบัญชี}/{ธนาคาร}+alias{เลขพร้อมเพย์} จาก config.raw · `unresolvedTransferVars(text)` เหลือค้าง→route บล็อกส่ง+push แอดมิน (guard ร้ายแรง) · **D-26** `findBannedClaims(text, banned, exceptions)` (วลี · ยกเว้นชนะ) + `parseClaimsList` — claims blocklist พ.ร.บ.อาหาร (โหมด เตือน/บล็อก)
 
 **lib/sheets/loader.ts** — `loadBotLibrary(): Promise<BotLibrary|null>` batchGet 8 แท็บ + cache · `BOTLIB_TABS`
 **lib/sheets/columns.ts** — `resolveColumns(header, required, label) → map|null` (all-or-nothing) · `cell` · `tabToText` · `rowFromValues` · `columnLetter`
@@ -91,6 +91,8 @@ tests/
 `ชื่อบอท` · `ชื่อร้าน`(/`ชื่อร้าน/แบรนด์`) · `เพศบอท` · `ใช้ emoji`(/`ใช้_emoji`/`emoji`) · `temperature` · `maxOutputTokens`(พื้น 4096) · `แสดง_typing`(/`typing`) · `debounce_รวบคำถาม`(prefix `debounce`) · `หน่วง_ระหว่างบอลลูน`(/`หน่วง_ระหว่างข้อความ`) · `อายุลิงก์สลิป_วัน` · `เวลาตัดรอบออเดอร์`(/`เวลารอบตัดออเดอร์`) · `เลขออเดอร์_รีเซ็ตทุกวัน` · `คำ_handoff`(/`คำ_ส่งต่อแอดมิน`/`keyword_handoff`) · `คืนสิทธิ์บอท_หลังแชทเงียบ` · `ประโยคเปลี่ยนมือ_บอทรับต่อ` · `เปิด_คำสั่งเทสต์` · `โหมดประหยัดโควตา`
 **pricing (D-15/D-22 · lib/core/pricing อ่านจาก config.raw):** `ยอดขั้นต่ำส่งฟรี_บาท`(275) · `ค่าส่ง_มาตรฐาน`(30) · `ค่าส่ง_COD_เพิ่ม`(0) · `เพดานจำนวน_คูณโปรใหญ่สุด`(2) · `จำนวนที่ไม่มีโปร_คิดยังไง`(ค่า: `เทียบโปรฐาน`=default/ว่าง · `ราคาปกติ` · อื่น→handoff)
 > ⚠️ 4 คีย์แรก: ว่าง/อ่านไม่ได้ → error+handoff (ไม่มี fallback) · `จำนวนที่ไม่มีโปร_คิดยังไง`: ว่าง/ไม่มี key → default `เทียบโปรฐาน` (เลือกวิธี ไม่ใช่ตัวเลข) · ค่าที่พิมพ์ผิด(ไม่ว่าง) → handoff
+**โอนเงิน (D-25 · resolve ฝั่งโค้ด quote.ts):** `เลขที่บัญชี`(alias `เลขพร้อมเพย์`) · `ชื่อบัญชี` · `ธนาคาร` — resolve ไม่ได้ → บล็อกส่ง+push
+**claims (D-26 · พ.ร.บ.อาหาร):** `คำต้องห้าม_โฆษณา`(วลี,คั่น ,) · `คำยกเว้น_โฆษณา` · `โหมดคำต้องห้าม`(`เตือน`=default/`บล็อก`)
 **สวิตช์:** `เปิด_ติดแท็ก` · `เปิด_ส่งต่อแอดมิน` · `เปิด_ระบบออเดอร์` · `เปิด_ระบบติดตาม` · `เปิด_การ์ด_flex` · `เปิด_จังหวะหน่วงเหมือนคน`
 > ค่าสวิตช์ที่รับ: `เปิด/true/on/1/ใช่/yes` = true · `ปิด/false/off/0/ไม่/no/ว่าง` = false
 
