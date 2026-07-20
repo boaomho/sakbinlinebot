@@ -28,6 +28,8 @@ export interface GeminiTurnInput {
   stepText: string;
   faqText: string;
   catalogText: string;
+  objectionText: string;
+  exampleText: string;
   stateText: string;
   historyText: string;
   userMessage: string;
@@ -57,6 +59,8 @@ export interface GeminiTurnOutput {
   imageIntent: ImageIntent;
   /** สิ่งที่ AI อ่านได้จากรูป (สลิป: ยอด/ธนาคาร/เวลา · อื่นๆ: สรุปสั้นๆ) */
   imageNote: string;
+  /** objection_id ที่ AI คิดว่าเจอ (หรือ "none") — log คู่กับ code-match หา keyword ที่ยังไม่อยู่ในชีต (D-27) */
+  objectionDetected: string;
   /** true = ผลนี้มาจาก fallback (timeout/MAX_TOKENS/parse fail/error) ไม่ใช่คำตอบจริงจาก AI
    *  ใช้ให้โค้ดรู้ว่า image_intent/order ไม่น่าเชื่อ ต้องปกป้องเรื่องเงินเอง (ถือรูปเป็นสลิปไว้ก่อน) */
   degraded: boolean;
@@ -93,6 +97,7 @@ const RESPONSE_SCHEMA = {
     order_edit_request: { type: Type.BOOLEAN },
     image_intent: { type: Type.STRING },
     image_note: { type: Type.STRING },
+    objection_detected: { type: Type.STRING },
   },
   required: [
     "reply",
@@ -105,6 +110,7 @@ const RESPONSE_SCHEMA = {
     "order_edit_request",
     "image_intent",
     "image_note",
+    "objection_detected",
   ],
 };
 
@@ -129,6 +135,7 @@ function fallback(stage: string): GeminiTurnOutput {
     orderEditRequest: false,
     imageIntent: "other",
     imageNote: "",
+    objectionDetected: "none",
     degraded: true,
   };
 }
@@ -194,6 +201,8 @@ export async function runSalesTurn(input: GeminiTurnInput): Promise<GeminiTurnOu
     stepText: input.stepText,
     faqText: input.faqText,
     catalogText: input.catalogText,
+    objectionText: input.objectionText,
+    exampleText: input.exampleText,
     stateText: input.stateText,
     historyText: input.historyText,
     userMessage: input.userMessage,
@@ -337,6 +346,7 @@ export async function runSalesTurn(input: GeminiTurnInput): Promise<GeminiTurnOu
       orderEditRequest: Boolean(parsed.order_edit_request),
       imageIntent: isValidImageIntent(parsed.image_intent) ? parsed.image_intent : "other",
       imageNote: typeof parsed.image_note === "string" ? parsed.image_note : "",
+      objectionDetected: typeof parsed.objection_detected === "string" && parsed.objection_detected.trim() ? parsed.objection_detected.trim() : "none",
       degraded: false,
     };
   } catch (error) {

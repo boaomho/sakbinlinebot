@@ -402,6 +402,60 @@ export function buildPriceTable(
   return { sku, name, unit, ceiling: rows[rows.length - 1].qty, rows, error: null };
 }
 
+/**
+ * เซตเลขราคา "ที่บอทพูดได้ถูกต้อง" (D-27 · KI-02 price guard) — ครอบทุกแบบกัน false-block:
+ *   1. เลขดิบทุกตัวใน CSV_Products + CSV_Promo (ราคาปกติ/โปร/ประหยัด/ค่าส่ง/ยอดจ่าย — 95/285/275/35/…)
+ *   2. ตารางคำนวณทุกจำนวน (subtotal/shippingFee/total จาก buildPriceTable)
+ *   3. derived ต่อหน่วย: floor/round/ceil ของ subtotal÷qty และ total÷qty (เช่น 440÷5=88)
+ * 🔴 กว้างไว้ก่อน (allowed หลุด = พิตช์ถูกโดนบล็อก แย่กว่าพูดผิดนานๆ ครั้ง) · เลขมั่ว (28/200) ไม่อยู่ในนี้
+ */
+export function buildAllowedPriceStrings(
+  productRows: string[][],
+  promoRows: string[][],
+  config: Record<string, string>,
+  paymentMethod: string,
+  now?: Date,
+): Set<string> {
+  const out = new Set<string>();
+  const addNum = (n: number) => {
+    if (Number.isFinite(n) && n > 0) out.add(String(n));
+  };
+  const addCell = (v: string | undefined) => {
+    for (const m of String(v ?? "").match(/\d{2,5}/g) ?? []) addNum(Number(m));
+  };
+  // 1. เลขดิบ "เฉพาะคอลัมน์ราคา" (ไม่กวาดทั้งแถว — กัน sku/ขนาด/อย./วันที่ เช่น "200 มล." ปลอมเป็น allowed)
+  const prodCols = resolveCols(productRows, [PRODUCT_COLS.normalPrice]);
+  if (prodCols) {
+    for (let i = prodCols.headerRow + 1; i < productRows.length; i++) addCell(productRows[i][prodCols.cols[PRODUCT_COLS.normalPrice]]);
+  }
+  const PROMO_PRICE_HEADERS = ["ราคาปกติ", "ราคาโปร", "ประหยัด", "ค่าส่ง", "ยอดที่ลูกค้าจ่าย"];
+  if (promoRows && promoRows.length > 0) {
+    for (let h = 0; h < Math.min(promoRows.length, 5); h++) {
+      const header = promoRows[h].map(normHeader);
+      const idxs = PROMO_PRICE_HEADERS.map((name) => header.indexOf(name)).filter((i) => i >= 0);
+      if (idxs.length === 0) continue;
+      for (let i = h + 1; i < promoRows.length; i++) for (const idx of idxs) addCell(promoRows[i][idx]);
+      break;
+    }
+  }
+  // 2+3. ตารางคำนวณ + derived ต่อหน่วย (จาก sku live)
+  for (const sku of liveProductSkus(productRows)) {
+    const table = buildPriceTable(sku, promoRows, productRows, config, paymentMethod, now);
+    for (const r of table.rows) {
+      addNum(r.subtotal);
+      addNum(r.shippingFee);
+      addNum(r.total);
+      for (const base of [r.subtotal, r.total]) {
+        const per = base / r.qty;
+        addNum(Math.floor(per));
+        addNum(Math.round(per));
+        addNum(Math.ceil(per));
+      }
+    }
+  }
+  return out;
+}
+
 // ── formatters + runtime-variable resolver (D-15 · commit 2-pass) ──
 
 /** "<ชื่อ> x<qty>" ต่อรายการ · คั่นด้วย sep — คนอ่าน (" · ") vs ชีต (" | ") */

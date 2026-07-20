@@ -74,6 +74,7 @@ export function turn(partial: Partial<GeminiTurnOutput> = {}): GeminiTurnOutput 
     orderEditRequest: false,
     imageIntent: "other" as ImageIntent,
     imageNote: "",
+    objectionDetected: "none",
     degraded: false,
     ...partial,
   };

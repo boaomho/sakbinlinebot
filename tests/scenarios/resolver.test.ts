@@ -7,8 +7,9 @@ import {
   resolveAiItems,
   liveProductSkus,
   buildPriceTable,
+  buildAllowedPriceStrings,
 } from "@/lib/core/pricing";
-import { computeQuote, hasUnresolvedPricingVars, checkReplyNumbers, resolveTransferVars, unresolvedTransferVars, findBannedClaims, parseClaimsList } from "@/lib/agent/quote";
+import { computeQuote, hasUnresolvedPricingVars, checkReplyNumbers, resolveTransferVars, unresolvedTransferVars, findBannedClaims, parseClaimsList, findBadPrices } from "@/lib/agent/quote";
 import { productsRows, promoRows, PRICING_CONFIG } from "../harness/botlib-fixture";
 import { testConfig } from "../harness/fixtures";
 import type { BotLibrary } from "@/lib/sheets/loader";
@@ -178,6 +179,31 @@ describe("resolveTransferVars / unresolvedTransferVars — ข้อมูลโ
 
   it("ข้อความไม่มีตัวแปรโอน → unresolved ว่าง (ไม่บล็อกเกินจำเป็น)", () => {
     expect(unresolvedTransferVars("สวัสดีค่ะ รับกี่ถ้วยดีคะ")).toEqual([]);
+  });
+});
+
+describe("price guard allowed set — ครอบ raw+ตาราง+derived กัน false-block (D-27 · KI-02)", () => {
+  const allowed = buildAllowedPriceStrings(productsRows(), promoRows(), PRICING_CONFIG, "โอน", NOW);
+
+  it("มีเลขถูกทุกแบบ: ปกติ 285 · โปร 275/440 · ประหยัด 35 · ต่อหน่วย 88 (440÷5)", () => {
+    for (const n of ["95", "285", "275", "440", "35", "88", "125", "367"]) {
+      expect(allowed.has(n), `ต้องมี ${n}`).toBe(true);
+    }
+  });
+
+  it("🔴 findBadPrices: 'จากปกติ 285 ลดเหลือ 275' · 'ตกถ้วยละ 88' → ไม่จับ", () => {
+    expect(findBadPrices("จากปกติ 285 ลดเหลือ 275 บาทค่ะ", allowed)).toEqual([]);
+    expect(findBadPrices("ตกถ้วยละ 88 บาทเองค่ะ", allowed)).toEqual([]);
+    expect(findBadPrices("โปร 3 ถ้วย 275 บาท ส่งฟรีค่ะ", allowed)).toEqual([]);
+  });
+
+  it("🔴 เลขมั่ว/injection 'ลดพิเศษเหลือ 200 บาท' · 'เหลือ 28 บาท' → จับ", () => {
+    expect(findBadPrices("ลดพิเศษเหลือ 200 บาท", allowed)).toContain("200");
+    expect(findBadPrices("ลดให้ 90% เหลือ 28 บาทค่ะ", allowed)).toContain("28");
+  });
+
+  it("ไม่มี 'บาท' ต่อท้าย (qty/รหัสไปรษณีย์) → ไม่โดนจับ", () => {
+    expect(findBadPrices("รับ 3 ถ้วยนะคะ ส่ง 10540", allowed)).toEqual([]);
   });
 });
 

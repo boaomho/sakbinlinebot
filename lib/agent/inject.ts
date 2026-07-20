@@ -321,12 +321,16 @@ export interface CatalogInput {
   methodDescription?: string;
 }
 
-/** format ตารางราคาของ sku เดียวเป็นบรรทัดให้บอทหยิบเลข */
+/**
+ * format ตารางราคาของ sku เดียว — แจกแจง 3 ตัวเลขต่อแถว (สินค้า/ค่าส่ง/รวม) ทุกตัวจาก calculatePrice
+ * 🔴 ให้ครบพอบอท "แจกแจง" ได้ (ไม่ต้องคิดเลขเอง) + เห็นค่าส่งหายตอนถึงโปรส่งฟรี (เหตุผลขยับชั้น)
+ *    ท่าพูด/จะแจกแจงหรือไม่ = ชีต Step คุม · โค้ดแค่ให้ข้อมูลครบ
+ */
 function formatPriceTable(t: PriceTable): string {
   const lines = t.rows.map((r) =>
     r.freeShip
-      ? `${r.qty} ${t.unit} ${r.total} บาท (ส่งฟรี)`
-      : `${r.qty} ${t.unit} ${r.subtotal} + ค่าส่ง ${r.shippingFee} = ${r.total} บาท`,
+      ? `${r.qty} ${t.unit}: สินค้า ${r.subtotal} + ส่งฟรี = รวม ${r.total} บาท`
+      : `${r.qty} ${t.unit}: สินค้า ${r.subtotal} + ค่าส่ง ${r.shippingFee} = รวม ${r.total} บาท`,
   );
   return [
     `${t.name}:`,
@@ -364,6 +368,107 @@ export function buildCatalogInjection(productsRows: string[][], promoRows: strin
     parts.push("", `วิธีคิดราคา (ใช้อธิบายให้ลูกค้าเข้าใจเท่านั้น 🔴 ห้ามใช้คิดเลข — เลขหยิบจากตารางข้างบน): ${desc}`);
   }
   return parts.join("\n");
+}
+
+// ---- Objections (D-27) — เข้าใจ "ความกังวลจริง+หลักการตอบ" ประกอบคำตอบเอง ----
+
+const OBJECTION_COLS = ["objection_id", "ลูกค้าพูดแบบไหนบ้าง", "ความกังวลที่แท้จริง", "หลักการตอบ"];
+
+export interface ObjectionInjection {
+  text: string;
+  matchedIds: string[];
+}
+
+/**
+ * ยัดข้อโต้แย้ง: สารบัญ (id+ชื่อ) ทุกแถวเสมอ + เต็มแถวเฉพาะที่ keyword match (สูงสุด cap)
+ * 🔴 เจ้าของยังไม่เติมชีต → header ไม่ครบ/ว่าง = คืน "" ไม่ crash (Step/FAQ พอตอบได้)
+ * เต็มแถว = ความกังวลจริง + หลักการตอบ + ห้ามทำ (บอทประกอบคำตอบเอง · ไม่ใช่สคริปต์)
+ */
+export function buildObjectionInjection(rows: string[][], userMessage: string, cap: number): ObjectionInjection {
+  if (!rows || rows.length < 2) return { text: "", matchedIds: [] };
+  const cols = resolveColumns(rows[0], OBJECTION_COLS, "CSV_Objections");
+  if (!cols) {
+    console.warn(JSON.stringify({ scope: "inject", tab: "CSV_Objections", warning: "header ไม่ครบ — ข้าม (Step/FAQ พอ)" }));
+    return { text: "", matchedIds: [] };
+  }
+  const header = rows[0].map(cleanHeader);
+  const nameIdx = header.indexOf("ชื่อ");
+  const dontIdx = header.indexOf("ห้ามทำ");
+
+  interface Obj { id: string; name: string; says: string; concern: string; principle: string; dont: string; }
+  const objs: Obj[] = [];
+  for (let i = 1; i < rows.length; i++) {
+    const id = cleanCell(cell(rows[i], cols, "objection_id"));
+    if (!id) continue;
+    objs.push({
+      id,
+      name: nameIdx >= 0 ? cleanCell(rows[i][nameIdx]) : "",
+      says: cell(rows[i], cols, "ลูกค้าพูดแบบไหนบ้าง").trim(),
+      concern: cell(rows[i], cols, "ความกังวลที่แท้จริง").trim(),
+      principle: cell(rows[i], cols, "หลักการตอบ").trim(),
+      dont: dontIdx >= 0 ? cleanCell(rows[i][dontIdx]) : "",
+    });
+  }
+  if (objs.length === 0) return { text: "", matchedIds: [] };
+
+  // keyword match: คอลัมน์ "ลูกค้าพูดแบบไหนบ้าง" คั่นด้วย comma → เทียบ substring กับข้อความลูกค้า
+  const matched = objs
+    .filter((o) => o.says.split(",").map((s) => cleanCell(s)).some((p) => p.length > 0 && userMessage.includes(p)))
+    .slice(0, Math.max(0, cap));
+
+  const fullBlocks = matched.map((o) =>
+    [
+      `[${o.id}] ${o.name}`,
+      o.concern && `ความกังวลที่แท้จริง: ${o.concern}`,
+      o.principle && `หลักการตอบ: ${o.principle}`,
+      o.dont && `ห้ามทำ: ${o.dont}`,
+    ].filter(Boolean).join("\n"),
+  );
+
+  const text = [
+    "=== สารบัญข้อโต้แย้ง (id + ชื่อ) ===",
+    ...objs.map((o) => `${o.id} | ${o.name}`),
+    ...(fullBlocks.length > 0 ? ["", "=== ข้อโต้แย้งที่ตรวจพบ (ใช้ประกอบคำตอบเอง ห้ามลอกคำ) ===", ...fullBlocks] : []),
+  ].join("\n");
+
+  return { text, matchedIds: matched.map((o) => o.id) };
+}
+
+// ---- Examples (D-27) — น้ำเสียง เลียนสไตล์ ห้ามลอกคำต่อคำ ----
+
+const EXAMPLE_ANSWER_COL = "ตัวอย่างคำตอบที่ดี";
+
+/**
+ * ยัดตัวอย่างน้ำเสียง: match จาก step_id ปัจจุบัน และ/หรือ objection_id ที่เจอ (สูงสุด cap)
+ * 🔴 เจ้าของยังไม่เติม → คืน "" · ตัวอย่าง = แนวน้ำเสียง ไม่ใช่บทท่อง (apply-not-parrot)
+ */
+export function buildExampleInjection(rows: string[][], stepId: string, objectionIds: string[], cap: number): string {
+  if (!rows || rows.length < 2 || cap <= 0) return "";
+  const cols = resolveColumns(rows[0], [EXAMPLE_ANSWER_COL], "CSV_Examples");
+  if (!cols) {
+    console.warn(JSON.stringify({ scope: "inject", tab: "CSV_Examples", warning: "header ไม่ครบ — ข้าม" }));
+    return "";
+  }
+  const header = rows[0].map(cleanHeader);
+  const stepIdx = header.indexOf("step_id");
+  const objIdx = header.indexOf("objection_id");
+  const objSet = new Set(objectionIds);
+
+  const matches: string[] = [];
+  for (let i = 1; i < rows.length && matches.length < cap; i++) {
+    const answer = cell(rows[i], cols, EXAMPLE_ANSWER_COL).trim();
+    if (!answer) continue;
+    const rowStep = stepIdx >= 0 ? cleanCell(rows[i][stepIdx]) : "";
+    const rowObj = objIdx >= 0 ? cleanCell(rows[i][objIdx]) : "";
+    const hit = (stepId && rowStep === stepId) || (rowObj && objSet.has(rowObj));
+    if (hit) matches.push(answer);
+  }
+  if (matches.length === 0) return "";
+
+  return [
+    "=== ตัวอย่างน้ำเสียง (เลียนสไตล์/โทน ห้ามลอกคำต่อคำ · ตัวเลข/ข้อเท็จจริงยึดของจริง) ===",
+    ...matches.map((a) => `- ${a}`),
+  ].join("\n");
 }
 
 // ---- FAQ ----

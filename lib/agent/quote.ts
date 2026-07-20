@@ -102,6 +102,15 @@ export function unresolvedTransferVars(outgoing: string): string[] {
   return TRANSFER_VARS.filter((t) => outgoing.includes(t));
 }
 
+/**
+ * KI-02 price guard (D-27) — เลข "X บาท" ที่บอทพูดต้องอยู่ใน allowed (raw+ตาราง+derived จาก buildAllowedPriceStrings)
+ * คืนเลขที่ไม่อยู่ (มั่ว/injection) — route ตัดสินตาม `โหมดราคาผิด` (เตือน=ส่ง+log+push · บล็อก=พักสาย+push)
+ * 🔴 เทียบเฉพาะ "X บาท" (extractBahtNumbers 2-5 หลัก) — qty/รหัสไปรษณีย์ไม่ตามด้วย "บาท" ไม่โดน
+ */
+export function findBadPrices(outgoing: string, allowed: Set<string>): string[] {
+  return extractBahtNumbers(outgoing).filter((n) => !allowed.has(n));
+}
+
 // ---- claims blocklist (พ.ร.บ.อาหาร · D-26) — คำโฆษณาต้องห้ามจากชีต ----
 
 /** แยกลิสต์คั่นด้วย comma จาก config → วลี (trim · ตัดว่าง) */
