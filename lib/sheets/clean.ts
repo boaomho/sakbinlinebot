@@ -24,7 +24,19 @@ export function stripKeyAnnotation(key: string): string {
   return key.replace(/\s*\([^)]*\)\s*$/, "").trim();
 }
 
-/** ทำความสะอาดชื่อหัวคอลัมน์: ตัดอักขระล่องหน + วงเล็บกำกับ */
+/**
+ * emoji/สัญลักษณ์กำกับที่คนใส่หัวคอลัมน์ให้อ่านง่าย (⭐🔴⚠️✅❌●▪ ฯลฯ) — ตัดก่อนเทียบชื่อ
+ * ใช้ "blacklist ช่วง emoji/สัญลักษณ์" ไม่ใช่ whitelist — กันเผลอตัดเครื่องหมายที่ header ใช้จริง
+ * (เช่น "สินค้า+จำนวน" ห้ามตัด + · "ชื่อ-นามสกุล" ห้ามตัด -) · variation selector + ZWJ ตัดด้วย
+ */
+const HEADER_SYMBOLS = /[\u{1F000}-\u{1FAFF}\u{2190}-\u{21FF}\u{2300}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE00}-\u{FE0F}\u{200D}]/gu;
+
+/**
+ * ทำความสะอาดชื่อหัวคอลัมน์: ตัดอักขระล่องหน + emoji/สัญลักษณ์กำกับ + วงเล็บกำกับ
+ * 🔴 เจ้าของใส่ emoji ในหัวคอลัมน์เพื่ออ่านชีตง่าย ("หลักการตอบ ⭐") — โค้ด lookup ด้วยชื่อล้วน
+ *    (ครั้งที่ 3 ที่ header matching พัง: วงเล็บ → substring "PR" → emoji · แก้ที่นี่ที่เดียว ครอบทุกแท็บ)
+ */
 export function cleanHeader(value: string | undefined): string {
-  return stripKeyAnnotation(cleanCell(value));
+  const noSymbols = cleanCell(value).replace(HEADER_SYMBOLS, "");
+  return stripKeyAnnotation(noSymbols).replace(/\s+/g, " ").trim();
 }

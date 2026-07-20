@@ -392,7 +392,7 @@ export function buildObjectionInjection(rows: string[][], userMessage: string, c
     return { text: "", matchedIds: [] };
   }
   const header = rows[0].map(cleanHeader);
-  const nameIdx = header.indexOf("ชื่อ");
+  const nameIdx = header.findIndex((h) => h.startsWith("ชื่อ")); // "ชื่อข้อโต้แย้ง" (ชีตจริง)
   const dontIdx = header.indexOf("ห้ามทำ");
 
   interface Obj { id: string; name: string; says: string; concern: string; principle: string; dont: string; }
@@ -436,7 +436,7 @@ export function buildObjectionInjection(rows: string[][], userMessage: string, c
 
 // ---- Examples (D-27) — น้ำเสียง เลียนสไตล์ ห้ามลอกคำต่อคำ ----
 
-const EXAMPLE_ANSWER_COL = "ตัวอย่างคำตอบที่ดี";
+const EXAMPLE_ANSWER_COL = "คำตอบที่ดี"; // ชีต CSV_Examples จริง (v1.5) ใช้ชื่อนี้ ไม่ใช่ "ตัวอย่างคำตอบที่ดี"
 
 /**
  * ยัดตัวอย่างน้ำเสียง: match จาก step_id ปัจจุบัน และ/หรือ objection_id ที่เจอ (สูงสุด cap)
