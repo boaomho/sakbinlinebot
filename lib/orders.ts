@@ -125,6 +125,8 @@ export interface NewOrderInput {
   itemsJson?: string;
   /** T = ค่าส่ง จาก lib/core/pricing (ตัวเลขล้วน) */
   shippingFee?: string;
+  /** Q = order_id (idempotency key · Step 2 · D-29) */
+  orderId?: string;
 }
 
 export async function appendOrderRow(input: NewOrderInput): Promise<void> {
@@ -149,6 +151,7 @@ export async function appendOrderRow(input: NewOrderInput): Promise<void> {
     เลขTracking: "",
     items_json: sanitizeShortText(input.itemsJson, 1000),
     ค่าส่ง: sanitizeAmount(input.shippingFee),
+    order_id: sanitizeShortText(input.orderId, 40), // Q = idempotency key (D-29)
   };
 
   await withOrdersColumns(async (cols) => {

@@ -10,6 +10,7 @@ const TABLES = [
   "funnel_events",
   "pending_messages",
   "admin_pending_choices",
+  "orders_written",
 ];
 
 /**
@@ -44,4 +45,12 @@ export async function readCustomer(userId: string): Promise<Record<string, unkno
   const sql = neon(url);
   const rows = (await sql("SELECT * FROM customers WHERE user_id = $1", [userId])) as Record<string, unknown>[];
   return rows[0] ?? null;
+}
+
+/** order_id ที่บันทึกว่า "เขียนสำเร็จ" ใน Neon (idempotency source of truth · D-29) */
+export async function readWrittenOrderIds(): Promise<string[]> {
+  const url = assertHarnessDb();
+  const sql = neon(url);
+  const rows = (await sql("SELECT order_id FROM orders_written")) as Record<string, unknown>[];
+  return rows.map((r) => String(r.order_id));
 }

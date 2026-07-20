@@ -70,6 +70,16 @@ export async function ensureSchema(): Promise<void> {
     )
   `;
 
+  // idempotency (Step 2 · D-29): บันทึก order_id ที่ "เขียนชีตสำเร็จแล้ว" เท่านั้น (source of truth = Neon ไม่ใช่ชีต)
+  // 🔴 มีแถวนี้ = การันตีว่าเขียนสำเร็จ → ห้ามเขียนซ้ำ · "มี order_id ใน pending" ≠ เขียนสำเร็จ (append อาจล้ม)
+  await sql`
+    CREATE TABLE IF NOT EXISTS orders_written (
+      order_id TEXT PRIMARY KEY,
+      user_id TEXT,
+      written_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+
   await sql`
     CREATE TABLE IF NOT EXISTS funnel_events (
       id BIGSERIAL PRIMARY KEY,
@@ -373,8 +383,29 @@ export async function mergePendingOrder(userId: string, fields: PendingOrder): P
     if (typeof v === "string" && v.trim() !== "") merged[k] = v.trim();
   }
   if (Array.isArray(fields.items) && fields.items.length > 0) merged.items = fields.items;
+  // order_id: set ครั้งเดียวตอนยังไม่มี (เสถียรข้าม retry) · ห้ามทับของเดิม
+  if (typeof fields.order_id === "string" && fields.order_id.trim() && !merged.order_id) {
+    merged.order_id = fields.order_id.trim();
+  }
   await sql`UPDATE customers SET pending_order = ${JSON.stringify(merged)}::jsonb WHERE user_id = ${userId}`;
   return merged;
+}
+
+/** idempotency: order_id นี้เขียนชีตสำเร็จแล้วหรือยัง (source of truth = Neon · เร็ว มี index · ไม่กิน Sheets quota) */
+export async function isOrderWritten(orderId: string): Promise<boolean> {
+  if (!orderId) return false;
+  await ensureSchema();
+  const sql = getSql();
+  const rows = await sql`SELECT 1 FROM orders_written WHERE order_id = ${orderId} LIMIT 1`;
+  return rows.length > 0;
+}
+
+/** บันทึกว่า order_id เขียนชีตสำเร็จแล้ว — เรียกหลัง appendOrderRow คืน ok เท่านั้น (ON CONFLICT กันซ้ำ) */
+export async function markOrderWritten(orderId: string, userId: string): Promise<void> {
+  if (!orderId) return;
+  await ensureSchema();
+  const sql = getSql();
+  await sql`INSERT INTO orders_written (order_id, user_id) VALUES (${orderId}, ${userId}) ON CONFLICT (order_id) DO NOTHING`;
 }
 
 /** ออเดอร์สมบูรณ์ขึ้นชีตแล้ว → ล้าง pending_order + สลิป พร้อมกัน */

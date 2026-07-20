@@ -53,6 +53,21 @@ export interface PendingOrder {
   เบอร์?: string;
   การชำระเงิน?: string;
   items?: OrderItem[];
+  /** order_id (idempotency key) — สร้างตอน items แรกเข้า pending · เสถียรข้าม retry (Step 2 · D-29) */
+  order_id?: string;
+}
+
+/**
+ * สร้าง order_id `<prefix>-YYYYMMDD-xxxxxx` (idempotency key) — pure
+ * @param prefix รหัสนำหน้าจากชีต (default "SKB") · @param now เวลาอ้างอิง · @param suffix inject สำหรับเทส (ปกติสุ่ม)
+ * 🔴 YYYYMMDD = วันไทย (UTC+7) · suffix = a-z0-9 6 ตัว (สุ่ม) — โครงสร้าง key ไม่ใช่กฎธุรกิจ (prefix เท่านั้นที่คุมจากชีต)
+ */
+export function generateOrderId(prefix: string, now: Date, suffix?: string): string {
+  const bkk = new Date(now.getTime() + 7 * 60 * 60 * 1000);
+  const ymd = `${bkk.getUTCFullYear()}${String(bkk.getUTCMonth() + 1).padStart(2, "0")}${String(bkk.getUTCDate()).padStart(2, "0")}`;
+  const rand = suffix ?? Math.random().toString(36).slice(2, 8).padEnd(6, "0");
+  const p = (prefix || "SKB").trim() || "SKB";
+  return `${p}-${ymd}-${rand}`;
 }
 
 /** normalize items เพื่อเทียบ (เรียง sku + sku/qty) — ใช้ตัดสิน "items เปลี่ยนมั้ย" (deterministic) */

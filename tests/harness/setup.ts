@@ -80,6 +80,7 @@ vi.mock("googleapis", async () => {
   const values = {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     append: async (p: any) => {
+      if (sheetsCalls.failAppend) throw new Error("simulated Sheets append failure (403/quota)");
       sheetsCalls.appends.push({ range: p.range, values: p.requestBody.values });
       return { data: {} };
     },

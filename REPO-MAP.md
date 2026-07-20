@@ -38,7 +38,7 @@ tests/
 ## 2. Export หลัก (ชื่อ · หน้าที่)
 **lib/core/orders.ts** (pure)
 - `evaluateOrderGate({pending, slipPresent, priceOk}) → {payment, complete, waitTag, missing, brokenOrder, readyExceptPrice}` — ตัดสินออเดอร์ครบ/ไม่ครบ (COD: ชื่อ+ที่อยู่+เบอร์+items ไม่ว่าง+priceOk · โอน: +สลิป) · `readyExceptPrice`=complete ถ้าสมมติ priceOk (D-23 · แจ้งแอดมิน "ราคาคำนวณไม่ได้" ตอนข้อมูลครบ)
-- `PendingOrder {ชื่อ?,ที่อยู่?,เบอร์?,การชำระเงิน?,items?}` · `normalizeItems`/`itemsEqual` (ตัดสิน "items เปลี่ยน")
+- `PendingOrder {ชื่อ?,ที่อยู่?,เบอร์?,การชำระเงิน?,items?,order_id?}` · `normalizeItems`/`itemsEqual` (ตัดสิน "items เปลี่ยน") · **D-29** `generateOrderId(prefix, now, suffix?)` → `SKB-YYYYMMDD(ไทย)-xxxxxx`
 - `addressComplete(p)` · `nameComplete(p)` · `sanitizePhone(s)` · `buildNewOrderAdminText(summary,total,payment,name,phone)`/`buildBrokenOrderAdminText`/`buildPriceStuckAdminText(pending,error,name,itemsText)` (D-23 · ข้อมูลลูกค้าเต็ม)
 
 **lib/core/pricing.ts** (pure · D-15) — `calculatePrice({items,paymentMethod,now?}, promoRows, productRows, config) → {lines(+basePromo/extraQty/extraAmount/isExactTier), subtotal, shippingFee, total, nextTier, error, needsHandoff}`
@@ -55,7 +55,7 @@ tests/
 **lib/orders.ts** — `appendOrderRow(input)` · `listPendingOrders()` · `markOrderSent(row, num)` · `ORDERS_HEADER` (24 คอล A–X, header-driven)
 **lib/gemini.ts** — `runSalesTurn(GeminiTurnInput{configText,stepText,faqText,catalogText,objectionText,exampleText,stateText,historyText,...}) → GeminiTurnOutput{reply, stage, tagsAdd, handoff, orderData{ชื่อ?,ที่อยู่?,เบอร์?,items?}, paymentMethod, orderEditRequest, imageIntent, imageNote, objectionDetected(D-27), degraded}`
 **lib/config.ts** — `getConfig()` · `resolveFeatureSwitches(config) → FeatureSwitches` · `formatConfigForPrompt`
-**lib/db.ts** — `ensureCustomer`/`mergePendingOrder`(items)/`setProposedOrder`(bot_proposal · คอลัมน์ `proposed_order` JSONB)/`reconcileWaitTags`(ลบเฉพาะ รอโอน/รอที่อยู่)/`resetCustomerMemory`/`nextOrderNumber`(atomic · KI-05) ฯลฯ · `CustomerState.tags` inject เข้า `<สถานะลูกค้า>` ทุกเทิร์น (คุมเงื่อนไขขายด้วยแท็กได้)
+**lib/db.ts** — `ensureCustomer`/`mergePendingOrder`(items+order_id)/`reconcileWaitTags`(ลบเฉพาะ รอโอน/รอที่อยู่)/`resetCustomerMemory`(ล้าง human_mode ด้วย · D-25)/`nextOrderNumber`(atomic · ลำดับ col A)/**D-29** `isOrderWritten`/`markOrderWritten`(ตาราง `orders_written` · idempotency source of truth) ฯลฯ · `CustomerState.tags` inject เข้า `<สถานะลูกค้า>` ทุกเทิร์น (คุมเงื่อนไขขายด้วยแท็กได้)
 
 ## 3. จุดประกอบ prompt (ตามลำดับ)
 1. `route.ts processMessage` → `loadBotLibrary()` ได้ CSV_Step/FAQ/Products/Promo/Config
@@ -96,6 +96,7 @@ tests/
 **claims (D-26 · พ.ร.บ.อาหาร):** `คำต้องห้าม_โฆษณา`(วลี,คั่น ,) · `คำยกเว้น_โฆษณา` · `โหมดคำต้องห้าม`(`เตือน`=default/`บล็อก`)
 **price guard (D-27 · KI-02):** `โหมดราคาผิด`(`เตือน`=default/`บล็อก`)
 **objections/examples (D-27):** `จำนวนข้อโต้แย้งที่ยัดเข้า prompt`(2) · `จำนวนตัวอย่างที่ยัดเข้า prompt`(3)
+**order_id (D-29):** `รหัสนำหน้าออเดอร์`(default `SKB`) · `เลขออเดอร์_รีเซ็ตทุกวัน`(ลำดับ col A)
 **สวิตช์:** `เปิด_ติดแท็ก` · `เปิด_ส่งต่อแอดมิน` · `เปิด_ระบบออเดอร์` · `เปิด_ระบบติดตาม` · `เปิด_การ์ด_flex` · `เปิด_จังหวะหน่วงเหมือนคน`
 > ค่าสวิตช์ที่รับ: `เปิด/true/on/1/ใช่/yes` = true · `ปิด/false/off/0/ไม่/no/ว่าง` = false
 

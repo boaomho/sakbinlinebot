@@ -42,6 +42,8 @@ export const sheetsCalls = {
   botLibReturn: {} as Record<string, string[][]>,
   /** ranges ที่ถูกขอครั้งล่าสุด (ตรวจว่ายิง 1 call ครบทุกแท็บ) */
   lastBatchGetRanges: [] as string[],
+  /** จำลอง append ล้ม (403/network/quota) — เทส idempotency: append ล้ม → retry เขียนใหม่ (D-29) */
+  failAppend: false,
 };
 
 /** สลิปที่อัปโหลด (mock lib/blob) */
@@ -96,6 +98,7 @@ export function resetState(): void {
   sheetsCalls.ordersHeader.length = 0;
   sheetsCalls.botLibReturn = {};
   sheetsCalls.lastBatchGetRanges = [];
+  sheetsCalls.failAppend = false;
   blobState.uploaded.length = 0;
   blobState.seq = 0;
   geminiState.script = [];

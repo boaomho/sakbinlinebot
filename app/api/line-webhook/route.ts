@@ -20,6 +20,8 @@ import {
   setLastSlipPathname,
   mergePendingOrder,
   clearPendingOrderAndSlip,
+  isOrderWritten,
+  markOrderWritten,
   setHasWrittenOrder,
   setPaidNoAddressNotified,
   reconcileWaitTags,
@@ -63,7 +65,7 @@ import {
 } from "@/lib/admin-commands";
 import { uploadSlip, getSlipSignedUrl } from "@/lib/blob";
 import { appendOrderRow } from "@/lib/orders";
-import { evaluateOrderGate, buildNewOrderAdminText, buildBrokenOrderAdminText, buildPriceStuckAdminText, itemsEqual, normalizeItems, PendingOrder } from "@/lib/core/orders";
+import { evaluateOrderGate, buildNewOrderAdminText, buildBrokenOrderAdminText, buildPriceStuckAdminText, generateOrderId, itemsEqual, normalizeItems, PendingOrder } from "@/lib/core/orders";
 import { resolveRuntimeVars, formatLinesForSheet, formatOrderSummary, buildProductNameMap, resolveAiItems, buildAllowedPriceStrings, RuntimeVarContext, PriceResult } from "@/lib/core/pricing";
 import { computeQuote, hasUnresolvedPricingVars, resolveTransferVars, unresolvedTransferVars, findBannedClaims, parseClaimsList, findBadPrices, extractBahtNumbers, extractPriceNumbers } from "@/lib/agent/quote";
 
@@ -324,6 +326,16 @@ async function runOrderGate(
   }
 
   if (complete && price) {
+    const orderId = pending.order_id ?? "";
+    // idempotency (D-29): "เขียนสำเร็จแล้ว" (มีใน Neon) → ข้าม ไม่เขียนซ้ำ · retry ที่ clear ค้างก็จบ
+    //   🔴 ต่างจาก "มี order_id ใน pending" (แค่สร้าง id · append อาจล้ม) — เช็คสถานะ "เขียนสำเร็จ" เท่านั้น
+    if (orderId && (await isOrderWritten(orderId))) {
+      console.log(JSON.stringify({ scope: "orders", event: "idempotent-skip", orderId, reason: "เขียนสำเร็จแล้ว (retry หลัง clear ล้ม) — ไม่เขียนซ้ำ ไม่ push" }));
+      await clearPendingOrderAndSlip(userId);
+      await reconcileWaitTags(userId, null);
+      await setPaidNoAddressNotified(userId, false);
+      return;
+    }
     const name = await getProfileName(userId);
     try {
       await appendOrderRow({
@@ -337,11 +349,15 @@ async function runOrderGate(
         slipPathname: payment === "โอน" ? slipPathname ?? undefined : undefined,
         itemsJson: JSON.stringify(normItems), // S = items_json
         shippingFee: String(price.shippingFee), // T = ค่าส่ง
+        orderId, // Q = idempotency key
       });
     } catch (error) {
-      console.error(JSON.stringify({ scope: "orders", warning: "appendOrderRow failed", error: String(error) }));
+      // 🔴 append ล้มจริง (403/network/quota) = ยังไม่เขียน → ไม่ mark written ไม่ clear → retry เทิร์นหน้า "เขียนใหม่" (ออเดอร์ไม่หาย)
+      console.error(JSON.stringify({ scope: "orders", warning: "appendOrderRow failed", orderId, error: String(error) }));
       return; // เขียนไม่สำเร็จ = ไม่ล้าง ไม่ push (retry เทิร์นหน้าได้)
     }
+    // เขียนชีตสำเร็จ → บันทึกใน Neon ทันที (source of truth กันเขียนซ้ำ) ก่อน clear/push
+    await markOrderWritten(orderId, userId);
     await clearPendingOrderAndSlip(userId);
     await reconcileWaitTags(userId, null);
     await setHasWrittenOrder(userId);
@@ -596,6 +612,12 @@ async function processMessage(
     const fields: PendingOrder = { ...receiverFields };
     if (resolvedItems.length > 0) fields.items = resolvedItems;
     if (geminiOutput.paymentMethod) fields["การชำระเงิน"] = geminiOutput.paymentMethod; // "" = คงเดิม
+    // order_id (D-29): สร้างตอน items แรกเข้า pending (ยังไม่มี id + กำลังจะมี items) · prefix จากชีต · เสถียรข้าม retry
+    const willHaveItems = resolvedItems.length > 0 || normalizeItems(customer.pendingOrder.items).length > 0;
+    if (willHaveItems && !customer.pendingOrder.order_id) {
+      const orderPrefix = (config.raw.get("รหัสนำหน้าออเดอร์") ?? "SKB").trim() || "SKB";
+      fields.order_id = generateOrderId(orderPrefix, nowDate);
+    }
     pending = await mergePendingOrder(userId, fields);
     postQuote = computeQuote(pending, lib, config, nowDate);
   }

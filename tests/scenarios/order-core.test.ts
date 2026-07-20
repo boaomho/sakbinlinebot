@@ -5,6 +5,7 @@ import {
   addressComplete,
   evaluateOrderGate,
   buildPriceStuckAdminText,
+  generateOrderId,
 } from "@/lib/core/orders";
 
 /**
@@ -171,6 +172,27 @@ describe("🔴 readyExceptPrice — แจ้งแอดมิน 'ราคา
     const g = evaluateOrderGate({ pending: { ชื่อ: "บูม", ที่อยู่: "1 ถ.เจริญ", เบอร์: "0811122334", การชำระเงิน: "COD" }, slipPresent: false, priceOk: false });
     expect(g.readyExceptPrice).toBe(false);
     expect(g.brokenOrder).toBe(true); // คนละเคส — ไม่มี items
+  });
+});
+
+describe("generateOrderId — <prefix>-YYYYMMDD(ไทย)-suffix (D-29)", () => {
+  const NOW = new Date("2026-07-19T20:00:00Z"); // ไทย = 2026-07-20 03:00 (ข้ามวันจาก UTC)
+
+  it("prefix จากชีต + วันไทย + suffix", () => {
+    expect(generateOrderId("SKB", NOW, "abc123")).toBe("SKB-20260720-abc123");
+    expect(generateOrderId("SAKBIN", NOW, "x1y2z3")).toBe("SAKBIN-20260720-x1y2z3");
+  });
+
+  it("prefix ว่าง → default SKB", () => {
+    expect(generateOrderId("", NOW, "aaaaaa")).toBe("SKB-20260720-aaaaaa");
+    expect(generateOrderId("  ", NOW, "aaaaaa")).toBe("SKB-20260720-aaaaaa");
+  });
+
+  it("suffix สุ่ม (ไม่ inject) → 6 ตัว a-z0-9 · ต่างกันแต่ละครั้ง", () => {
+    const a = generateOrderId("SKB", NOW);
+    const b = generateOrderId("SKB", NOW);
+    expect(a).toMatch(/^SKB-20260720-[a-z0-9]{6}$/);
+    expect(a).not.toBe(b); // สุ่ม ต่างกัน
   });
 });
 
