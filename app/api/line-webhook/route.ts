@@ -816,6 +816,20 @@ async function processMessage(
   const doHandoff =
     switches.handoff && !damageHandled && !editHandled &&
     (intakeHandoff || (!stageIsIntake && (geminiOutput.handoff || stageIsHandoff)));
+
+  // 🔴 วินิจฉัย D-35: ดูทุกตัวแปรตอนตัดสิน handoff · funnelStage=null = parseStepRows/step_id ไม่ตรง (stageIsIntake หลุด)
+  console.log(JSON.stringify({
+    scope: "handoff-decision",
+    stage: geminiOutput.stage,
+    funnelStage: stageFunnel,
+    stepRows: lib?.CSV_Step.length ?? 0,
+    prevIntakeTurns, intakeTurns: newIntakeTurns, intakeMin, intakeCap,
+    aiHandoffFlag: geminiOutput.handoff,
+    stageIsIntake, stageIsHandoff,
+    minReached: intakeMinReached, capReached: intakeCapReached,
+    finalHandoff: doHandoff,
+    trigger: !doHandoff ? "none" : intakeCapReached ? "cap" : geminiOutput.handoff ? "ai-flag" : stageIsHandoff ? "funnel-handoff" : "?",
+  }));
   if (doHandoff) {
     const reason =
       intakeCapReached && !geminiOutput.handoff && !stageIsHandoff
