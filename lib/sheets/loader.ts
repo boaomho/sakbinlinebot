@@ -1,5 +1,6 @@
 import { getSheets } from "./client";
 import { resolveSpreadsheetId } from "@/lib/core/sheet-id";
+import { validateStepFunnelStages, VALID_FUNNEL_STAGES } from "@/lib/agent/inject";
 
 /**
  * lib/sheets/loader.ts — โหลด BotLibrary ทุกแท็บด้วย batchGet 1 call จาก SHEET_BOTLIB_ID
@@ -68,10 +69,25 @@ export async function loadBotLibrary(): Promise<BotLibrary | null> {
       bundle[tab] = (valueRanges[i]?.values as string[][] | undefined) ?? [];
     });
     cache = { bundle, fetchedAt: now };
+    logStepFunnelStageIssues(bundle.CSV_Step); // Step 6: validate funnel_stage ครั้งเดียวต่อ load (ไม่ spam per-turn)
     return bundle;
   } catch (error) {
     console.error(JSON.stringify({ scope: "sheets", warning: "batchGet BotLibrary failed", error: String(error) }));
     return cache?.bundle ?? null; // fallback cache เก่า · ไม่มีก็ปิดฟีเจอร์
+  }
+}
+
+/**
+ * Step 6: log แถวที่ funnel_stage ผิด (ครั้งเดียวตอนโหลด · ไม่ใช่ warn ต่อ turn)
+ * 🔴 error (ไม่ใช่ warn) พร้อม value+stepId+allowed · severity=high (typo handoff) เด่นเป็นพิเศษ · fail-safe คงแถว
+ */
+function logStepFunnelStageIssues(stepRows: string[][]): void {
+  for (const b of validateStepFunnelStages(stepRows)) {
+    console.error(JSON.stringify({
+      scope: "sheets", tab: "CSV_Step",
+      error: b.severity === "high" ? "🔴 funnel_stage ผิด (ตาข่าย handoff หาย — เสี่ยง พ.ร.บ.อาหาร)" : "funnel_stage ไม่รู้จัก (ประตูไม่เข้า region)",
+      severity: b.severity, stepId: b.stepId, value: b.value, allowed: VALID_FUNNEL_STAGES,
+    }));
   }
 }
 

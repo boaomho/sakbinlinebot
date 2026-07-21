@@ -559,5 +559,15 @@ handoff ทุก path (edit/AI-semantic/keyword) ตั้งแค่ `human_m
 - 🔴 **แก้ B:** orders.ts `วันที่: bangkokDateTime()` (รูปแบบเดียวกับ Y) · go-forward เท่านั้น (ข้อมูลเก่า=เทส)
 > **กันเพี้ยนถาวร:** +7 อยู่ที่เดียว · จุดใหม่ (business-hours C3) ใช้ helper นี้ · **harness:** time.test (4 helper · ข้ามวัน UTC→ไทย) · order_id/promo/Y ค่าเดิม · sheet-layout B = ไทย ไม่มี T/Z · **261 passed** · tsc+build เขียว
 
+### D-38 (Step 6) · validate funnel_stage ตอนโหลด (จับ typo ชีตทันที · visibility ไม่ auto-แก้)
+**ก่อน:** funnel_stage ผิด = `console.warn` ต่อ turn (spam · log แค่ stepId) · แถวโหลดแต่ region/handoff-guarantee/intake เงียบ = พังเงียบ (H1 typo → ตาข่าย พ.ร.บ.อาหาร หาย)
+**ทำ:**
+- `validateStepFunnelStages(rows) → BadFunnelStage[]{stepId, value, severity}` (inject.ts · pure) · `VALID_FUNNEL_STAGES` (9: region 7 + handoff 2) · 🔴 typo กลุ่ม handoff (มี "handof"/"intake") = **severity high** (ตาข่ายหาย อันตรายสุด) เด่นกว่าประตูขาย
+- เรียก **ตอนโหลดชีต** (loader · ครั้งเดียวต่อ cache-refresh ไม่ spam) → `console.error` (ไม่ใช่ warn) พร้อม **value+stepId+allowed** · ย้าย warn ต่อ turn ออกจาก buildStepInjection
+- 🔴 **fail-safe: คงแถว (ไม่ skip/remap)** — skip=ประตูหาย · remap=กลบ typo · งานนี้คือ visibility คนแก้=เจ้าของ
+- **diag endpoint** `GET /api/diag/steps` (auth CRON_SECRET · read-only · ไม่แตะ state) → เจ้าของยิงหลังแก้ชีต → คืนแถวผิด JSON ทันที (ไม่ต้องรอ cache/ลูกค้า)
+**นอก scope (ยืนยันไม่ทำ):** dangling "ไปประตูถัดไปเมื่อ" step_id · referential check — งานอนาคต
+**harness:** validateStepFunnelStages (value+severity · handoff typo=high · ถูก→ว่าง · แถวยังโหลด) · diag endpoint (401 ไม่มี auth · คืนแถวผิด+auth · ถูก→ok) · 269 passed · tsc+build เขียว
+
 ### Phase C · ลบ ENV ค้างใน Vercel
 `SHEET_STEP_URL` `SHEET_FAQ_URL` `SHEET_CONFIG_URL` `SHEET_FOLLOW_URL` — โค้ดไม่อ่านแล้ว ลบทิ้งได้

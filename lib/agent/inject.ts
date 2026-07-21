@@ -115,6 +115,33 @@ export function funnelStageOf(rows: string[][], stepId: string): string | null {
   return parsed?.steps.find((s) => s.stepId === stepId)?.funnelStage ?? null;
 }
 
+/** funnel_stage ที่ถูกต้องทั้งหมด (region 7 + handoff 2) — โค้ดใช้จริงเท่านี้ (Step 6) */
+export const VALID_FUNNEL_STAGES = [...FUNNEL_ORDER, HANDOFF, HANDOFF_AFTER_INTAKE] as const;
+
+export interface BadFunnelStage {
+  stepId: string;
+  value: string;
+  /** high = typo ของกลุ่ม handoff (ตาข่ายความปลอดภัยหาย · พ.ร.บ.อาหาร) → เด่นกว่าประตูขาย */
+  severity: "high" | "normal";
+}
+
+/**
+ * ตรวจ funnel_stage ทุกแถวเทียบ VALID_FUNNEL_STAGES (Step 6) — คืนแถวที่ผิด (value+stepId+severity)
+ * 🔴 typo ของ handoff/handoff_after_intake (มี "handof"/"intake") = severity high — ตาข่าย handoff หาย = อันตรายสุด
+ * fail-safe: ไม่ skip/remap แถว (คนแก้คือเจ้าของ) · header พัง (parse ไม่ได้) → [] (คนละปัญหา · loader อื่นจับ)
+ */
+export function validateStepFunnelStages(rows: string[][]): BadFunnelStage[] {
+  const parsed = parseStepRows(rows);
+  if (!parsed) return [];
+  const valid = new Set<string>(VALID_FUNNEL_STAGES);
+  const out: BadFunnelStage[] = [];
+  for (const s of parsed.steps) {
+    if (valid.has(s.funnelStage)) continue;
+    out.push({ stepId: s.stepId, value: s.funnelStage, severity: /handof|intake/i.test(s.funnelStage) ? "high" : "normal" });
+  }
+  return out;
+}
+
 /** ชื่อประตู (ชื่อประตู) ของ step_id — ใช้ในข้อความแจ้งแอดมิน push-on-exit (D-34) */
 export function stepNameOf(rows: string[][], stepId: string): string | null {
   if (!stepId) return null;
@@ -228,12 +255,7 @@ export function buildStepInjection(rows: string[][], input: StepInjectionInput):
   // D-34: คงประตู intake ที่ลูกค้าอยู่ (additive · ไม่ล็อก) — บอทคุย intake ต่อได้ข้ามเทิร์น
   const stayMatch = (s: StepRow) => Boolean(stayStage) && s.stepId === stayStage && s.funnelStage === HANDOFF_AFTER_INTAKE;
 
-  // funnel_stage ว่าง/ไม่รู้จัก → log เตือน (region routing พึ่ง funnel_stage · ว่าง = ประตูไม่เข้า region ไหน = พังเงียบ)
-  const validStages = new Set([...FUNNEL_ORDER, HANDOFF, HANDOFF_AFTER_INTAKE]);
-  const badStage = steps.filter((s) => !validStages.has(s.funnelStage));
-  if (badStage.length > 0) {
-    console.warn(JSON.stringify({ scope: "inject", warning: "funnel_stage ว่าง/ไม่รู้จัก — ประตูจะไม่เห็นเนื้อเต็มตลอดกาล", stepIds: badStage.map((s) => s.stepId) }));
-  }
+  // funnel_stage ผิด = validate ตอนโหลด (validateStepFunnelStages · Step 6) ไม่ warn ต่อ turn · แถวยังโหลด (fail-safe)
 
   // ประตูข้าม (crossover) = ไม่มีประตูอื่นชี้มาใน "ไปประตูถัดไปเมื่อ" และไม่ใช่ lead (ทางเข้าปกติ)
   const incoming = new Set<string>();
