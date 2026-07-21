@@ -495,7 +495,8 @@ export async function resetCustomerMemory(userId: string): Promise<void> {
     SET stage = NULL, tags = '{}', last_slip_pathname = NULL,
         pending_order = NULL, has_written_order = false, paid_no_address_notified = false,
         human_mode = false, human_mode_since = NULL, resume_notice_pending = false,
-        last_order_id = NULL, last_order = NULL, last_order_locked = false
+        last_order_id = NULL, last_order = NULL, last_order_locked = false,
+        intake_turns = 0
     WHERE user_id = ${userId}
   `;
   await sql`DELETE FROM messages WHERE user_id = ${userId}`;

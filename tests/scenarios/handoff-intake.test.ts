@@ -3,7 +3,7 @@ import { sendText } from "../harness/replay";
 import { scriptGemini, turn, adminPushes, lineCalls, harnessOverrides } from "../harness/state";
 import { FULL_ADDRESS } from "../harness/fixtures";
 import { seedBotLib, PRICING_CONFIG } from "../harness/botlib-fixture";
-import { readCustomer } from "../harness/db";
+import { readCustomer, setLastSeenAgo } from "../harness/db";
 
 /**
  * D-34 · funnel_stage=handoff_after_intake — บอทคุยเก็บข้อมูลก่อน แล้วค่อย handoff
@@ -109,6 +109,23 @@ describe("handoff_after_intake — คุยก่อนค่อยส่งค
     expect(admin, "push-on-exit").toContain("ลูกค้าเพิ่งคุยเรื่อง");
     expect(admin, "(จ) ไม่มี footer (ทั้งคู่ไม่ใช่ handoff)").not.toContain(FOOTER);
     expect((await readCustomer(U))?.human_mode).toBe(false);
+  });
+
+  it("🔴 reset ตอน handoff จาก intake → intake_turns=0 (กัน counter ค้างข้ามเซสชัน · D-35)", async () => {
+    harnessOverrides.config = { raw: cfg([["เพดานเทิร์นก่อนส่งแอดมิน", "1"]]) }; // cap 1 → handoff เทิร์นแรกผ่านเพดาน
+    scriptGemini([turn({ reply: "ส่งต่อค่ะ", stage: "H_CLAIM", handoff: false })]);
+    await sendText(U, "สินค้ามีปัญหา");
+    expect(JSON.stringify(adminPushes()), "เกินเพดาน → handoff").toContain(FOOTER);
+    expect((await readCustomer(U))?.intake_turns, "🔴 reset ตอน handoff (ไม่ค้าง)").toBe(0);
+  });
+
+  it("🔴 timeout: เงียบเกิน 45 นาที → intake นับใหม่ (ไม่สะสมข้ามเซสชัน · D-35)", async () => {
+    scriptGemini([turn({ reply: "ถามค่ะ", stage: "H_CLAIM", handoff: false }), turn({ reply: "ถามอีกค่ะ", stage: "H_CLAIM", handoff: false })]);
+    await sendText(U, "สินค้ามีปัญหา");
+    expect((await readCustomer(U))?.intake_turns).toBe(1);
+    await setLastSeenAgo(U, 60); // เงียบ 60 นาที (> adminSilenceReturnMinutes 45)
+    await sendText(U, "สินค้ามีปัญหาอีกค่ะ");
+    expect((await readCustomer(U))?.intake_turns, "เงียบนาน → เริ่มนับใหม่ (1 ไม่ใช่ 2)").toBe(1);
   });
 
   it("funnel_stage=handoff (H1) → ยัง handoff เทิร์นแรก (D-33 ไม่ regression)", async () => {

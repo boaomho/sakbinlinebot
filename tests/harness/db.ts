@@ -47,6 +47,13 @@ export async function readCustomer(userId: string): Promise<Record<string, unkno
   return rows[0] ?? null;
 }
 
+/** ตั้ง last_seen ของลูกค้าให้เป็น N นาทีก่อน (จำลองเงียบนาน · เทส intake timeout D-35) */
+export async function setLastSeenAgo(userId: string, minutes: number): Promise<void> {
+  const url = assertHarnessDb();
+  const sql = neon(url);
+  await sql("UPDATE customers SET last_seen = now() - ($2 || ' minutes')::interval WHERE user_id = $1", [userId, String(minutes)]);
+}
+
 /** order_id ที่บันทึกว่า "เขียนสำเร็จ" ใน Neon (idempotency source of truth · D-29) */
 export async function readWrittenOrderIds(): Promise<string[]> {
   const url = assertHarnessDb();

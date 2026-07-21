@@ -540,5 +540,15 @@ handoff ทุก path (edit/AI-semantic/keyword) ตั้งแค่ `human_m
 - "ขอคุยแอดมิน" = keyword pre-check (ก่อน Gemini) → override ทันที ไม่ต้องรอถาม
 > min ควร < cap (min=ต้องถาม · cap=คุยได้มากสุด) · **harness:** AI flag เทิร์นแรก→ไม่ handoff · เทิร์น 2+flag→handoff · keyword เทิร์นแรก→ทันที · funnel_stage=handoff→ทันที · 255 passed · tsc+build เขียว
 
+### D-36 · แก้บั๊ก C1 (จริง): intake_turns ค้างข้ามเซสชัน → handoff เทิร์นแรก
+**log ฟันธง:** `prevIntakeTurns=7` (funnelStage เข้า intake ถูก · newIntakeTurns=8>min1 → AI flag ปิดทันที) = counter สะสมข้ามเซสชัน ไม่เคย reset
+**ราก (ตอบ 3 ข้อ):**
+1. reset-on-exit (D-34) ทำงานเฉพาะตอน pivot ไปประตูขาย · เคส เคลม→handoff→human_mode→auto-return→เคลมอีก **วนใน intake↔human_mode ไม่เคย pivot** → ไม่ reset · แถม human_mode = return early ไม่ประมวลผล = ไม่ update counter
+2. 🔴 **ขาด reset ตอน handoff** — `persistIntakeTurns = doHandoff && stageIsIntake ? 0 : newIntakeTurns` (เคลมจบ → เริ่มนับใหม่) · ย้าย doHandoff มาคำนวณก่อน memory block เพื่อ reset ได้
+3. 🔴 **timeout** — `intakeStale = เงียบ ≥ adminSilenceReturnMinutes` → prevIntakeTurns=0 (เคสเข้า intake แล้วหายกลางคัน ไม่ handoff ไม่ pivot · reuse config เดิม ไม่เพิ่มคีย์)
++ `/reset` ล้าง intake_turns=0 ด้วย
+> **Q2 (reset ตอน handoff) = ตัวหลักแก้บั๊กที่รายงาน · Q3 (timeout) = ปิด edge "เข้า intake แล้วทิ้ง" · /reset = เทสต์** → ครอบเคสจริงครบ
+**harness:** reset ตอน handoff → intake_turns=0 · timeout (setLastSeenAgo 60นาที) → นับใหม่ (1 ไม่ใช่ 2) · 257 passed · tsc+build เขียว · log `handoff-decision` คงไว้ (มี persistIntakeTurns/intakeStale)
+
 ### Phase C · ลบ ENV ค้างใน Vercel
 `SHEET_STEP_URL` `SHEET_FAQ_URL` `SHEET_CONFIG_URL` `SHEET_FOLLOW_URL` — โค้ดไม่อ่านแล้ว ลบทิ้งได้

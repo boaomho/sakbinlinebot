@@ -771,21 +771,40 @@ async function processMessage(
   const assistantSaved = outReply;
   await deliverReply(replyToken, userId, withResume(outReply), config.quotaSaver);
 
-  // D-34: handoff_after_intake — บอทคุยเก็บข้อมูลก่อนค่อยส่งคน · นับเทิร์น (reset เมื่อออกจากประตู) + เพดานกันค้าง
+  // D-34/D-35: handoff_after_intake — คุยก่อนค่อยส่งคน · นับเทิร์น + reset (ออกประตู/handoff/เงียบนาน) + เพดาน/ขั้นต่ำ
   const stageFunnel = lib ? funnelStageOf(lib.CSV_Step, geminiOutput.stage) : null;
   const stageIsHandoff = stageFunnel === "handoff"; // ส่งต่อทันที (D-33)
   const stageIsIntake = stageFunnel === "handoff_after_intake";
-  const prevIntakeTurns = customer?.intakeTurns ?? 0;
   const intakeCap = numFromRaw(config, "เพดานเทิร์นก่อนส่งแอดมิน", 3); // คุยได้มากสุด → handoff แน่นอน
   const intakeMin = numFromRaw(config, "เทิร์นขั้นต่ำก่อนส่งแอดมิน", 1); // ต้องถามอย่างน้อย N เทิร์น (1..N=ถาม) → handoff เทิร์นที่ N+1
+  // 🔴 D-35 timeout: เงียบเกิน adminSilenceReturnMinutes → เริ่มนับ intake ใหม่ (เคสเข้า intake แล้วหายกลางคัน ไม่ handoff ไม่ออก)
+  const intakeStale = Boolean(customer && Date.now() - customer.lastSeen.getTime() >= config.adminSilenceReturnMinutes * 60 * 1000);
+  const prevIntakeTurns = intakeStale ? 0 : customer?.intakeTurns ?? 0;
   const newIntakeTurns = stageIsIntake ? prevIntakeTurns + 1 : 0;
   const intakeCapReached = stageIsIntake && newIntakeTurns >= intakeCap;
   const intakeMinReached = stageIsIntake && newIntakeTurns > intakeMin; // > : เทิร์น 1..min = ถาม (ยอม handoff เทิร์นถัดจาก min)
 
+  // handoff: funnel_stage=handoff (D-33 ทันที) · AI flag · intake (ถามครบขั้นต่ำ/เกินเพดาน) · "ขอคุยแอดมิน"=keyword pre-check (ก่อน Gemini)
+  const intakeHandoff = stageIsIntake && (intakeCapReached || (geminiOutput.handoff && intakeMinReached));
+  const doHandoff =
+    switches.handoff && !damageHandled && !editHandled &&
+    (intakeHandoff || (!stageIsIntake && (geminiOutput.handoff || stageIsHandoff)));
+  // 🔴 D-35 reset ตอน handoff จาก intake: เคลมจบ → ครั้งหน้าเริ่มนับใหม่ (กัน counter ค้างข้ามเซสชัน = handoff เทิร์นแรก)
+  const persistIntakeTurns = doHandoff && stageIsIntake ? 0 : newIntakeTurns;
+
+  console.log(JSON.stringify({
+    scope: "handoff-decision",
+    stage: geminiOutput.stage, funnelStage: stageFunnel, stepRows: lib?.CSV_Step.length ?? 0,
+    prevIntakeTurns, intakeTurns: newIntakeTurns, persistIntakeTurns, intakeStale, intakeMin, intakeCap,
+    aiHandoffFlag: geminiOutput.handoff, stageIsIntake, stageIsHandoff,
+    minReached: intakeMinReached, capReached: intakeCapReached, finalHandoff: doHandoff,
+    trigger: !doHandoff ? "none" : intakeCapReached ? "cap" : geminiOutput.handoff ? "ai-flag" : stageIsHandoff ? "funnel-handoff" : "?",
+  }));
+
   if (switches.memory) {
     await addMessage(userId, "user", userMessage);
     await addMessage(userId, "assistant", assistantSaved);
-    await updateCustomerAfterTurn(userId, { stage: geminiOutput.stage, tagsAdd: effectiveTagsAdd, intakeTurns: newIntakeTurns });
+    await updateCustomerAfterTurn(userId, { stage: geminiOutput.stage, tagsAdd: effectiveTagsAdd, intakeTurns: persistIntakeTurns });
     await logFunnelEvent(userId, previousStage, geminiOutput.stage);
     if (shouldNotifyResume) await clearResumeNotice(userId);
   }
@@ -809,27 +828,7 @@ async function processMessage(
     await runOrderGate(userId, customer, pending, postQuote?.price ?? null, slipThisTurn, config, nameMap, outReply, allowed);
   }
 
-  // handoff: funnel_stage=handoff (โค้ดการันตี D-33 · ทันที) · AI flag · intake (D-34)
-  //   🔴 intake ต้อง "ถามก่อนอย่างน้อย [ขั้นต่ำ] เทิร์น" → เพิกเฉย AI flag จน intakeMinReached · เพดาน = ตาข่ายแข็ง handoff แน่นอน
-  //   "ขอคุยแอดมิน" = keyword pre-check (ก่อน Gemini) → override ทันทีไม่ต้องรอถาม
-  const intakeHandoff = stageIsIntake && (intakeCapReached || (geminiOutput.handoff && intakeMinReached));
-  const doHandoff =
-    switches.handoff && !damageHandled && !editHandled &&
-    (intakeHandoff || (!stageIsIntake && (geminiOutput.handoff || stageIsHandoff)));
-
-  // 🔴 วินิจฉัย D-35: ดูทุกตัวแปรตอนตัดสิน handoff · funnelStage=null = parseStepRows/step_id ไม่ตรง (stageIsIntake หลุด)
-  console.log(JSON.stringify({
-    scope: "handoff-decision",
-    stage: geminiOutput.stage,
-    funnelStage: stageFunnel,
-    stepRows: lib?.CSV_Step.length ?? 0,
-    prevIntakeTurns, intakeTurns: newIntakeTurns, intakeMin, intakeCap,
-    aiHandoffFlag: geminiOutput.handoff,
-    stageIsIntake, stageIsHandoff,
-    minReached: intakeMinReached, capReached: intakeCapReached,
-    finalHandoff: doHandoff,
-    trigger: !doHandoff ? "none" : intakeCapReached ? "cap" : geminiOutput.handoff ? "ai-flag" : stageIsHandoff ? "funnel-handoff" : "?",
-  }));
+  // handoff เกิดขึ้น (doHandoff คำนวณไว้ข้างบนแล้ว) · else = push-on-exit ถ้าเพิ่งออกจาก intake
   if (doHandoff) {
     const reason =
       intakeCapReached && !geminiOutput.handoff && !stageIsHandoff
