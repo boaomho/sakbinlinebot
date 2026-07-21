@@ -106,6 +106,13 @@ export function resolveDestinations(nextWhen: string, stepIds: Set<string>): Set
   return out;
 }
 
+/** funnel_stage ของ step_id ที่ระบุ (D-33) — โค้ดใช้การันตี handoff เมื่อ AI อยู่ประตู funnel_stage=handoff */
+export function funnelStageOf(rows: string[][], stepId: string): string | null {
+  if (!stepId) return null;
+  const parsed = parseStepRows(rows);
+  return parsed?.steps.find((s) => s.stepId === stepId)?.funnelStage ?? null;
+}
+
 function nextFunnelStage(stage: string): string | null {
   const idx = FUNNEL_ORDER.indexOf(stage);
   return idx >= 0 && idx + 1 < FUNNEL_ORDER.length ? FUNNEL_ORDER[idx + 1] : null;

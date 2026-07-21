@@ -9,7 +9,7 @@ import {
   FeatureSwitches,
 } from "@/lib/config";
 import { loadBotLibrary } from "@/lib/sheets/loader";
-import { buildStepInjection, buildFaqInjection, buildCatalogInjection, buildObjectionInjection, buildExampleInjection, readConfigDescription } from "@/lib/agent/inject";
+import { buildStepInjection, buildFaqInjection, buildCatalogInjection, buildObjectionInjection, buildExampleInjection, readConfigDescription, funnelStageOf } from "@/lib/agent/inject";
 import {
   ensureCustomer,
   updateCustomerAfterTurn,
@@ -142,36 +142,50 @@ function buildStateText(customer: CustomerState | null, orderWarning: string | n
   return lines.join("\n");
 }
 
-async function pushHandoffNotice(
+/**
+ * 🔴 ประตู handoff รวมศูนย์ (D-33) — "ปิดบอท + แจ้งแอดมิน + footer" ที่เดียว
+ * ทุกทางที่ต้องส่งต่อคน **ต้องเรียกฟังก์ชันนี้** (guard: setHumanMode(userId,true) ห้ามอยู่ที่อื่น)
+ * footer มาเสมอ · reason เปลี่ยนแค่หัวข้อ · attachImage = แนบรูปหลักฐาน (เคลม) ไม่ให้หาย
+ */
+async function handoff(
   userId: string,
-  userMessage: string,
-  reason: string,
-  path: "keyword-precheck" | "ai-semantic",
+  switches: FeatureSwitches,
+  opts: { reason: string; userMessage?: string; attachImage?: { url: string; note?: string } },
 ): Promise<void> {
+  // ปิดบอท (จุดเดียวในระบบที่เรียก setHumanMode(userId, true))
+  if (switches.memory) await setHumanMode(userId, true);
+
   const adminGroupId = process.env.ADMIN_GROUP_ID;
   if (!adminGroupId) {
-    console.warn(JSON.stringify({ scope: "handoff", path, warning: "ADMIN_GROUP_ID not set — push skipped" }));
+    console.warn(JSON.stringify({ scope: "handoff", reason: opts.reason, warning: "ADMIN_GROUP_ID not set — push skipped" }));
     return;
   }
-
   try {
     const name = await getProfileName(userId);
-    // เก็บชื่อลง Neon ด้วย เพื่อให้คำสั่ง ปิดบอท/เปิดบอท <ชื่อ> หาเจอ (userId อยู่เบื้องหลัง ไม่โชว์)
-    if (name && name !== userId) await updateDisplayName(userId, name);
-    const text =
-      `🔔 ส่งต่อแอดมิน\n` +
-      `ลูกค้า: ${name}\n` +
-      `เหตุผล: ${reason}\n` +
-      `ข้อความล่าสุด: ${userMessage}\n` +
-      `———\n` +
-      `ปิดบอท: ปิดบอท ${name}\n` +
-      `เปิดบอท: เปิดบอท ${name}`;
-    const ok = await pushRawText(adminGroupId, text);
-    if (!ok) {
-      console.warn(JSON.stringify({ scope: "handoff", path, warning: "push to admin group failed" }));
+    if (name && name !== userId) await updateDisplayName(userId, name); // ให้คำสั่ง เปิดบอท <ชื่อ> หาเจอ
+    const footer = `🔴 บอทปิดการทำงานกับลูกค้ารายนี้แล้ว · รอแอดมินรับช่วง (เปิดคืน: เปิดบอท ${name})`;
+    const text = [
+      `🔔 ส่งต่อแอดมิน — ${opts.reason}`,
+      `ลูกค้า: ${name}`,
+      opts.userMessage ? `ข้อความล่าสุด: ${opts.userMessage}` : null,
+      opts.attachImage?.note || null,
+      "———",
+      footer,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    if (opts.attachImage) {
+      await pushRawMessages(adminGroupId, [
+        { type: "text", text },
+        { type: "image", originalContentUrl: opts.attachImage.url, previewImageUrl: opts.attachImage.url },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ] as any);
+    } else {
+      const ok = await pushRawText(adminGroupId, text);
+      if (!ok) console.warn(JSON.stringify({ scope: "handoff", reason: opts.reason, warning: "push to admin group failed" }));
     }
   } catch (error) {
-    console.error(JSON.stringify({ scope: "handoff", path, warning: "pushHandoffNotice threw", error: String(error) }));
+    console.error(JSON.stringify({ scope: "handoff", reason: opts.reason, warning: "handoff push threw", error: String(error) }));
   }
 }
 
@@ -189,13 +203,12 @@ async function runHandoffFlow(
   if (switches.memory) {
     await addMessage(userId, "user", userMessage);
     await addMessage(userId, "assistant", finalReply);
-    await setHumanMode(userId, true);
   }
 
   const sent = await replyMessages(replyToken, finalReply, config.quotaSaver);
   if (!sent) await pushMessages(userId, finalReply, config.quotaSaver);
 
-  await pushHandoffNotice(userId, userMessage, reason, "keyword-precheck");
+  await handoff(userId, switches, { reason, userMessage }); // ปิดบอท + แจ้งแอดมิน + footer (จุดเดียว)
 }
 
 /** ข้อความสบายใจตอน AI อ่านรูปไม่สำเร็จ — รับรูปแล้ว กำลังตรวจสอบ (ไม่ทำให้ลูกค้ากังวล) */
@@ -250,21 +263,12 @@ async function handleImageIntent(
 
   if (intent === "damage") {
     const uploaded = await uploadSlip(userId, content.buffer, content.contentType); // เก็บเป็นหลักฐานเคลม
-    if (adminGroupId) {
-      const name = await getProfileName(userId);
-      const text = `⚠️ ลูกค้าแจ้งปัญหา/เคลมค่ะ${noteLine}\n\nLineOA: ${name}`;
-      const signedUrl = uploaded ? await getSlipSignedUrl(uploaded.pathname, config.slipUrlExpiryDays) : null;
-      if (signedUrl) {
-        await pushRawMessages(adminGroupId, [
-          { type: "text", text },
-          { type: "image", originalContentUrl: signedUrl, previewImageUrl: signedUrl },
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ] as any);
-      } else {
-        await pushRawText(adminGroupId, text);
-      }
-    }
-    if (switches.memory) await setHumanMode(userId, true); // เคลม = ส่งต่อคน
+    const signedUrl = uploaded ? await getSlipSignedUrl(uploaded.pathname, config.slipUrlExpiryDays) : null;
+    // เคลม = ส่งต่อคน → ผ่านประตูรวม (ปิดบอท + footer + แนบรูปหลักฐาน ไม่ให้หาย)
+    await handoff(userId, switches, {
+      reason: "ลูกค้าแจ้งปัญหา/เคลม",
+      attachImage: signedUrl ? { url: signedUrl, note: imageNote ? `หลักฐาน:${noteLine}` : undefined } : undefined,
+    });
   }
   return null;
 }
@@ -638,14 +642,12 @@ async function processMessage(
     if (result.status === "updated") {
       if (adminGroupId) await pushRawText(adminGroupId, buildOrderEditAdminText(orderId, result.changed ?? [], name));
     } else if (result.status === "confirmed") {
-      // แอดมินคอนเฟิร์มแล้ว (ของไปแพ็ค) → ล็อก + คนต้องจัดการ (X2)
+      // แอดมินคอนเฟิร์มแล้ว (M=TRUE · ของไปแพ็ค) → ล็อก + ส่งต่อคน (X2) ผ่านประตูรวม
       if (switches.memory) await setLastOrderLocked(userId);
-      if (adminGroupId) await pushRawText(adminGroupId, `✏️ ลูกค้าขอแก้ออเดอร์ที่คอนเฟิร์มแล้ว ${orderId}\nรบกวนแอดมินดูแล (ของอาจแพ็คแล้ว)\n———\nLineOA: ${name}`);
-      if (switches.memory) await setHumanMode(userId, true);
+      await handoff(userId, switches, { reason: `ขอแก้ออเดอร์ที่คอนเฟิร์มแล้ว ${orderId} (ของอาจแพ็คแล้ว)`, userMessage });
     } else if (result.status === "not_found") {
       console.error(JSON.stringify({ scope: "orders", event: "order-edit-not-found", orderId }));
-      if (adminGroupId) await pushRawText(adminGroupId, `✏️ ลูกค้าขอแก้ออเดอร์ ${orderId || "(ไม่มี id)"} แต่หาแถวในชีตไม่เจอ — รบกวนแอดมินตรวจ\n———\nLineOA: ${name}`);
-      if (switches.memory) await setHumanMode(userId, true);
+      await handoff(userId, switches, { reason: `ขอแก้ออเดอร์ ${orderId || "(ไม่มี id)"} แต่หาแถวในชีตไม่เจอ`, userMessage });
     }
     // 🔴 ที่อยู่ใหม่สั้นผิดปกติ → ไม่ทับ (กันเขียนที่อยู่ผิด) + แจ้งแอดมิน (บอทควรถามลูกค้ายืนยันที่อยู่เต็ม — เทรนใน S_EDIT)
     if ((result.suspect?.length ?? 0) > 0 && adminGroupId) {
@@ -796,10 +798,16 @@ async function processMessage(
     await runOrderGate(userId, customer, pending, postQuote?.price ?? null, slipThisTurn, config, nameMap, outReply, allowed);
   }
 
-  // handoff ทั่วไป (AI-semantic) · ข้ามถ้าจัดการเป็น damage หรือ edit ไปแล้ว (กันยิงซ้ำ)
-  if (switches.handoff && geminiOutput.handoff && !damageHandled && !editHandled) {
-    await pushHandoffNotice(userId, userMessage, geminiOutput.handoffReason || "AI ประเมินว่าควรส่งต่อ", "ai-semantic");
-    if (switches.memory) await setHumanMode(userId, true);
+  // handoff ทั่วไป: AI ตั้ง handoff=true (semantic) · หรือ 🔴 โค้ดการันตี — ประตูที่ AI เข้า funnel_stage=handoff (D-33)
+  //   ตาข่าย 2 ชั้น: H1 (สุขภาพ/แพ้อาหาร) ไม่พึ่ง AI ตั้ง flag อย่างเดียว (พลาด = เสี่ยง พ.ร.บ.อาหาร)
+  //   เฉพาะ funnel_stage=handoff เท่านั้น · S_EDIT(won)/X2(post_sale) ไม่ชน
+  const stageIsHandoff = lib ? funnelStageOf(lib.CSV_Step, geminiOutput.stage) === "handoff" : false;
+  if (switches.handoff && (geminiOutput.handoff || stageIsHandoff) && !damageHandled && !editHandled) {
+    const reason =
+      stageIsHandoff && !geminiOutput.handoff
+        ? "อยู่ประตูส่งต่อ (funnel_stage=handoff · โค้ดการันตี)"
+        : geminiOutput.handoffReason || "AI ประเมินว่าควรส่งต่อ";
+    await handoff(userId, switches, { reason, userMessage });
   }
 }
 

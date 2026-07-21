@@ -118,7 +118,9 @@ describe("route order-edit (scenario) — Bug 2 หาย + แก้ชีต",
     await sendText(U, "ขอเปลี่ยนเบอร์เป็น 0911123344");
 
     expect(updated("E"), "เบอร์ใหม่ลงแถวเดิม").toBe("0911123344");
-    expect(JSON.stringify(adminPushes())).toContain("ลูกค้าแก้ออเดอร์");
+    const a = JSON.stringify(adminPushes());
+    expect(a).toContain("ลูกค้าแก้ออเดอร์");
+    expect(a, "🔴 แก้ก่อน M=TRUE ไม่ปิดบอท → ไม่มี footer").not.toContain("บอทปิดการทำงาน");
     expect(appendedRows().length, "ไม่เขียนแถวใหม่").toBe(1);
     const c = await readCustomer(U);
     expect(c?.human_mode, "🔴 ไม่ handoff (Bug 2)").toBe(false);
@@ -151,7 +153,9 @@ describe("route order-edit (scenario) — Bug 2 หาย + แก้ชีต",
     await sendText(U, "ขอเปลี่ยนเบอร์");
 
     expect(sheetsCalls.batchUpdates.length, "M=TRUE ห้ามแก้").toBe(0);
-    expect(JSON.stringify(adminPushes())).toContain("คอนเฟิร์มแล้ว");
+    const a = JSON.stringify(adminPushes());
+    expect(a).toContain("คอนเฟิร์มแล้ว");
+    expect(a, "X2 = handoff → มี footer").toContain("บอทปิดการทำงาน");
     const c = await readCustomer(U);
     expect(c?.human_mode, "handoff").toBe(true);
     expect(c?.last_order_locked, "ล็อก").toBe(true);

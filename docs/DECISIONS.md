@@ -508,5 +508,19 @@ handoff ทุก path (edit/AI-semantic/keyword) ตั้งแค่ `human_m
 **harness:** order-edit (last_order snapshot/lock · ที่อยู่สั้น→suspect · เต็มก้อน→updated) · inject (signals→S_EDIT/X2) · resolver (resolveOrderVars) · Bug 2 no_change · 237 passed · tsc+build เขียว
 > 🔴 **เจ้าของอ้างในชีต:** ตัวแปร `{ออเดอร์_ชื่อ/ที่อยู่/เบอร์/รายการ/ยอด/เลขที่}` · สัญญาณ (ใน "เข้าเมื่อ") `order_editable` / `order_confirmed_locked`
 
+### D-33 · handoff รวมศูนย์ประตูเดียว + footer มาตรฐาน + guard กันหลุด + code-guarantee funnel_stage
+**ก่อนแก้ (ยืนยันด้วย grep · `triggerHandoff`/cooldown ที่บรีฟอ้าง ไม่มีอยู่จริง):** handoff กระจาย 5 จุด · `setHumanMode(userId,true)` 5 ที่ · แจ้งแอดมิน 2 จุดใช้ pushHandoffNotice · 3 จุด (เคลม/order_edit×2) bespoke ไม่มี footer
+**ทำ:**
+- สร้าง `handoff(userId, switches, {reason, userMessage?, attachImage?})` — **จุดเดียว**ที่เรียก `setHumanMode(true)` + push แอดมิน + **footer เสมอ** "🔴 บอทปิดการทำงานกับลูกค้ารายนี้แล้ว · รอแอดมินรับช่วง (เปิดคืน: เปิดบอท [ชื่อ])" (ต่อท้าย reason · reason เปลี่ยนแค่หัวข้อ) · `attachImage` = แนบรูปเคลม ไม่หาย · fold pushHandoffNotice
+- แปลง 5 จุด: keyword(runHandoffFlow คง reply แยก) · AI-semantic · เคลม/damage(+รูป) · order_edit confirmed(X2) · not_found
+- 🔴 **X2 nuance คง:** ปิดเฉพาะ `confirmed`(M=TRUE) · `order_editable`(ก่อน M=TRUE) ไม่เรียก handoff = แก้เองในแชท (S_EDIT ไม่ regression)
+- **push ไม่ปิดบอท ไม่ผ่าน handoff (ไม่มี footer):** 📦 ออเดอร์ใหม่ · ✏️ แก้ก่อน M=TRUE · 💰 สลิป · ⚠️ broken/priceStuck/claims/price/transfer/suspect · applyBotMode(คำสั่งแอดมิน)
+- 🔴 **guard (lint · handoff-guard.test):** `await setHumanMode(userId,true)` มีได้จุดเดียว + ต้องอยู่ในบล็อก handoff() → เพิ่ม push handoff นอกประตู = harness แดง
+- 🔴 **code-guarantee (D-33):** `funnelStageOf(CSV_Step, geminiOutput.stage)==="handoff"` → โค้ดเรียก handoff() **เอง** ไม่รอ AI ตั้ง flag (ตาข่าย 2 ชั้น · H1 สุขภาพ/แพ้อาหาร พลาด=เสี่ยง พ.ร.บ.อาหาร) · เฉพาะ funnel_stage=handoff (S_EDIT=won/X2=post_sale ไม่ชน) · **เพิ่มแถว funnel_stage=handoff ในชีต = การันตี handoff จากชีตล้วน**
+**การเพิ่ม handoff (บันทึกตามคำขอ):** (ก) ตามเนื้อหา → เพิ่มแถว funnel_stage=handoff ในชีต (AI ตั้ง flag + โค้ดการันตี 2 ชั้น · ไม่แตะโค้ด) · (ข) ตามสถานะระบบ → เรียก `handoff(reason)` ในโค้ด ห้าม push เอง
+**2 บอลลูนซ้อนตอน handoff:** (1) `botResumeMessage` จาก `resume_notice_pending` (arm ตอนเข้า human_mode · fire ตอน auto-return แล้วเจอข้อความ · prepend ผ่าน withResume) (2) ข้อความประตู (reply AI/runHandoffFlow) — เกิดเคส "แอดมินดูแล→บอทกลับ→ลูกค้าพิมพ์→re-handoff" · เจ้าของยุบทีหลังตอนเทรนได้
+**harness:** handoff-flow (5 ทาง+footer · เคลมรูปแนบ · funnel_stage การันตี · 📦 ไม่มี footer) · handoff-guard (setHumanMode true จุดเดียว) · order-edit (✏️ ก่อน M=TRUE ไม่มี footer · X2 มี footer) · 245 passed · tsc+build เขียว
+> ไม่แตะ: logic เงื่อนไข handoff · gate/pricing/order-edit/M=TRUE detection · เนื้อ CSV_Step
+
 ### Phase C · ลบ ENV ค้างใน Vercel
 `SHEET_STEP_URL` `SHEET_FAQ_URL` `SHEET_CONFIG_URL` `SHEET_FOLLOW_URL` — โค้ดไม่อ่านแล้ว ลบทิ้งได้
