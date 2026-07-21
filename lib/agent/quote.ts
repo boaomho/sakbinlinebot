@@ -120,6 +120,48 @@ export function resolveOrderVars(text: string, order: LastOrder | null, itemsTex
   return out;
 }
 
+// ---- ตัวแปรออเดอร์ล่าสุดทั้งหมด (D-32) — ใช้ในชุด KNOWN สำหรับ var-guard ----
+export const ORDER_VARS = [
+  "{ออเดอร์_ชื่อ}",
+  "{ออเดอร์_ที่อยู่}",
+  "{ออเดอร์_เบอร์}",
+  "{ออเดอร์_รายการ}",
+  "{ออเดอร์_ยอด}",
+  "{ออเดอร์_เลขที่}",
+] as const;
+
+/**
+ * Phase2 var-guard — ตัวแปร "ที่ resolver รู้จัก" ทั้งหมด (pricing + transfer + order)
+ * 🔴 กันเฉพาะชุดนี้ ไม่ใช่ `{...}` ทุกตัว (AI/เจ้าของอาจพิมพ์วงเล็บปีกกาในบริบทอื่น)
+ */
+export const KNOWN_RUNTIME_VARS = [...PRICING_RUNTIME_VARS, ...TRANSFER_VARS, ...ORDER_VARS] as const;
+
+/**
+ * แยกบอลลูน ([[เว้น]]/[[แยก]]) แล้วทิ้งบอลลูนที่ยังเหลือตัวแปร "ที่รู้จัก" resolve ไม่ได้
+ * → ลูกค้าไม่มีวันเห็น `{ออเดอร์_ที่อยู่}` ดิบ (typo ตัวแปรผิด step / order ยังไม่มี)
+ * คง separator เดิมของบอลลูนที่รอด (บอลลูนแรกไม่มี separator นำหน้า)
+ */
+export function dropUnresolvedVarBubbles(
+  text: string,
+  knownVars: readonly string[] = KNOWN_RUNTIME_VARS,
+): { clean: string; dropped: string[] } {
+  const parts = text.split(/(\[\[เว้น\]\]|\[\[แยก\]\])/);
+  const dropped: string[] = [];
+  const kept: { sep: string; body: string }[] = [];
+  for (let i = 0; i < parts.length; i += 2) {
+    const body = parts[i];
+    const sep = i === 0 ? "" : parts[i - 1];
+    const hit = knownVars.filter((v) => body.includes(v));
+    if (hit.length > 0) {
+      dropped.push(...hit);
+      continue;
+    }
+    kept.push({ sep, body });
+  }
+  const clean = kept.map((k, idx) => (idx === 0 ? "" : k.sep) + k.body).join("");
+  return { clean: clean.trim(), dropped };
+}
+
 /**
  * KI-02 price guard (D-27) — เลข "X บาท" ที่บอทพูดต้องอยู่ใน allowed (raw+ตาราง+derived จาก buildAllowedPriceStrings)
  * คืนเลขที่ไม่อยู่ (มั่ว/injection) — route ตัดสินตาม `โหมดราคาผิด` (เตือน=ส่ง+log+push · บล็อก=พักสาย+push)

@@ -347,7 +347,7 @@ describe("buildObjectionInjection — สารบัญเสมอ + เต็
   });
 
   it("header ไม่ครบ/ว่าง → '' ไม่ crash (เจ้าของยังไม่เติมชีต)", () => {
-    expect(buildObjectionInjection([], "แพง", 2)).toEqual({ text: "", matchedIds: [] });
+    expect(buildObjectionInjection([], "แพง", 2)).toEqual({ text: "", matchedIds: [], verbatim: null });
     expect(buildObjectionInjection([["a", "b"], ["1", "2"]], "แพง", 2).text).toBe("");
   });
 });

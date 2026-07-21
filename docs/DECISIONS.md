@@ -569,5 +569,18 @@ handoff ทุก path (edit/AI-semantic/keyword) ตั้งแค่ `human_m
 **นอก scope (ยืนยันไม่ทำ):** dangling "ไปประตูถัดไปเมื่อ" step_id · referential check — งานอนาคต
 **harness:** validateStepFunnelStages (value+severity · handoff typo=high · ถูก→ว่าง · แถวยังโหลด) · diag endpoint (401 ไม่มี auth · คืนแถวผิด+auth · ถูก→ok) · 269 passed · tsc+build เขียว
 
+### D-39 (Phase2 #1) · คอลัมน์ `คิดเอง` (เปิด/ปิด) + verbatim path (ชั้น③ "ตอบ pattern เป๊ะ")
+**ปัญหา:** บอทพูด pattern แต่ละ step ไม่ครบ/ไม่ตรง (ยังไม่แจ้งโปรก็ถามรับโปรไหน) — AI เรียบเรียงเองทุกเทิร์น เจ้าของคุมคำเป๊ะไม่ได้
+**ขอบเขต:** ทำเฉพาะชั้น③ · **ไม่ทำชั้น②** (ไม่บังคับลำดับ step · AI เลือก step อิสระตามข้อมูลเดิม D-18)
+**ทำ:**
+- คอลัมน์ `คิดเอง` (optional) ใน **CSV_Step** + **CSV_Objections** · `ปิด`=verbatim (ส่ง "ตัวอย่างคำตอบ" เป๊ะ · แทนตัวแปรอย่างเดียว) · ว่าง/`เปิด`=AI เรียบเรียง (เดิม) · 🔴 ไม่มีคอลัมน์=ทุกประตูเปิด (ชีตเดิมไม่ regression)
+- **verbatim path** ที่จุด `baseReply` (route · หลัง Gemini): AI ยังเลือก step + สกัด order_data + handoff เสมอ (ชั้น①) · โหมดปิด = **ทิ้งแค่ reply ที่ AI แต่ง** แทนด้วย pattern ชีต → ไหลเข้า resolver/guard/deliver เดิม (reuse ครบ) · **ไม่ประหยัด token** (ยังเรียก AI · แค่ไม่ใช้ reply)
+- **precedence:** objection ปิด(มี pattern) ชนะ step · 🔴 เปิด/ไม่มี pattern → **ไม่บังคับชนะ** (ปล่อย AI เดิม · บังคับชนะโดยไม่มี pattern = ไม่ได้ประโยชน์)
+- **gate/handoff/order ไม่แตะ** — คุมแค่ข้อความที่ส่ง
+- **safety net:** (1) ปิด+ตัวอย่างว่าง → fallback AI + log (กันเซตปิดลืมกรอก) · (2) 🔴 **var-guard** (`dropUnresolvedVarBubbles` · quote.ts) ทั้งโหมดเปิด/ปิด: ตัวแปร "ที่รู้จัก" (`KNOWN_RUNTIME_VARS`=pricing+transfer+order · **ไม่ใช่ `{` ทุกตัว**) ค้าง → ทิ้งบอลลูนนั้น + log · เหลือว่างหมด → ปิด fallback AI / เปิด พักสาย+log หนัก
+- 🔴 เลิกเรียก guard 5 (`hasUnresolvedPricingVars` log-only "ปล่อยผ่าน") — var-guard คุมแทน (log+ทิ้ง ครอบ pricing+order) · คงฟังก์ชัน (ยังมีเทส)
+**harness:** verbatim.test 20 เคส (parseThinkMode/stepVerbatim/dropUnresolvedVarBubbles/objection.verbatim pure + pipeline: ปิด→ชีต+แทนตัวแปร · เปิด/ว่าง→AI · ปิด+ว่าง→fallback · ตัวแปรค้าง→ทิ้งบอลลูน · objection ปิดชนะ/เปิดไม่ชนะ · ปิด+gate/handoff ยังทำงาน) · 289 passed · tsc+build เขียว
+**ค้างต่อ (Phase2 ถัดไป):** S2/X2 ยังไม่เซตปิด (เจ้าของเซตในชีตเองเมื่อพร้อม) · ชั้น② (บังคับลำดับ) ถ้าเจ้าของต้องการภายหลัง = design decision (ขัด D-18)
+
 ### Phase C · ลบ ENV ค้างใน Vercel
 `SHEET_STEP_URL` `SHEET_FAQ_URL` `SHEET_CONFIG_URL` `SHEET_FOLLOW_URL` — โค้ดไม่อ่านแล้ว ลบทิ้งได้

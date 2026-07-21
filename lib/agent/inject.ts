@@ -51,6 +51,16 @@ interface StepRow {
   collect: string;
   example: string;
   closing: string;
+  /** โหมด "คิดเอง" (Phase2 · optional col) — "ปิด" = ส่ง example เป๊ะ (verbatim) · default "เปิด" (AI เรียบเรียง) */
+  think: ThinkMode;
+}
+
+export type ThinkMode = "เปิด" | "ปิด";
+
+/** แปลงค่าช่อง "คิดเอง" → โหมด · ว่าง/ไม่รู้จัก = เปิด (default AI) · reuse ตรรกะสวิตช์ (ปิด/false/off/0/ไม่) */
+export function parseThinkMode(raw: string): ThinkMode {
+  const v = (raw ?? "").trim().toLowerCase();
+  return ["ปิด", "false", "off", "0", "no", "ไม่", "ไม่คิด"].includes(v) ? "ปิด" : "เปิด";
 }
 
 interface ParsedSteps {
@@ -62,6 +72,9 @@ function parseStepRows(rows: string[][]): ParsedSteps | null {
   if (rows.length < 2) return null;
   const cols = resolveColumns(rows[0], STEP_COLS, "CSV_Step");
   if (!cols) return null;
+
+  // "คิดเอง" = คอลัมน์ optional (ไม่อยู่ใน STEP_COLS required) → ชีตเดิมไม่มี = ทุกประตูเปิด (ไม่ regression)
+  const thinkIdx = rows[0].map(cleanHeader).indexOf("คิดเอง");
 
   const steps: StepRow[] = [];
   for (let i = 1; i < rows.length; i++) {
@@ -81,6 +94,7 @@ function parseStepRows(rows: string[][]): ParsedSteps | null {
       collect: cell(r, cols, "ต้องเก็บข้อมูล").trim(),
       example: cell(r, cols, "ตัวอย่างคำตอบ").trim(),
       closing: cell(r, cols, "ตัวอย่างประโยคปิดท้าย").trim(),
+      think: parseThinkMode(thinkIdx >= 0 ? (r[thinkIdx] ?? "") : ""),
     });
   }
   if (steps.length === 0) return null;
@@ -147,6 +161,17 @@ export function stepNameOf(rows: string[][], stepId: string): string | null {
   if (!stepId) return null;
   const parsed = parseStepRows(rows);
   return parsed?.steps.find((s) => s.stepId === stepId)?.name ?? null;
+}
+
+/**
+ * Phase2 ชั้น③ — โหมด "คิดเอง" + ตัวอย่างคำตอบ ของ step_id ที่ AI เลือก
+ * โหมดปิด → route ส่ง example เป๊ะ (verbatim) แทน reply ที่ AI แต่ง · ไม่เจอ step → null (route ใช้ AI)
+ */
+export function stepVerbatim(rows: string[][], stepId: string): { mode: ThinkMode; example: string } | null {
+  if (!stepId) return null;
+  const parsed = parseStepRows(rows);
+  const s = parsed?.steps.find((x) => x.stepId === stepId);
+  return s ? { mode: s.think, example: s.example } : null;
 }
 
 function nextFunnelStage(stage: string): string | null {
@@ -430,6 +455,11 @@ const OBJECTION_COLS = ["objection_id", "ลูกค้าพูดแบบไ
 export interface ObjectionInjection {
   text: string;
   matchedIds: string[];
+  /**
+   * Phase2 ชั้น③ — ข้อโต้แย้งที่ match + คิดเอง=ปิด + มี pattern (ตัวแรก)
+   * มีค่า = objection ชนะ step (ส่ง pattern เป๊ะ) · null = ปล่อย AI ตัดสิน (เปิด/ไม่มี pattern = ไม่บังคับชนะ)
+   */
+  verbatim: { id: string; pattern: string } | null;
 }
 
 /**
@@ -438,17 +468,19 @@ export interface ObjectionInjection {
  * เต็มแถว = ความกังวลจริง + หลักการตอบ + ห้ามทำ (บอทประกอบคำตอบเอง · ไม่ใช่สคริปต์)
  */
 export function buildObjectionInjection(rows: string[][], userMessage: string, cap: number): ObjectionInjection {
-  if (!rows || rows.length < 2) return { text: "", matchedIds: [] };
+  if (!rows || rows.length < 2) return { text: "", matchedIds: [], verbatim: null };
   const cols = resolveColumns(rows[0], OBJECTION_COLS, "CSV_Objections");
   if (!cols) {
     console.warn(JSON.stringify({ scope: "inject", tab: "CSV_Objections", warning: "header ไม่ครบ — ข้าม (Step/FAQ พอ)" }));
-    return { text: "", matchedIds: [] };
+    return { text: "", matchedIds: [], verbatim: null };
   }
   const header = rows[0].map(cleanHeader);
   const nameIdx = header.findIndex((h) => h.startsWith("ชื่อ")); // "ชื่อข้อโต้แย้ง" (ชีตจริง)
   const dontIdx = header.indexOf("ห้ามทำ");
+  const thinkIdx = header.indexOf("คิดเอง"); // Phase2 optional
+  const exampleIdx = header.indexOf("ตัวอย่างคำตอบ"); // Phase2 optional — pattern verbatim ของข้อโต้แย้ง
 
-  interface Obj { id: string; name: string; says: string; concern: string; principle: string; dont: string; }
+  interface Obj { id: string; name: string; says: string; concern: string; principle: string; dont: string; think: ThinkMode; pattern: string; }
   const objs: Obj[] = [];
   for (let i = 1; i < rows.length; i++) {
     const id = cleanCell(cell(rows[i], cols, "objection_id"));
@@ -460,9 +492,11 @@ export function buildObjectionInjection(rows: string[][], userMessage: string, c
       concern: cell(rows[i], cols, "ความกังวลที่แท้จริง").trim(),
       principle: cell(rows[i], cols, "หลักการตอบ").trim(),
       dont: dontIdx >= 0 ? cleanCell(rows[i][dontIdx]) : "",
+      think: parseThinkMode(thinkIdx >= 0 ? (rows[i][thinkIdx] ?? "") : ""),
+      pattern: exampleIdx >= 0 ? (rows[i][exampleIdx] ?? "").trim() : "",
     });
   }
-  if (objs.length === 0) return { text: "", matchedIds: [] };
+  if (objs.length === 0) return { text: "", matchedIds: [], verbatim: null };
 
   // keyword match: คอลัมน์ "ลูกค้าพูดแบบไหนบ้าง" คั่นด้วย comma → เทียบ substring กับข้อความลูกค้า
   const matched = objs
@@ -484,7 +518,11 @@ export function buildObjectionInjection(rows: string[][], userMessage: string, c
     ...(fullBlocks.length > 0 ? ["", "=== ข้อโต้แย้งที่ตรวจพบ (ใช้ประกอบคำตอบเอง ห้ามลอกคำ) ===", ...fullBlocks] : []),
   ].join("\n");
 
-  return { text, matchedIds: matched.map((o) => o.id) };
+  // Phase2 ชั้น③: objection ชนะ step เฉพาะเมื่อ คิดเอง=ปิด + มี pattern (เปิด/ไม่มี pattern = ไม่บังคับชนะ)
+  const vObj = matched.find((o) => o.think === "ปิด" && o.pattern.length > 0);
+  const verbatim = vObj ? { id: vObj.id, pattern: vObj.pattern } : null;
+
+  return { text, matchedIds: matched.map((o) => o.id), verbatim };
 }
 
 // ---- Examples (D-27) — น้ำเสียง เลียนสไตล์ ห้ามลอกคำต่อคำ ----
