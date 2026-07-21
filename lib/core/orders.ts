@@ -202,6 +202,19 @@ export function evaluateOrderGate({ pending, slipPresent, priceOk }: OrderGateIn
   return { payment, complete, waitTag, missing, brokenOrder, readyExceptPrice };
 }
 
+/**
+ * บรรทัดเตือนใน <สถานะลูกค้า> เมื่อ "ลูกค้าแสดงเจตนาซื้อแล้ว (มี items + เลือกวิธีจ่าย) แต่ยังไม่ครบ"
+ * → ป้อน fact ให้บอทอ่านเอง (แก้ที่ state ไม่ใช่ guard · โค้ดไม่บล็อกคำพูด) กันบอทสัญญาว่าบันทึกแล้ว/แจ้งวันส่ง
+ * 🔴 ครอบทุกชุดที่ขาด (ไม่ใช่แค่ priceStuck · D-23 → D-30) · missing ว่าง (field ครบแต่ราคาล้ม) = ให้ priceStuck จัดการแยก
+ * คืน null เมื่อ: complete แล้ว / ยังไม่แสดงเจตนา (ไม่มี items หรือยังไม่เลือกจ่าย) / ขาดแต่ราคา
+ */
+export function buildOrderStateWarning(pending: PendingOrder, gate: OrderGateResult): string | null {
+  const hasItems = normalizeItems(pending.items).length > 0;
+  const paymentChosen = (pending["การชำระเงิน"] ?? "").trim() !== "";
+  if (gate.complete || !hasItems || !paymentChosen || gate.missing.length === 0) return null;
+  return `⚠️ ออเดอร์ยังไม่ถูกบันทึก · ยังขาด: ${gate.missing.join(", ")} · อย่ายืนยันว่าบันทึกแล้ว อย่าแจ้งวันจัดส่ง — ขอเฉพาะข้อมูลที่ขาด (รวมในบอลลูนเดียว) ก่อน`;
+}
+
 /** สรุป items ที่คนอ่านได้จาก pending (เช่น "NPT-10G x4 · NPT-20G x2") — ใช้ในข้อความแอดมินตอน pricing ยังคำนวณไม่ได้ */
 function itemsToText(items: OrderItem[] | undefined): string {
   const norm = normalizeItems(items);

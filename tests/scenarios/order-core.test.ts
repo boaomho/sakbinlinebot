@@ -5,6 +5,7 @@ import {
   addressComplete,
   evaluateOrderGate,
   buildPriceStuckAdminText,
+  buildOrderStateWarning,
   generateOrderId,
 } from "@/lib/core/orders";
 
@@ -172,6 +173,43 @@ describe("🔴 readyExceptPrice — แจ้งแอดมิน 'ราคา
     const g = evaluateOrderGate({ pending: { ชื่อ: "บูม", ที่อยู่: "1 ถ.เจริญ", เบอร์: "0811122334", การชำระเงิน: "COD" }, slipPresent: false, priceOk: false });
     expect(g.readyExceptPrice).toBe(false);
     expect(g.brokenOrder).toBe(true); // คนละเคส — ไม่มี items
+  });
+});
+
+describe("buildOrderStateWarning — เจตนาซื้อแล้วแต่ไม่ครบ → เตือน state ทุกชุดที่ขาด (D-30)", () => {
+  const items = [{ sku: "NPT-10G", qty: 1 }];
+  const gate = (p: Parameters<typeof evaluateOrderGate>[0]["pending"]) =>
+    evaluateOrderGate({ pending: p, slipPresent: false, priceOk: true });
+
+  const warn = (p: Parameters<typeof evaluateOrderGate>[0]["pending"]) => buildOrderStateWarning(p, gate(p));
+
+  it("COD + ที่อยู่ (ขาดชื่อ+เบอร์) → เตือน + missing ครบ", () => {
+    const w = warn({ items, การชำระเงิน: "COD", ที่อยู่: "123/45 ชลบุรี" });
+    expect(w).toContain("ยังไม่ถูกบันทึก");
+    expect(w).toContain("ชื่อ");
+    expect(w).toContain("เบอร์");
+    expect(w, "ห้ามแจ้งวันส่ง").toMatch(/อย่าแจ้งวันจัดส่ง|อย่ายืนยัน/);
+  });
+
+  it("COD + ที่อยู่ + ชื่อ (ขาดเบอร์) → เตือน · missing เบอร์", () => {
+    expect(warn({ items, การชำระเงิน: "COD", ที่อยู่: "123", ชื่อ: "สมชาย" })).toContain("เบอร์");
+  });
+
+  it("COD + ที่อยู่ + เบอร์ (ขาดชื่อ) → เตือน · missing ชื่อ", () => {
+    expect(warn({ items, การชำระเงิน: "COD", ที่อยู่: "123", เบอร์: "0811122334" })).toContain("ชื่อ");
+  });
+
+  it("COD + ชื่อ + เบอร์ (ขาดที่อยู่) → เตือน · missing ที่อยู่", () => {
+    expect(warn({ items, การชำระเงิน: "COD", ชื่อ: "สมชาย", เบอร์: "0811122334" })).toContain("ที่อยู่");
+  });
+
+  it("🔴 COD ครบ 3 → complete → ไม่มีบรรทัดเตือน (null)", () => {
+    expect(warn({ items, การชำระเงิน: "COD", ชื่อ: "สมชาย", ที่อยู่: "123", เบอร์: "0811122334" })).toBeNull();
+  });
+
+  it("ยังไม่แสดงเจตนา (ไม่มี items / ยังไม่เลือกจ่าย) → ไม่ nag (null)", () => {
+    expect(warn({ การชำระเงิน: "COD", ที่อยู่: "123" }), "ไม่มี items").toBeNull();
+    expect(warn({ items, ที่อยู่: "123", ชื่อ: "ก", เบอร์: "0811122334" }), "ยังไม่เลือกวิธีจ่าย").toBeNull();
   });
 });
 

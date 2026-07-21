@@ -65,7 +65,7 @@ import {
 } from "@/lib/admin-commands";
 import { uploadSlip, getSlipSignedUrl } from "@/lib/blob";
 import { appendOrderRow } from "@/lib/orders";
-import { evaluateOrderGate, buildNewOrderAdminText, buildBrokenOrderAdminText, buildPriceStuckAdminText, generateOrderId, itemsEqual, normalizeItems, PendingOrder } from "@/lib/core/orders";
+import { evaluateOrderGate, buildNewOrderAdminText, buildBrokenOrderAdminText, buildPriceStuckAdminText, buildOrderStateWarning, generateOrderId, itemsEqual, normalizeItems, PendingOrder } from "@/lib/core/orders";
 import { resolveRuntimeVars, formatLinesForSheet, formatOrderSummary, buildProductNameMap, resolveAiItems, buildAllowedPriceStrings, RuntimeVarContext, PriceResult } from "@/lib/core/pricing";
 import { computeQuote, hasUnresolvedPricingVars, resolveTransferVars, unresolvedTransferVars, findBannedClaims, parseClaimsList, findBadPrices, extractBahtNumbers, extractPriceNumbers } from "@/lib/agent/quote";
 
@@ -108,7 +108,7 @@ function itemsToNames(items: PendingOrder["items"], nameMap: Map<string, string>
  *   → บอกสถานะตรง ๆ ว่า "ยังบันทึกไม่ได้ รอแอดมินตรวจยอด" เพื่อให้ AI ไม่สัญญาว่าบันทึก/แจ้งวันส่ง
  *   (แก้ที่ state ไม่ใช่ guard — โค้ดไม่บล็อกคำพูด แค่บอกความจริงให้ AI ตัดสินเอง · ท่ารับมือเทรนในชีต Step ได้)
  */
-function buildStateText(customer: CustomerState | null, priceStuck = false): string {
+function buildStateText(customer: CustomerState | null, orderWarning: string | null = null, priceStuck = false): string {
   if (!customer) {
     return "(ไม่มีความจำลูกค้า ระบบความจำปิดอยู่ ถือว่าเป็นการเริ่มบทสนทนาใหม่ทุกครั้ง)";
   }
@@ -128,7 +128,10 @@ function buildStateText(customer: CustomerState | null, priceStuck = false): str
     `มีสลิปที่ยังไม่ผูกออเดอร์: ${customer.lastSlipPathname ? "มี" : "ไม่มี"}`,
     `มีออเดอร์บันทึกลงระบบแล้ว: ${customer.hasWrittenOrder ? "ใช่ (ถ้าลูกค้าขอแก้ออเดอร์เดิม ให้ตั้ง order_edit_request=true)" : "ยัง"}`,
   ];
-  if (priceStuck) {
+  // D-30: ข้อมูลขาด (มีเจตนาซื้อแล้วแต่ไม่ครบ) มาก่อน · ถ้า field ครบแต่ราคาล้ม → priceStuck (D-23)
+  if (orderWarning) {
+    lines.push(orderWarning);
+  } else if (priceStuck) {
     lines.push(
       "⚠️ สถานะการบันทึกออเดอร์นี้: ยังบันทึกไม่ได้ — ระบบคำนวณยอดไม่สำเร็จ กำลังให้แอดมินตรวจยอด · ยังไม่ถือว่าสั่งซื้อสำเร็จ อย่าเพิ่งยืนยันการบันทึกหรือแจ้งวันจัดส่ง บอกลูกค้าตามจริงว่ากำลังให้ทีมงานตรวจยอดแล้วจะรีบแจ้งกลับ",
     );
@@ -482,6 +485,11 @@ async function processMessage(
   const stepText = resolveRuntimeVars(stepTextRaw, preVars);
   // มี items แล้วแต่ราคาคำนวณไม่ได้ (config พัง/เกินเพดาน) → บอก AI ว่ายังบันทึกไม่ได้ (กันสัญญาวันส่งเท็จ)
   const preOrderPriceStuck = preQuote !== null && !preQuote.ok;
+  // D-30: เจตนาซื้อแล้ว (items+เลือกจ่าย) แต่ยังไม่ครบ → เตือนใน state ว่ายังไม่บันทึก + ระบุที่ขาด (กันบอทสัญญาวันส่ง)
+  const preGate = customer
+    ? evaluateOrderGate({ pending: customer.pendingOrder, slipPresent: Boolean(customer.lastSlipPathname), priceOk: preQuote?.ok ?? false })
+    : null;
+  const orderWarning = customer && preGate ? buildOrderStateWarning(customer.pendingOrder, preGate) : null;
 
   const faqText = lib && lib.CSV_FAQ.length > 0 ? buildFaqInjection(lib.CSV_FAQ, userMessage) : "(ไม่มีข้อมูล FAQ)";
   // ยัดสินค้า+ราคาโปรเสมอ (บอทห้ามแต่งราคา C6) — CSV_Products/CSV_Promo ไม่เคยถูกยัดมาก่อน
@@ -500,7 +508,7 @@ async function processMessage(
   const objection = lib ? buildObjectionInjection(lib.CSV_Objections, userMessage, objCap) : { text: "", matchedIds: [] };
   const exampleText = lib ? buildExampleInjection(lib.CSV_Examples, customer?.stage ?? "", objection.matchedIds, exCap) : "";
   const configText = formatConfigForPrompt(config);
-  const stateText = buildStateText(customer, preOrderPriceStuck);
+  const stateText = buildStateText(customer, orderWarning, preOrderPriceStuck);
 
   let historyText = "(ระบบความจำปิดอยู่)";
   if (switches.memory) {
