@@ -22,7 +22,8 @@ import {
   clearPendingOrderAndSlip,
   isOrderWritten,
   markOrderWritten,
-  setLastOrderId,
+  setLastOrder,
+  setLastOrderLocked,
   setHasWrittenOrder,
   setPaidNoAddressNotified,
   reconcileWaitTags,
@@ -68,7 +69,7 @@ import { uploadSlip, getSlipSignedUrl } from "@/lib/blob";
 import { appendOrderRow, updateOrderRow } from "@/lib/orders";
 import { evaluateOrderGate, buildNewOrderAdminText, buildBrokenOrderAdminText, buildPriceStuckAdminText, buildOrderStateWarning, buildOrderEditAdminText, generateOrderId, sanitizePhone, itemsEqual, normalizeItems, PendingOrder } from "@/lib/core/orders";
 import { resolveRuntimeVars, formatLinesForSheet, formatOrderSummary, buildProductNameMap, resolveAiItems, buildAllowedPriceStrings, RuntimeVarContext, PriceResult } from "@/lib/core/pricing";
-import { computeQuote, hasUnresolvedPricingVars, resolveTransferVars, unresolvedTransferVars, findBannedClaims, parseClaimsList, findBadPrices, extractBahtNumbers, extractPriceNumbers } from "@/lib/agent/quote";
+import { computeQuote, hasUnresolvedPricingVars, resolveTransferVars, unresolvedTransferVars, resolveOrderVars, findBannedClaims, parseClaimsList, findBadPrices, extractBahtNumbers, extractPriceNumbers } from "@/lib/agent/quote";
 
 export const maxDuration = 30;
 
@@ -109,7 +110,7 @@ function itemsToNames(items: PendingOrder["items"], nameMap: Map<string, string>
  *   → บอกสถานะตรง ๆ ว่า "ยังบันทึกไม่ได้ รอแอดมินตรวจยอด" เพื่อให้ AI ไม่สัญญาว่าบันทึก/แจ้งวันส่ง
  *   (แก้ที่ state ไม่ใช่ guard — โค้ดไม่บล็อกคำพูด แค่บอกความจริงให้ AI ตัดสินเอง · ท่ารับมือเทรนในชีต Step ได้)
  */
-function buildStateText(customer: CustomerState | null, orderWarning: string | null = null, priceStuck = false): string {
+function buildStateText(customer: CustomerState | null, orderWarning: string | null = null, priceStuck = false, lastOrderLine: string | null = null): string {
   if (!customer) {
     return "(ไม่มีความจำลูกค้า ระบบความจำปิดอยู่ ถือว่าเป็นการเริ่มบทสนทนาใหม่ทุกครั้ง)";
   }
@@ -129,6 +130,7 @@ function buildStateText(customer: CustomerState | null, orderWarning: string | n
     `มีสลิปที่ยังไม่ผูกออเดอร์: ${customer.lastSlipPathname ? "มี" : "ไม่มี"}`,
     `มีออเดอร์บันทึกลงระบบแล้ว: ${customer.hasWrittenOrder ? "ใช่ (ถ้าลูกค้าขอแก้ออเดอร์เดิม ให้ตั้ง order_edit_request=true)" : "ยัง"}`,
   ];
+  if (lastOrderLine) lines.push(lastOrderLine); // D-32: ออเดอร์ที่บันทึกแล้ว (ให้ AI จำ/แก้/ทวน)
   // D-30: ข้อมูลขาด (มีเจตนาซื้อแล้วแต่ไม่ครบ) มาก่อน · ถ้า field ครบแต่ราคาล้ม → priceStuck (D-23)
   if (orderWarning) {
     lines.push(orderWarning);
@@ -362,7 +364,18 @@ async function runOrderGate(
     }
     // เขียนชีตสำเร็จ → บันทึกใน Neon ทันที (source of truth กันเขียนซ้ำ) ก่อน clear/push
     await markOrderWritten(orderId, userId);
-    if (orderId) await setLastOrderId(userId, orderId); // D-31: จำไว้แก้แถวเดิมตอนลูกค้าขอแก้
+    // D-32: เก็บ snapshot ออเดอร์ (แยกจาก pending ที่กำลังจะ clear) → แก้/ทวน/ไม่ถูกโยนกลับต้นกรวย
+    if (orderId) {
+      await setLastOrder(userId, {
+        order_id: orderId,
+        ชื่อ: pending["ชื่อ"],
+        ที่อยู่: pending["ที่อยู่"],
+        เบอร์: pending["เบอร์"],
+        items: normItems,
+        total: price.total,
+        payment,
+      });
+    }
     await clearPendingOrderAndSlip(userId);
     await reconcileWaitTags(userId, null);
     await setHasWrittenOrder(userId);
@@ -473,9 +486,23 @@ async function processMessage(
   // FAQ: สารบัญทุกข้อ + เต็มเฉพาะที่ keyword ตรง
   const lib = await loadBotLibrary();
   const preItems = normalizeItems(customer?.pendingOrder.items);
+
+  // D-32: ออเดอร์ที่เขียนแล้ว (last_order) → สัญญาณ routing + บรรทัดสถานะ + ตัวแปรทวน (แยกจาก pending)
+  const lastOrder = customer?.lastOrder ?? null;
+  const orderLocked = customer?.lastOrderLocked ?? false;
+  const lastOrderNameMap = lib ? buildProductNameMap(lib.CSV_Products) : new Map<string, string>();
+  const lastOrderItemsText = lastOrder?.items?.length
+    ? lastOrder.items.map((it) => `${lastOrderNameMap.get(it.sku) ?? it.sku} x${it.qty}`).join(" · ")
+    : "";
+  // 🔴 สัญญาณสำหรับ "เข้าเมื่อ" ในชีต (เจ้าของคุมประตู) — order_editable (M≠TRUE) / order_confirmed_locked (M=TRUE)
+  const orderSignals: string[] = lastOrder ? [orderLocked ? "order_confirmed_locked" : "order_editable"] : [];
+  const lastOrderLine = lastOrder
+    ? `ออเดอร์ที่บันทึกแล้ว ${lastOrder.order_id}: ชื่อ ${lastOrder["ชื่อ"] ?? "-"} · ที่อยู่ ${lastOrder["ที่อยู่"] ?? "-"} · เบอร์ ${lastOrder["เบอร์"] ?? "-"} · ${lastOrderItemsText || "-"} · ยอด ${lastOrder.total ?? "-"} บาท · สถานะ: ${orderLocked ? "คอนเฟิร์มแล้ว (ของอาจแพ็คแล้ว · แก้เองไม่ได้ ส่งต่อแอดมิน)" : "ยังแก้ได้ (ลูกค้าขอแก้ field ไหน → ส่ง order_data ของ field นั้น 'เต็มก้อน' ที่แก้แล้ว ไม่ใช่เศษ)"}`
+    : null;
+
   const stepTextRaw =
     lib && lib.CSV_Step.length > 0
-      ? buildStepInjection(lib.CSV_Step, { quoted: preItems.length > 0, payment: customer?.pendingOrder["การชำระเงิน"] ?? "", userMessage })
+      ? buildStepInjection(lib.CSV_Step, { quoted: preItems.length > 0, payment: customer?.pendingOrder["การชำระเงิน"] ?? "", userMessage, signals: orderSignals })
       : "(ไม่มีข้อมูลสเต็ป)";
 
   // D-15 pre-resolve: ถ้า pending มี items อยู่แล้ว (จากเทิร์นก่อน) → คำนวณยอด แล้วเติม
@@ -484,7 +511,8 @@ async function processMessage(
   const ordersActive = switches.orders && switches.memory && Boolean(customer);
   const preQuote = ordersActive && customer ? computeQuote(customer.pendingOrder, lib, config, nowDate) : null;
   const preVars: RuntimeVarContext = preQuote?.vars ?? EMPTY_VARS;
-  const stepText = resolveRuntimeVars(stepTextRaw, preVars);
+  // D-32: resolve ตัวแปรออเดอร์ล่าสุด ({ออเดอร์_ที่อยู่} ฯลฯ) ใน stepText → AI เห็นค่าจริงไว้ทวน/ประกอบที่อยู่ใหม่
+  const stepText = resolveOrderVars(resolveRuntimeVars(stepTextRaw, preVars), lastOrder, lastOrderItemsText);
   // มี items แล้วแต่ราคาคำนวณไม่ได้ (config พัง/เกินเพดาน) → บอก AI ว่ายังบันทึกไม่ได้ (กันสัญญาวันส่งเท็จ)
   const preOrderPriceStuck = preQuote !== null && !preQuote.ok;
   // D-30: เจตนาซื้อแล้ว (items+เลือกจ่าย) แต่ยังไม่ครบ → เตือนใน state ว่ายังไม่บันทึก + ระบุที่ขาด (กันบอทสัญญาวันส่ง)
@@ -510,7 +538,7 @@ async function processMessage(
   const objection = lib ? buildObjectionInjection(lib.CSV_Objections, userMessage, objCap) : { text: "", matchedIds: [] };
   const exampleText = lib ? buildExampleInjection(lib.CSV_Examples, customer?.stage ?? "", objection.matchedIds, exCap) : "";
   const configText = formatConfigForPrompt(config);
-  const stateText = buildStateText(customer, orderWarning, preOrderPriceStuck);
+  const stateText = buildStateText(customer, orderWarning, preOrderPriceStuck, lastOrderLine);
 
   let historyText = "(ระบบความจำปิดอยู่)";
   if (switches.memory) {
@@ -606,11 +634,12 @@ async function processMessage(
     }
 
     const result = await updateOrderRow(orderId, changes, nowDate);
-    console.log(JSON.stringify({ scope: "orders", event: "order-edit", orderId, status: result.status, changedFields: Object.keys(changes) }));
+    console.log(JSON.stringify({ scope: "orders", event: "order-edit", orderId, status: result.status, changedFields: Object.keys(changes), suspect: result.suspect ?? [] }));
     if (result.status === "updated") {
-      if (adminGroupId) await pushRawText(adminGroupId, buildOrderEditAdminText(orderId, result.changed, name));
+      if (adminGroupId) await pushRawText(adminGroupId, buildOrderEditAdminText(orderId, result.changed ?? [], name));
     } else if (result.status === "confirmed") {
-      // แอดมินคอนเฟิร์มแล้ว (ของไปแพ็ค) → คนต้องจัดการ
+      // แอดมินคอนเฟิร์มแล้ว (ของไปแพ็ค) → ล็อก + คนต้องจัดการ (X2)
+      if (switches.memory) await setLastOrderLocked(userId);
       if (adminGroupId) await pushRawText(adminGroupId, `✏️ ลูกค้าขอแก้ออเดอร์ที่คอนเฟิร์มแล้ว ${orderId}\nรบกวนแอดมินดูแล (ของอาจแพ็คแล้ว)\n———\nLineOA: ${name}`);
       if (switches.memory) await setHumanMode(userId, true);
     } else if (result.status === "not_found") {
@@ -618,7 +647,11 @@ async function processMessage(
       if (adminGroupId) await pushRawText(adminGroupId, `✏️ ลูกค้าขอแก้ออเดอร์ ${orderId || "(ไม่มี id)"} แต่หาแถวในชีตไม่เจอ — รบกวนแอดมินตรวจ\n———\nLineOA: ${name}`);
       if (switches.memory) await setHumanMode(userId, true);
     }
-    // no_change → ลูกค้ายืนยัน/ขอบคุณเฉยๆ (ไม่มีค่าใหม่) → ไม่แก้ ไม่ push ไม่ handoff (Bug 2 หาย)
+    // 🔴 ที่อยู่ใหม่สั้นผิดปกติ → ไม่ทับ (กันเขียนที่อยู่ผิด) + แจ้งแอดมิน (บอทควรถามลูกค้ายืนยันที่อยู่เต็ม — เทรนใน S_EDIT)
+    if ((result.suspect?.length ?? 0) > 0 && adminGroupId) {
+      await pushRawText(adminGroupId, `⚠️ ลูกค้าแก้ ${result.suspect!.join("/")} ของ ${orderId} แต่ค่าที่ได้สั้นผิดปกติ — ไม่เขียนลงชีต รบกวนยืนยันกับลูกค้า\n———\nLineOA: ${name}`);
+    }
+    // no_change (ไม่มี suspect) → ลูกค้ายืนยัน/ขอบคุณเฉยๆ → ไม่แก้ ไม่ push ไม่ handoff (Bug 2 หาย)
   }
 
   // ---- order flow (1-pass · AI เป็นเจ้าของบทสนทนา · โค้ดเป็นเจ้าของเงิน) ----
@@ -670,6 +703,7 @@ async function processMessage(
   let outReply = resolveRuntimeVars(baseReply, outVars);
   // ตัวแปรข้อมูลโอนเงิน (เลขที่บัญชี/ชื่อบัญชี/ธนาคาร) — โค้ด resolve จาก CSV_Config
   outReply = resolveTransferVars(outReply, config);
+  outReply = resolveOrderVars(outReply, lastOrder, lastOrderItemsText); // D-32: {ออเดอร์_*} ในคำพูดบอท
   // guard 5 = LOG อย่างเดียว ไม่บล็อก (ยังไม่มี items = AI เติมเอง · ตัวแปรอื่นคงพฤติกรรมเดิม)
   if (hasUnresolvedPricingVars(outReply)) {
     console.warn(JSON.stringify({ scope: "orders", warning: "reply เหลือตัวแปรราคา resolve ไม่ได้ (ยังไม่มี items) — ปล่อยผ่าน ไม่บล็อก" }));

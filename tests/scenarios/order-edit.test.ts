@@ -73,6 +73,21 @@ describe("updateOrderRow (unit) — header-driven แก้แถวเดิม
     expect(sheetsCalls.batchUpdates.length).toBe(0);
   });
 
+  it("🔴 ที่อยู่ใหม่สั้นผิดปกติ (AI ส่งเศษ '21') → ไม่ทับ + suspect (กันเขียนที่อยู่ผิด)", async () => {
+    sheetsCalls.getReturn = [makeRow({ ที่อยู่: "11 ถนนเจริญกรุง เขตบางรัก กรุงเทพ 10500" })];
+    const r = await updateOrderRow(OID, { ที่อยู่: "21" }, NOW);
+    expect(r.status).toBe("no_change");
+    expect(r.suspect).toContain("ที่อยู่");
+    expect(sheetsCalls.batchUpdates.length, "ห้ามเขียนที่อยู่ผิด").toBe(0);
+  });
+
+  it("ที่อยู่ใหม่เต็มก้อน (AI ประกอบแล้ว) → updated ปกติ", async () => {
+    sheetsCalls.getReturn = [makeRow({ ที่อยู่: "11 ถนนเจริญกรุง เขตบางรัก กรุงเทพ 10500" })];
+    const r = await updateOrderRow(OID, { ที่อยู่: "21 ถนนเจริญกรุง เขตบางรัก กรุงเทพ 10500" }, NOW);
+    expect(r.status).toBe("updated");
+    expect(updated("F"), "ที่อยู่ใหม่ลง F").toContain("21 ถนนเจริญกรุง");
+  });
+
   it("Y ต่อท้ายประวัติ (ไม่ทับ) · Z อ่านเดิม+1 · หลายฟิลด์คั่น ·", async () => {
     sheetsCalls.getReturn = [makeRow({ แก้ไขล่าสุด: "2026-07-20 10:00 · ชื่อ: ก → สมชาย ใจดี", แก้ไขกี่ครั้ง: "2" })];
     const r = await updateOrderRow(OID, { เบอร์โทร: "0911123344", ที่อยู่: "999 กรุงเทพ" }, NOW);
@@ -120,7 +135,16 @@ describe("route order-edit (scenario) — Bug 2 หาย + แก้ชีต",
     expect(c?.human_mode, "ไม่ handoff").toBe(false);
   });
 
-  it("hasWrittenOrder + M=TRUE + แก้เบอร์ → handoff · ไม่แก้แถว", async () => {
+  it("🔴 เขียนชีต → last_order เก็บ snapshot (D-32) · แก้ได้หลัง pending clear", async () => {
+    await writeFirstOrder();
+    const c = await readCustomer(U);
+    expect(c?.pending_order, "pending ถูก clear (D-29)").toBeNull();
+    expect(c?.last_order, "last_order เก็บ snapshot").toBeTruthy();
+    expect((c?.last_order as Record<string, unknown>).order_id).toMatch(/^SKB-/);
+    expect(c?.last_order_locked).toBe(false);
+  });
+
+  it("hasWrittenOrder + M=TRUE + แก้เบอร์ → handoff · ล็อก last_order · ไม่แก้แถว", async () => {
     await writeFirstOrder();
     sheetsCalls.getReturn = [ (() => { const row = [...appendedRows()[0]]; row[ORDERS_HEADER.indexOf("คอนเฟิร์ม")] = "TRUE"; return row; })() ];
     scriptGemini([turn({ reply: "เดี๋ยวให้แอดมินดูแลนะคะ", stage: "4b", orderEditRequest: true, orderData: { เบอร์: "0911123344" } })]);
@@ -130,5 +154,6 @@ describe("route order-edit (scenario) — Bug 2 หาย + แก้ชีต",
     expect(JSON.stringify(adminPushes())).toContain("คอนเฟิร์มแล้ว");
     const c = await readCustomer(U);
     expect(c?.human_mode, "handoff").toBe(true);
+    expect(c?.last_order_locked, "ล็อก").toBe(true);
   });
 });

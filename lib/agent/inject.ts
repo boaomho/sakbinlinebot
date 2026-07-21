@@ -173,6 +173,11 @@ export interface StepInjectionInput {
   /** ช่องทางชำระที่เลือกแล้วใน pending ("COD"/"โอน"/"") — filter ประตูอีกฝั่งออก */
   payment: string;
   userMessage: string;
+  /**
+   * สัญญาณสถานะจากโค้ด (D-32) เช่น ["order_editable"] / ["order_confirmed_locked"]
+   * ประตูที่ "เข้าเมื่อ" มี token ตรงสัญญาณที่ active → ยัดเต็มเสมอ (เจ้าของคุมว่าประตูไหนใช้สัญญาณไหน · ไม่ hardcode step_id)
+   */
+  signals?: string[];
 }
 
 /** ประตูนี้ผูกกับวิธีจ่ายไหน — อ่านจาก "เข้าเมื่อ" (data-driven ไม่ hardcode step_id) */
@@ -197,7 +202,8 @@ export function buildStepInjection(rows: string[][], input: StepInjectionInput):
     return whole;
   }
   const { steps, stepIds } = parsed;
-  const { quoted, payment, userMessage } = input;
+  const { quoted, payment, userMessage, signals = [] } = input;
+  const signalMatch = (s: StepRow) => signals.length > 0 && signals.some((sig) => sig && s.entryWhen.includes(sig));
 
   // funnel_stage ว่าง/ไม่รู้จัก → log เตือน (region routing พึ่ง funnel_stage · ว่าง = ประตูไม่เข้า region ไหน = พังเงียบ)
   const validStages = new Set([...FUNNEL_ORDER, HANDOFF]);
@@ -248,7 +254,9 @@ export function buildStepInjection(rows: string[][], input: StepInjectionInput):
   const fullBlocks: string[] = [];
   for (const s of steps) {
     if (s.funnelStage === HANDOFF) {
-      if (matchesEntry(s.entryWhen, userMessage)) fullBlocks.push(leanHandoffBlock(s)); // เต็มเฉพาะ entry-match · ไม่นับ cap
+      if (matchesEntry(s.entryWhen, userMessage) || signalMatch(s)) fullBlocks.push(leanHandoffBlock(s)); // entry-match/สัญญาณ · ไม่นับ cap
+    } else if (signalMatch(s)) {
+      fullBlocks.push(fullSalesBlock(s)); // D-32: สัญญาณ active (order_editable/locked) → ยัดเต็มเสมอ (ไม่โยนกลับต้นกรวย)
     } else if (isCrossover(s)) {
       if (matchesEntry(s.entryWhen, userMessage)) fullBlocks.push(fullSalesBlock(s)); // ประตูข้าม: เต็มเฉพาะพูดถึง · ไม่นับ cap
     } else if (fullRegionIds.has(s.stepId)) {

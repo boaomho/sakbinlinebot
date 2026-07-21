@@ -13,7 +13,7 @@ import {
   buildBreakdownVars,
   PRICING_RUNTIME_VARS,
 } from "@/lib/core/pricing";
-import { PendingOrder } from "@/lib/core/orders";
+import { PendingOrder, LastOrder } from "@/lib/core/orders";
 import { AppConfig } from "@/lib/config";
 import { BotLibrary } from "@/lib/sheets/loader";
 
@@ -100,6 +100,24 @@ export function resolveTransferVars(text: string, config: AppConfig): string {
 /** ตัวแปรโอนเงินที่ยัง resolve ไม่ได้ (เหลือค้าง) — ไม่ว่าง = ห้ามส่งข้อความออก + แจ้งแอดมิน */
 export function unresolvedTransferVars(outgoing: string): string[] {
   return TRANSFER_VARS.filter((t) => outgoing.includes(t));
+}
+
+// ---- ตัวแปร "ข้อมูลออเดอร์ล่าสุด" (D-32) — โค้ด resolve จาก last_order ให้ Step ทวน/แก้ ----
+// เจ้าของอ้างตัวแปรพวกนี้ในแถว S_EDIT ของ CSV_Step (ทวนข้อมูลใหม่ให้ลูกค้าหลังแก้)
+/** @param itemsText สรุปรายการที่ผู้เรียก resolve ชื่อสินค้าแล้ว ("น้ำพริกปลาทู x3") */
+export function resolveOrderVars(text: string, order: LastOrder | null, itemsText: string): string {
+  if (!order) return text;
+  const map: [string, string][] = [
+    ["{ออเดอร์_ชื่อ}", order["ชื่อ"] ?? ""],
+    ["{ออเดอร์_ที่อยู่}", order["ที่อยู่"] ?? ""],
+    ["{ออเดอร์_เบอร์}", order["เบอร์"] ?? ""],
+    ["{ออเดอร์_รายการ}", itemsText],
+    ["{ออเดอร์_ยอด}", order.total != null ? String(order.total) : ""],
+    ["{ออเดอร์_เลขที่}", order.order_id],
+  ];
+  let out = text;
+  for (const [k, v] of map) out = out.split(k).join(v);
+  return out;
 }
 
 /**

@@ -160,6 +160,31 @@ describe("buildStepInjection — region routing (D-18)", () => {
   });
 });
 
+describe("buildStepInjection signals — S_EDIT/X2 routing จาก 'เข้าเมื่อ' (D-32 · ไม่ hardcode step_id)", () => {
+  const sheet = () => [
+    STEP_HEADER,
+    step({ step_id: "S1", funnel_stage: "lead", ชื่อประตู: "ทักทาย", เข้าเมื่อ: "ทักทาย", ไปประตูถัดไปเมื่อ: "→ S2" }),
+    step({ step_id: "S_EDIT", funnel_stage: "won", ชื่อประตู: "แก้ข้อมูล", เข้าเมื่อ: "order_editable (ลูกค้าขอแก้ก่อนคอนเฟิร์ม)", หลักการนำพา: "ทวนข้อมูลใหม่", ไปประตูถัดไปเมื่อ: "" }),
+    step({ step_id: "X2E", funnel_stage: "handoff", ชื่อประตู: "แก้หลังล็อก", เข้าเมื่อ: "order_confirmed_locked", ห้ามทำ: "ห้ามแก้เอง", "ตัวอย่างคำตอบ (บอลลูน)": "ให้แอดมินดูแลนะคะ" }),
+  ];
+
+  it("🔴 signal order_editable → S_EDIT เนื้อเต็ม (ไม่ต้องมี keyword ในข้อความ · ไม่โยนกลับต้นกรวย)", () => {
+    const out = buildStepInjection(sheet(), { quoted: false, payment: "", userMessage: "แก้เบอร์หน่อย", signals: ["order_editable"] });
+    expect(fullIds(out)).toContain("S_EDIT");
+    expect(fullIds(out)).not.toContain("X2E");
+  });
+  it("signal order_confirmed_locked → X2E (handoff)", () => {
+    const out = buildStepInjection(sheet(), { quoted: false, payment: "", userMessage: "แก้เบอร์", signals: ["order_confirmed_locked"] });
+    expect(fullIds(out)).toContain("X2E");
+    expect(fullIds(out)).not.toContain("S_EDIT");
+  });
+  it("ไม่มีสัญญาณ → ไม่ยัด S_EDIT/X2E (โค้ดไม่ผูก step_id กับสัญญาณ)", () => {
+    const out = buildStepInjection(sheet(), { quoted: false, payment: "", userMessage: "แก้เบอร์", signals: [] });
+    expect(fullIds(out)).not.toContain("S_EDIT");
+    expect(fullIds(out)).not.toContain("X2E");
+  });
+});
+
 describe("buildCatalogInjection — ตารางราคาสำเร็จรูปจาก calculatePrice จริง (C6 เต็มรูป · D-24)", () => {
   const NOW = new Date("2026-07-18T03:00:00Z"); // โปร fixture live
   const base = (extra?: Record<string, string>, payment = "โอน") =>

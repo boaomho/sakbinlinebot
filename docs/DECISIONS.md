@@ -496,5 +496,17 @@ handoff ทุก path (edit/AI-semantic/keyword) ตั้งแค่ `human_m
 **harness:** order-edit.test — updateOrderRow unit (updated/confirmed/not_found/no_change/Y ต่อท้าย/Z+1/หลายฟิลด์) + route scenario (แก้ก่อน M→แก้+push ไม่ handoff · ถูกต้องครับ→เงียบ · M=TRUE→handoff) · sheet-layout/golden range A:X→A:Z · **229 passed** · tsc+build เขียว
 > เหลือเคสแก้**หลัง** M=TRUE (handoff ถูกต้องแล้ว) · Bug 2 กรณีนั้นถ้ายังวน ค่อยดูทีหลัง (เคสน้อย)
 
+### D-32 · บอทจำออเดอร์ที่เขียนแล้ว (last_order) → แก้บางส่วน/ทวน/routing S_EDIT+X2 (รากเดียว)
+**ราก:** หลังเขียนชีต pending=null (D-29 ถูก) → บอทลืมออเดอร์ → 3 อาการ: แก้บางส่วนไม่ได้ · ทวนไม่ได้ · โยนกลับต้นกรวย · แก้ที่ราก = ให้จำ **last_order** (แยกจาก pending · ไม่รื้อ D-29)
+**เก็บ last_order:** หลัง appendOrderRow สำเร็จ → `setLastOrder(snapshot: order_id/ชื่อ/ที่อยู่/เบอร์/items/total/payment)` ใน `customers.last_order` (JSONB) + `last_order_locked` · clear ตอน /reset · lock (`setLastOrderLocked`) ตอน updateOrderRow พบ M=TRUE
+**3 อาการหายด้วย:**
+1. **แก้บางส่วน (บั๊ก):** state inject "ออเดอร์ที่บันทึกแล้ว [id]: ชื่อ/ที่อยู่/เบอร์/รายการ/ยอด" → AI มีที่อยู่เก่าครบ → prompt สั่งส่ง **field เต็มก้อน** (ประกอบเก่า+ที่แก้ · เช่น "บ้านเลขที่ 21" → "21 ถนนเจริญกรุง...เต็ม") · 🔴 กันพัง: ที่อยู่ใหม่สั้น < 40% ของเดิม → `updateOrderRow` **ไม่ทับ** + `suspect` → push แอดมิน (อย่าเขียนที่อยู่ผิด)
+2. **ทวน (เปิดทางชีต):** 🔴 **ตัวแปรใหม่** `resolveOrderVars` — `{ออเดอร์_ชื่อ}` `{ออเดอร์_ที่อยู่}` `{ออเดอร์_เบอร์}` `{ออเดอร์_รายการ}` `{ออเดอร์_ยอด}` `{ออเดอร์_เลขที่}` (resolve ใน stepText+outReply · เจ้าของอ้างในแถว S_EDIT)
+3. **routing (เปิดทางชีต):** 🔴 **สัญญาณใหม่** `buildStepInjection({signals})` — `order_editable` (มี last_order + M≠TRUE) / `order_confirmed_locked` (M=TRUE) · ประตูที่ "เข้าเมื่อ" มี token ตรงสัญญาณ → ยัดเต็มเสมอ (ไม่ hardcode step_id · เจ้าของคุมว่า S_EDIT/X2 ใช้สัญญาณไหน) · ไม่โยนกลับ PRE_QUOTE เมื่อมี last_order
+**Bug 2 ยังหาย:** "ถูกต้องครับ" (order_data ว่าง) → no_change → ไม่แก้ ไม่ push ไม่ handoff (เทสยืนยัน)
+**ไม่แตะ:** D-29/gate/pricing/เขียนครั้งแรก/push แอดมินครั้งแรก/M=TRUE handoff/เนื้อ CSV_Step
+**harness:** order-edit (last_order snapshot/lock · ที่อยู่สั้น→suspect · เต็มก้อน→updated) · inject (signals→S_EDIT/X2) · resolver (resolveOrderVars) · Bug 2 no_change · 237 passed · tsc+build เขียว
+> 🔴 **เจ้าของอ้างในชีต:** ตัวแปร `{ออเดอร์_ชื่อ/ที่อยู่/เบอร์/รายการ/ยอด/เลขที่}` · สัญญาณ (ใน "เข้าเมื่อ") `order_editable` / `order_confirmed_locked`
+
 ### Phase C · ลบ ENV ค้างใน Vercel
 `SHEET_STEP_URL` `SHEET_FAQ_URL` `SHEET_CONFIG_URL` `SHEET_FOLLOW_URL` — โค้ดไม่อ่านแล้ว ลบทิ้งได้

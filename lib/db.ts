@@ -1,5 +1,5 @@
 import { neon, NeonQueryFunction } from "@neondatabase/serverless";
-import { PendingOrder } from "./core/orders";
+import { PendingOrder, LastOrder } from "./core/orders";
 
 let sqlClient: NeonQueryFunction<false, false> | null = null;
 let schemaReady = false;
@@ -43,6 +43,8 @@ export async function ensureSchema(): Promise<void> {
   await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS has_written_order BOOLEAN NOT NULL DEFAULT false`;
   await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS paid_no_address_notified BOOLEAN NOT NULL DEFAULT false`;
   await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS last_order_id TEXT`;
+  await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS last_order JSONB`; // D-32: snapshot ออเดอร์ที่เขียนแล้ว
+  await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS last_order_locked BOOLEAN NOT NULL DEFAULT false`; // M=TRUE (ล็อกแล้ว)
   await sql`CREATE INDEX IF NOT EXISTS customers_last_seen_idx ON customers (last_seen DESC)`;
   await sql`
     CREATE TABLE IF NOT EXISTS messages (
@@ -130,6 +132,10 @@ export interface CustomerState {
   paidNoAddressNotified: boolean;
   /** order_id ของออเดอร์ล่าสุดที่เขียนชีตสำเร็จ — ใช้แก้แถวเดิมตอนลูกค้าขอแก้ (D-31) */
   lastOrderId: string | null;
+  /** snapshot ออเดอร์ที่เขียนแล้ว (แยกจาก pending · D-32) — จำไว้แก้/ทวน · null = ไม่มี */
+  lastOrder: LastOrder | null;
+  /** ออเดอร์ล่าสุดถูกคอนเฟิร์ม (M=TRUE) แล้ว → ห้ามแก้อัตโนมัติ (ค้นพบตอน updateOrderRow) */
+  lastOrderLocked: boolean;
   createdAt: Date;
 }
 
@@ -146,6 +152,8 @@ function rowToCustomer(r: Record<string, unknown>): CustomerState {
     hasWrittenOrder: Boolean(r.has_written_order),
     paidNoAddressNotified: Boolean(r.paid_no_address_notified),
     lastOrderId: (r.last_order_id as string | null) ?? null,
+    lastOrder: (r.last_order as LastOrder | null) ?? null,
+    lastOrderLocked: Boolean(r.last_order_locked),
     humanMode: Boolean(r.human_mode),
     humanModeSince: (r.human_mode_since as Date | null) ?? null,
     isReturning: Boolean(r.is_returning),
@@ -197,6 +205,8 @@ function emptyCustomer(userId: string): CustomerState {
     hasWrittenOrder: false,
     paidNoAddressNotified: false,
     lastOrderId: null,
+    lastOrder: null,
+    lastOrderLocked: false,
     createdAt: new Date(),
   };
 }
@@ -396,11 +406,22 @@ export async function mergePendingOrder(userId: string, fields: PendingOrder): P
   return merged;
 }
 
-/** จำ order_id ที่เขียนชีตสำเร็จล่าสุด — ให้แก้แถวเดิมตอนลูกค้าขอแก้ (D-31) */
-export async function setLastOrderId(userId: string, orderId: string): Promise<void> {
+/** จำ snapshot ออเดอร์ที่เขียนชีตสำเร็จล่าสุด (D-32) — แก้แถวเดิม/ทวน/ประกอบที่อยู่ใหม่ · reset lock */
+export async function setLastOrder(userId: string, order: LastOrder): Promise<void> {
   await ensureSchema();
   const sql = getSql();
-  await sql`UPDATE customers SET last_order_id = ${orderId} WHERE user_id = ${userId}`;
+  await sql`
+    UPDATE customers
+    SET last_order_id = ${order.order_id}, last_order = ${JSON.stringify(order)}::jsonb, last_order_locked = false
+    WHERE user_id = ${userId}
+  `;
+}
+
+/** ค้นพบว่าออเดอร์ล่าสุดถูกคอนเฟิร์ม (M=TRUE) แล้ว → ล็อก (ห้ามแก้อัตโนมัติต่อ · D-32) */
+export async function setLastOrderLocked(userId: string): Promise<void> {
+  await ensureSchema();
+  const sql = getSql();
+  await sql`UPDATE customers SET last_order_locked = true WHERE user_id = ${userId}`;
 }
 
 /** idempotency: order_id นี้เขียนชีตสำเร็จแล้วหรือยัง (source of truth = Neon · เร็ว มี index · ไม่กิน Sheets quota) */
@@ -467,7 +488,8 @@ export async function resetCustomerMemory(userId: string): Promise<void> {
     UPDATE customers
     SET stage = NULL, tags = '{}', last_slip_pathname = NULL,
         pending_order = NULL, has_written_order = false, paid_no_address_notified = false,
-        human_mode = false, human_mode_since = NULL, resume_notice_pending = false
+        human_mode = false, human_mode_since = NULL, resume_notice_pending = false,
+        last_order_id = NULL, last_order = NULL, last_order_locked = false
     WHERE user_id = ${userId}
   `;
   await sql`DELETE FROM messages WHERE user_id = ${userId}`;

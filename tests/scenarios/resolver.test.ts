@@ -9,7 +9,7 @@ import {
   buildPriceTable,
   buildAllowedPriceStrings,
 } from "@/lib/core/pricing";
-import { computeQuote, hasUnresolvedPricingVars, checkReplyNumbers, resolveTransferVars, unresolvedTransferVars, findBannedClaims, parseClaimsList, findBadPrices } from "@/lib/agent/quote";
+import { computeQuote, hasUnresolvedPricingVars, checkReplyNumbers, resolveTransferVars, unresolvedTransferVars, resolveOrderVars, findBannedClaims, parseClaimsList, findBadPrices } from "@/lib/agent/quote";
 import { productsRows, promoRows, PRICING_CONFIG } from "../harness/botlib-fixture";
 import { testConfig } from "../harness/fixtures";
 import type { BotLibrary } from "@/lib/sheets/loader";
@@ -179,6 +179,21 @@ describe("resolveTransferVars / unresolvedTransferVars — ข้อมูลโ
 
   it("ข้อความไม่มีตัวแปรโอน → unresolved ว่าง (ไม่บล็อกเกินจำเป็น)", () => {
     expect(unresolvedTransferVars("สวัสดีค่ะ รับกี่ถ้วยดีคะ")).toEqual([]);
+  });
+});
+
+describe("resolveOrderVars — ตัวแปรออเดอร์ล่าสุดให้ Step ทวน/ประกอบที่อยู่ใหม่ (D-32)", () => {
+  const order = { order_id: "SKB-20260721-abc123", ชื่อ: "สมชาย ใจดี", ที่อยู่: "11 ถนนเจริญกรุง", เบอร์: "0811122334", total: 275 };
+  it("แทน {ออเดอร์_ชื่อ/ที่อยู่/เบอร์/รายการ/ยอด/เลขที่}", () => {
+    const out = resolveOrderVars(
+      "ทวน: {ออเดอร์_ชื่อ} · {ออเดอร์_ที่อยู่} · {ออเดอร์_เบอร์} · {ออเดอร์_รายการ} · {ออเดอร์_ยอด} บาท · เลข {ออเดอร์_เลขที่}",
+      order,
+      "น้ำพริกปลาทู x3",
+    );
+    expect(out).toBe("ทวน: สมชาย ใจดี · 11 ถนนเจริญกรุง · 0811122334 · น้ำพริกปลาทู x3 · 275 บาท · เลข SKB-20260721-abc123");
+  });
+  it("order null → คงข้อความเดิม (ไม่มี last_order)", () => {
+    expect(resolveOrderVars("x {ออเดอร์_ที่อยู่}", null, "")).toBe("x {ออเดอร์_ที่อยู่}");
   });
 });
 

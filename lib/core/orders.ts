@@ -58,6 +58,20 @@ export interface PendingOrder {
 }
 
 /**
+ * snapshot ออเดอร์ที่ "เขียนชีตแล้ว" — เก็บใน customers.last_order (แยกจาก pending ที่ถูก clear · D-32)
+ * ให้บอทจำออเดอร์ได้หลังเขียน: ประกอบที่อยู่ใหม่ตอนแก้บางส่วน · ทวนข้อมูล · ไม่ถูกโยนกลับต้นกรวย
+ */
+export interface LastOrder {
+  order_id: string;
+  ชื่อ?: string;
+  ที่อยู่?: string;
+  เบอร์?: string;
+  items?: OrderItem[];
+  total?: number;
+  payment?: string;
+}
+
+/**
  * สร้าง order_id `<prefix>-YYYYMMDD-xxxxxx` (idempotency key) — pure
  * @param prefix รหัสนำหน้าจากชีต (default "SKB") · @param now เวลาอ้างอิง · @param suffix inject สำหรับเทส (ปกติสุ่ม)
  * 🔴 YYYYMMDD = วันไทย (UTC+7) · suffix = a-z0-9 6 ตัว (สุ่ม) — โครงสร้าง key ไม่ใช่กฎธุรกิจ (prefix เท่านั้นที่คุมจากชีต)

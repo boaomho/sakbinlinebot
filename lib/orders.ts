@@ -234,11 +234,13 @@ export async function listPendingOrders(): Promise<OrderRow[]> {
 
 // ---- แก้ออเดอร์ที่เขียนแล้ว (D-31 · Plan B) — แก้แถวเดิมด้วย order_id ห้ามเขียนแถวใหม่ ----
 
-export type OrderEditResult =
-  | { status: "updated"; changed: { label: string; from: string; to: string }[] }
-  | { status: "confirmed" } // M=TRUE (แอดมินคอนเฟิร์มแล้ว = ของไปแพ็ค) → ห้ามแก้อัตโนมัติ
-  | { status: "not_found" } // หา order_id ไม่เจอ → ห้ามเขียนแถวใหม่
-  | { status: "no_change" }; // ไม่มีค่าใหม่ที่ต่างจริง (ลูกค้ายืนยัน/ขอบคุณเฉยๆ) → ไม่แตะ
+export interface OrderEditResult {
+  /** updated=แก้แล้ว · confirmed=M=TRUE ห้ามแก้ · not_found=หา order_id ไม่เจอ · no_change=ไม่มีค่าใหม่ต่างจริง */
+  status: "updated" | "confirmed" | "not_found" | "no_change";
+  changed?: { label: string; from: string; to: string }[];
+  /** field ที่ "ไม่ทับ" เพราะค่าใหม่ผิดปกติ (เช่น ที่อยู่สั้นเกินไปมาก) → ผู้เรียกให้บอทถามยืนยัน (D-32) */
+  suspect?: string[];
+}
 
 /** label ที่โชว์ใน Y/แจ้งแอดมิน (คอลัมน์ที่ไม่มีใน map = internal เช่น items_json — อัปเดตเงียบ ไม่โชว์) */
 const EDIT_LABELS: Record<string, string> = {
@@ -283,15 +285,22 @@ export async function updateOrderRow(orderId: string, changes: Record<string, st
 
     // diff เฉพาะที่ "มีค่าใหม่ต่างจริง" (ค่าว่าง/เท่าเดิม = ไม่นับแก้ · กัน "ถูกต้องครับ" เพิ่ม Y/Z)
     const changed: { label: string; from: string; to: string; col: number }[] = [];
+    const suspect: string[] = [];
     for (const [colName, newVal] of Object.entries(changes)) {
       const idx = cols[colName];
       if (idx === undefined) continue;
       const old = (row[idx] ?? "").trim();
       const nv = (newVal ?? "").trim();
       if (nv === "" || nv === old) continue;
+      // 🔴 กันที่อยู่ผิด: ที่อยู่ใหม่สั้นผิดปกติเทียบของเดิม (AI ส่งเศษ ไม่ใช่ก้อนเต็ม) → ไม่ทับ ให้บอทถามยืนยัน
+      if (colName === "ที่อยู่" && old.length >= 15 && nv.length < old.length * 0.4) {
+        suspect.push(EDIT_LABELS[colName] ?? colName);
+        console.warn(JSON.stringify({ scope: "orders", event: "edit-address-suspect", orderId, oldLen: old.length, newLen: nv.length }));
+        continue;
+      }
       changed.push({ label: EDIT_LABELS[colName] ?? "", from: old, to: nv, col: idx });
     }
-    if (changed.length === 0) return { status: "no_change" };
+    if (changed.length === 0) return { status: "no_change", suspect };
 
     const data: { range: string; values: string[][] }[] = changed.map((c) => ({
       range: `${SHEET_NAME}!${columnLetter(c.col)}${rowIndex}:${columnLetter(c.col)}${rowIndex}`,
@@ -312,7 +321,7 @@ export async function updateOrderRow(orderId: string, changes: Record<string, st
       spreadsheetId: ordersSheetId(),
       requestBody: { valueInputOption: "USER_ENTERED", data },
     });
-    return { status: "updated", changed: changed.map((c) => ({ label: c.label || "รายการ", from: c.from, to: c.to })) };
+    return { status: "updated", changed: changed.map((c) => ({ label: c.label || "รายการ", from: c.from, to: c.to })), suspect };
   });
 }
 
