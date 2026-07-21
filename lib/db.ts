@@ -45,6 +45,7 @@ export async function ensureSchema(): Promise<void> {
   await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS last_order_id TEXT`;
   await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS last_order JSONB`; // D-32: snapshot ออเดอร์ที่เขียนแล้ว
   await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS last_order_locked BOOLEAN NOT NULL DEFAULT false`; // M=TRUE (ล็อกแล้ว)
+  await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS intake_turns INTEGER NOT NULL DEFAULT 0`; // D-34: เทิร์นใน handoff_after_intake
   await sql`CREATE INDEX IF NOT EXISTS customers_last_seen_idx ON customers (last_seen DESC)`;
   await sql`
     CREATE TABLE IF NOT EXISTS messages (
@@ -136,6 +137,8 @@ export interface CustomerState {
   lastOrder: LastOrder | null;
   /** ออเดอร์ล่าสุดถูกคอนเฟิร์ม (M=TRUE) แล้ว → ห้ามแก้อัตโนมัติ (ค้นพบตอน updateOrderRow) */
   lastOrderLocked: boolean;
+  /** เทิร์นที่อยู่ในประตู handoff_after_intake ต่อเนื่อง (D-34) — 0 = ไม่ได้อยู่ · ใช้เช็คเพดานกันค้าง */
+  intakeTurns: number;
   createdAt: Date;
 }
 
@@ -154,6 +157,7 @@ function rowToCustomer(r: Record<string, unknown>): CustomerState {
     lastOrderId: (r.last_order_id as string | null) ?? null,
     lastOrder: (r.last_order as LastOrder | null) ?? null,
     lastOrderLocked: Boolean(r.last_order_locked),
+    intakeTurns: Number(r.intake_turns) || 0,
     humanMode: Boolean(r.human_mode),
     humanModeSince: (r.human_mode_since as Date | null) ?? null,
     isReturning: Boolean(r.is_returning),
@@ -207,21 +211,23 @@ function emptyCustomer(userId: string): CustomerState {
     lastOrderId: null,
     lastOrder: null,
     lastOrderLocked: false,
+    intakeTurns: 0,
     createdAt: new Date(),
   };
 }
 
 export async function updateCustomerAfterTurn(
   userId: string,
-  opts: { stage?: string; tagsAdd?: string[] },
+  opts: { stage?: string; tagsAdd?: string[]; intakeTurns?: number },
 ): Promise<void> {
   await ensureSchema();
   const sql = getSql();
 
+  const intake = opts.intakeTurns ?? 0; // D-34: นับเทิร์นใน handoff_after_intake (0 = ไม่ได้อยู่/ออกแล้ว)
   if (opts.stage) {
-    await sql`UPDATE customers SET stage = ${opts.stage}, last_seen = now() WHERE user_id = ${userId}`;
+    await sql`UPDATE customers SET stage = ${opts.stage}, intake_turns = ${intake}, last_seen = now() WHERE user_id = ${userId}`;
   } else {
-    await sql`UPDATE customers SET last_seen = now() WHERE user_id = ${userId}`;
+    await sql`UPDATE customers SET intake_turns = ${intake}, last_seen = now() WHERE user_id = ${userId}`;
   }
 
   if (opts.tagsAdd && opts.tagsAdd.length > 0) {

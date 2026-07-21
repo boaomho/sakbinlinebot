@@ -9,7 +9,7 @@ import {
   FeatureSwitches,
 } from "@/lib/config";
 import { loadBotLibrary } from "@/lib/sheets/loader";
-import { buildStepInjection, buildFaqInjection, buildCatalogInjection, buildObjectionInjection, buildExampleInjection, readConfigDescription, funnelStageOf } from "@/lib/agent/inject";
+import { buildStepInjection, buildFaqInjection, buildCatalogInjection, buildObjectionInjection, buildExampleInjection, readConfigDescription, funnelStageOf, stepNameOf } from "@/lib/agent/inject";
 import {
   ensureCustomer,
   updateCustomerAfterTurn,
@@ -506,7 +506,7 @@ async function processMessage(
 
   const stepTextRaw =
     lib && lib.CSV_Step.length > 0
-      ? buildStepInjection(lib.CSV_Step, { quoted: preItems.length > 0, payment: customer?.pendingOrder["การชำระเงิน"] ?? "", userMessage, signals: orderSignals })
+      ? buildStepInjection(lib.CSV_Step, { quoted: preItems.length > 0, payment: customer?.pendingOrder["การชำระเงิน"] ?? "", userMessage, signals: orderSignals, stayStage: customer?.stage ?? undefined })
       : "(ไม่มีข้อมูลสเต็ป)";
 
   // D-15 pre-resolve: ถ้า pending มี items อยู่แล้ว (จากเทิร์นก่อน) → คำนวณยอด แล้วเติม
@@ -771,10 +771,19 @@ async function processMessage(
   const assistantSaved = outReply;
   await deliverReply(replyToken, userId, withResume(outReply), config.quotaSaver);
 
+  // D-34: handoff_after_intake — บอทคุยเก็บข้อมูลก่อนค่อยส่งคน · นับเทิร์น (reset เมื่อออกจากประตู) + เพดานกันค้าง
+  const stageFunnel = lib ? funnelStageOf(lib.CSV_Step, geminiOutput.stage) : null;
+  const stageIsHandoff = stageFunnel === "handoff"; // ส่งต่อทันที (D-33)
+  const stageIsIntake = stageFunnel === "handoff_after_intake";
+  const prevIntakeTurns = customer?.intakeTurns ?? 0;
+  const intakeCap = numFromRaw(config, "เพดานเทิร์นก่อนส่งแอดมิน", 3);
+  const newIntakeTurns = stageIsIntake ? prevIntakeTurns + 1 : 0;
+  const intakeCapReached = stageIsIntake && newIntakeTurns >= intakeCap;
+
   if (switches.memory) {
     await addMessage(userId, "user", userMessage);
     await addMessage(userId, "assistant", assistantSaved);
-    await updateCustomerAfterTurn(userId, { stage: geminiOutput.stage, tagsAdd: effectiveTagsAdd });
+    await updateCustomerAfterTurn(userId, { stage: geminiOutput.stage, tagsAdd: effectiveTagsAdd, intakeTurns: newIntakeTurns });
     await logFunnelEvent(userId, previousStage, geminiOutput.stage);
     if (shouldNotifyResume) await clearResumeNotice(userId);
   }
@@ -798,16 +807,27 @@ async function processMessage(
     await runOrderGate(userId, customer, pending, postQuote?.price ?? null, slipThisTurn, config, nameMap, outReply, allowed);
   }
 
-  // handoff ทั่วไป: AI ตั้ง handoff=true (semantic) · หรือ 🔴 โค้ดการันตี — ประตูที่ AI เข้า funnel_stage=handoff (D-33)
-  //   ตาข่าย 2 ชั้น: H1 (สุขภาพ/แพ้อาหาร) ไม่พึ่ง AI ตั้ง flag อย่างเดียว (พลาด = เสี่ยง พ.ร.บ.อาหาร)
-  //   เฉพาะ funnel_stage=handoff เท่านั้น · S_EDIT(won)/X2(post_sale) ไม่ชน
-  const stageIsHandoff = lib ? funnelStageOf(lib.CSV_Step, geminiOutput.stage) === "handoff" : false;
-  if (switches.handoff && (geminiOutput.handoff || stageIsHandoff) && !damageHandled && !editHandled) {
+  // handoff: AI ตั้ง handoff=true · funnel_stage=handoff (โค้ดการันตี D-33) · หรือ intake เกินเพดาน (กันค้าง D-34)
+  //   ตาข่าย: H1 (สุขภาพ/แพ้อาหาร) ไม่พึ่ง AI flag อย่างเดียว · "ขอคุยแอดมิน" = keyword pre-check (ก่อน Gemini) แล้ว
+  const doHandoff = switches.handoff && (geminiOutput.handoff || stageIsHandoff || intakeCapReached) && !damageHandled && !editHandled;
+  if (doHandoff) {
     const reason =
-      stageIsHandoff && !geminiOutput.handoff
-        ? "อยู่ประตูส่งต่อ (funnel_stage=handoff · โค้ดการันตี)"
-        : geminiOutput.handoffReason || "AI ประเมินว่าควรส่งต่อ";
+      intakeCapReached && !geminiOutput.handoff && !stageIsHandoff
+        ? `เก็บข้อมูลครบ/เกินเพดาน (${intakeCap} เทิร์น) → ส่งแอดมิน`
+        : stageIsHandoff && !geminiOutput.handoff
+          ? "อยู่ประตูส่งต่อ (funnel_stage=handoff · โค้ดการันตี)"
+          : geminiOutput.handoffReason || "AI ประเมินว่าควรส่งต่อ";
     await handoff(userId, switches, { reason, userMessage });
+  } else if (switches.memory && prevIntakeTurns > 0 && !stageIsIntake) {
+    // 🔴 push-on-exit (D-34): เคยอยู่ intake แล้วย้ายประตูออก (ไม่ handoff) → แจ้งแอดมินรับรู้เรื่องค้าง
+    //    ≠ handoff: ไม่ปิดบอท ไม่มี footer (บอทคุยขายต่อ) · reuse pushRawText · edge เดียว (intake_turns reset แล้ว = ไม่ push ซ้ำ)
+    const adminGroupId = process.env.ADMIN_GROUP_ID;
+    if (adminGroupId) {
+      const name = await getProfileName(userId);
+      const prevDoor = (lib && customer?.stage ? stepNameOf(lib.CSV_Step, customer.stage) : null) ?? "เรื่องที่คุยค้าง";
+      const newDoor = (lib ? stepNameOf(lib.CSV_Step, geminiOutput.stage) : null) ?? "ประตูอื่น";
+      await pushRawText(adminGroupId, `⚠️ ลูกค้าเพิ่งคุยเรื่อง "${prevDoor}" แล้วเปลี่ยนไป "${newDoor}" · รบกวนตรวจสอบเรื่องค้าง (บอทยังดูแลต่ออยู่)\nข้อความล่าสุด: ${userMessage}\n———\nLineOA: ${name}`);
+    }
   }
 }
 

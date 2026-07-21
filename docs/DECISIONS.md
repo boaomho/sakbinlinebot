@@ -522,5 +522,15 @@ handoff ทุก path (edit/AI-semantic/keyword) ตั้งแค่ `human_m
 **harness:** handoff-flow (5 ทาง+footer · เคลมรูปแนบ · funnel_stage การันตี · 📦 ไม่มี footer) · handoff-guard (setHumanMode true จุดเดียว) · order-edit (✏️ ก่อน M=TRUE ไม่มี footer · X2 มี footer) · 245 passed · tsc+build เขียว
 > ไม่แตะ: logic เงื่อนไข handoff · gate/pricing/order-edit/M=TRUE detection · เนื้อ CSV_Step
 
+### D-34 (C1) · funnel_stage=handoff_after_intake — บอทคุยเก็บข้อมูลก่อนค่อยส่งคน
+**(commitment guard ตัดทิ้ง — ประตูเคลมตั้ง คิดเอง=ปิด พูดตามชีตเป๊ะ = ไม่ต้อง guard ซ้ำ · intake_summary+business-hours = C3 รอแก้บั๊กเวลา UTC)**
+- **ประตูคุยได้ (inject.ts):** const `HANDOFF_AFTER_INTAKE` + validStages · inject **fullSalesBlock** (ไม่ใช่ lean) · `stayStage` (=customer.stage) → คงประตู intake ข้ามเทิร์น **additive ไม่ล็อก** (ประตูขายยังยัด · AI ย้ายออกได้อิสระ · D-18) · `stepNameOf` (ชื่อประตูสำหรับ push)
+- **defer-handoff + เพดาน (route):** `intake_turns` (db · นับต่อเนื่อง · reset เมื่อออก) · `funnelStageOf(stage)==="handoff_after_intake"` → **ไม่** handoff ทันที · handoff เมื่อ (ก) AI ตั้ง handoff=true (คุยครบ) (ข) เกิน `เพดานเทิร์นก่อนส่งแอดมิน`(default 3) — ผ่านประตูรวม `handoff()` (footer มาเอง)
+- **ขอคุยแอดมิน = keyword pre-check เดิม** (รันก่อน Gemini) → handoff ทันทีแม้ยังไม่ถึงเพดาน
+- 🔴 **push-on-exit:** เคยอยู่ intake (prevIntakeTurns>0) แล้วย้ายประตูออก (ไม่ handoff) → `pushRawText` "⚠️ ลูกค้าเพิ่งคุยเรื่อง [X] เปลี่ยนไป [Y]" · **≠ handoff** (ไม่ปิดบอท ไม่ footer · บอทขายต่อ) · reuse pushRawText · edge เดียว (intake_turns reset = ไม่ push ซ้ำ) · 📦 กับ push-on-exit คนละข้อความ ไม่ตีกัน
+- คง funnel_stage=handoff (ทันที D-33) + guard ไม่ regression
+> 🔴 **เจ้าของต้องรู้:** คำ trigger เข้า intake **ห้ามซ้ำกับ `คำ_handoff`** (เช่น "ของเสีย" อยู่ใน DEFAULT_HANDOFF_KEYWORDS → keyword pre-check ปิดบอทก่อนเข้า intake) · ถ้าอยากคุยก่อน ใช้คำอื่นใน "เข้าเมื่อ" หรือเอาคำนั้นออกจาก `คำ_handoff`
+> config: `เพดานเทิร์นก่อนส่งแอดมิน` (default 3) · **harness:** handoff-intake (เข้า→ไม่ handoff · เกินเพดาน→handoff · keyword→ทันที · AI flag→handoff · pivot→push-on-exit ไม่ footer · 📦ไม่ตีกัน · funnel_stage=handoff ไม่ regression) · inject (stayStage additive) · **255 passed** · tsc+build เขียว
+
 ### Phase C · ลบ ENV ค้างใน Vercel
 `SHEET_STEP_URL` `SHEET_FAQ_URL` `SHEET_CONFIG_URL` `SHEET_FOLLOW_URL` — โค้ดไม่อ่านแล้ว ลบทิ้งได้

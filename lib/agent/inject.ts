@@ -35,6 +35,8 @@ const FUNNEL_ORDER = ["lead", "qualified", "quoted", "awaiting_payment", "awaiti
 /** ตอนกำกวม (ไม่รู้ลูกค้าอยู่ประตูไหน) ยัดเต็ม funnel_stage ต้น ๆ ให้บอทจับทางได้ */
 const AMBIGUOUS_STAGES = ["lead", "qualified", "quoted"];
 const HANDOFF = "handoff";
+/** D-34: ประตูที่บอท "คุยเก็บข้อมูลก่อน" แล้วค่อย handoff (ต่างจาก handoff ทันที) — inject เนื้อเต็มเหมือนประตูขาย */
+const HANDOFF_AFTER_INTAKE = "handoff_after_intake";
 
 interface StepRow {
   stepId: string;
@@ -113,6 +115,13 @@ export function funnelStageOf(rows: string[][], stepId: string): string | null {
   return parsed?.steps.find((s) => s.stepId === stepId)?.funnelStage ?? null;
 }
 
+/** ชื่อประตู (ชื่อประตู) ของ step_id — ใช้ในข้อความแจ้งแอดมิน push-on-exit (D-34) */
+export function stepNameOf(rows: string[][], stepId: string): string | null {
+  if (!stepId) return null;
+  const parsed = parseStepRows(rows);
+  return parsed?.steps.find((s) => s.stepId === stepId)?.name ?? null;
+}
+
 function nextFunnelStage(stage: string): string | null {
   const idx = FUNNEL_ORDER.indexOf(stage);
   return idx >= 0 && idx + 1 < FUNNEL_ORDER.length ? FUNNEL_ORDER[idx + 1] : null;
@@ -185,6 +194,11 @@ export interface StepInjectionInput {
    * ประตูที่ "เข้าเมื่อ" มี token ตรงสัญญาณที่ active → ยัดเต็มเสมอ (เจ้าของคุมว่าประตูไหนใช้สัญญาณไหน · ไม่ hardcode step_id)
    */
   signals?: string[];
+  /**
+   * step_id ที่ลูกค้าอยู่ตอนนี้ (customer.stage · D-34) — ถ้าเป็นประตู funnel_stage=handoff_after_intake
+   * → คงประตูนั้นไว้เต็ม (บอทคุย intake ต่อข้ามเทิร์น) · **additive** ไม่ล็อก (ประตูอื่นยังยัดตามปกติ AI ย้ายออกได้)
+   */
+  stayStage?: string;
 }
 
 /** ประตูนี้ผูกกับวิธีจ่ายไหน — อ่านจาก "เข้าเมื่อ" (data-driven ไม่ hardcode step_id) */
@@ -209,11 +223,13 @@ export function buildStepInjection(rows: string[][], input: StepInjectionInput):
     return whole;
   }
   const { steps, stepIds } = parsed;
-  const { quoted, payment, userMessage, signals = [] } = input;
+  const { quoted, payment, userMessage, signals = [], stayStage } = input;
   const signalMatch = (s: StepRow) => signals.length > 0 && signals.some((sig) => sig && s.entryWhen.includes(sig));
+  // D-34: คงประตู intake ที่ลูกค้าอยู่ (additive · ไม่ล็อก) — บอทคุย intake ต่อได้ข้ามเทิร์น
+  const stayMatch = (s: StepRow) => Boolean(stayStage) && s.stepId === stayStage && s.funnelStage === HANDOFF_AFTER_INTAKE;
 
   // funnel_stage ว่าง/ไม่รู้จัก → log เตือน (region routing พึ่ง funnel_stage · ว่าง = ประตูไม่เข้า region ไหน = พังเงียบ)
-  const validStages = new Set([...FUNNEL_ORDER, HANDOFF]);
+  const validStages = new Set([...FUNNEL_ORDER, HANDOFF, HANDOFF_AFTER_INTAKE]);
   const badStage = steps.filter((s) => !validStages.has(s.funnelStage));
   if (badStage.length > 0) {
     console.warn(JSON.stringify({ scope: "inject", warning: "funnel_stage ว่าง/ไม่รู้จัก — ประตูจะไม่เห็นเนื้อเต็มตลอดกาล", stepIds: badStage.map((s) => s.stepId) }));
@@ -262,8 +278,8 @@ export function buildStepInjection(rows: string[][], input: StepInjectionInput):
   for (const s of steps) {
     if (s.funnelStage === HANDOFF) {
       if (matchesEntry(s.entryWhen, userMessage) || signalMatch(s)) fullBlocks.push(leanHandoffBlock(s)); // entry-match/สัญญาณ · ไม่นับ cap
-    } else if (signalMatch(s)) {
-      fullBlocks.push(fullSalesBlock(s)); // D-32: สัญญาณ active (order_editable/locked) → ยัดเต็มเสมอ (ไม่โยนกลับต้นกรวย)
+    } else if (signalMatch(s) || stayMatch(s)) {
+      fullBlocks.push(fullSalesBlock(s)); // D-32 สัญญาณ / D-34 คงประตู intake → ยัดเต็มเสมอ (ไม่โยนกลับต้นกรวย)
     } else if (isCrossover(s)) {
       if (matchesEntry(s.entryWhen, userMessage)) fullBlocks.push(fullSalesBlock(s)); // ประตูข้าม: เต็มเฉพาะพูดถึง · ไม่นับ cap
     } else if (fullRegionIds.has(s.stepId)) {
