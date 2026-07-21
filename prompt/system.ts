@@ -1,3 +1,5 @@
+import { bangkokShift } from "@/lib/core/time";
+
 export interface StaticInstructionParams {
   botName: string;
   shopName: string;
@@ -50,7 +52,7 @@ const THAI_MONTHS = [
  * คำนวณจาก UTC + 7 ชม. แล้วอ่านด้วย getUTC* เพื่อไม่พึ่ง timezone ของเซิร์ฟเวอร์
  */
 export function formatThaiNow(now: Date = new Date()): string {
-  const th = new Date(now.getTime() + 7 * 60 * 60 * 1000);
+  const th = bangkokShift(now); // เวลาไทย (D-37 · ฐานเดียว)
   const dayName = THAI_DAYS[th.getUTCDay()];
   const day = th.getUTCDate();
   const monthName = THAI_MONTHS[th.getUTCMonth()];

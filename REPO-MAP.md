@@ -41,6 +41,7 @@ tests/
 - `PendingOrder {ชื่อ?,ที่อยู่?,เบอร์?,การชำระเงิน?,items?,order_id?}` · `normalizeItems`/`itemsEqual` (ตัดสิน "items เปลี่ยน") · **D-29** `generateOrderId(prefix, now, suffix?)` → `SKB-YYYYMMDD(ไทย)-xxxxxx`
 - `addressComplete(p)` · `nameComplete(p)` · `sanitizePhone(s)` · `buildNewOrderAdminText(summary,total,payment,name,phone)`/`buildBrokenOrderAdminText`/`buildPriceStuckAdminText(pending,error,name,itemsText)` (D-23 · ข้อมูลลูกค้าเต็ม)
 
+**lib/core/time.ts** (pure · D-37 · เวลาไทยฐานเดียว) — `bangkokShift`/`bangkokDateTime`(B,Y)/`bangkokYMD`(promo,ตัดรอบ)/`bangkokYMDCompact`(order_id) · +7 อ่าน getUTC* · ทุกจุดเวลาใช้ที่นี่
 **lib/core/pricing.ts** (pure · D-15) — `calculatePrice({items,paymentMethod,now?}, promoRows, productRows, config) → {lines(+basePromo/extraQty/extraAmount/isExactTier), subtotal, shippingFee, total, nextTier, error, needsHandoff}`
 - โปรฐาน = live+ในช่วงวันที่ จำนวนมากสุด≤qty · extraAmount=lineTotal−ฐาน (บวกแล้วเท่ายอดเสมอ) · nextTier=ชั้นสูงกว่าใกล้สุด (single-sku) · อ่านชีตล้วน ห้าม hardcode
 - `formatOrderSummary`(" · ")/`formatLinesForSheet`(" | ") · `formatPayment` · `buildBreakdownVars`→{วิธีคิดยอด}/{ทางเลือกถัดไป} · `buildProductNameMap` · `resolveRuntimeVars(text, 5 vars)`

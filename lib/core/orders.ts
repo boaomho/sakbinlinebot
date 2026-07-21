@@ -38,6 +38,7 @@ export function sanitizeShortText(text: string | undefined, maxLen = 200): strin
 // ---- โดเมนออเดอร์ ----
 
 import { OrderItem } from "./pricing";
+import { bangkokYMDCompact } from "./time";
 
 /** แท็ก "รอ" ที่โค้ดเป็นคนจัดการเอง (ห้ามให้ AI ใส่ผ่าน tags_add) */
 export type WaitTag = "รอโอน" | "รอที่อยู่" | null;
@@ -77,8 +78,7 @@ export interface LastOrder {
  * 🔴 YYYYMMDD = วันไทย (UTC+7) · suffix = a-z0-9 6 ตัว (สุ่ม) — โครงสร้าง key ไม่ใช่กฎธุรกิจ (prefix เท่านั้นที่คุมจากชีต)
  */
 export function generateOrderId(prefix: string, now: Date, suffix?: string): string {
-  const bkk = new Date(now.getTime() + 7 * 60 * 60 * 1000);
-  const ymd = `${bkk.getUTCFullYear()}${String(bkk.getUTCMonth() + 1).padStart(2, "0")}${String(bkk.getUTCDate()).padStart(2, "0")}`;
+  const ymd = bangkokYMDCompact(now); // เวลาไทย (D-37)
   const rand = suffix ?? Math.random().toString(36).slice(2, 8).padEnd(6, "0");
   const p = (prefix || "SKB").trim() || "SKB";
   return `${p}-${ymd}-${rand}`;

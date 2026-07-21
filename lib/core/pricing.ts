@@ -8,6 +8,7 @@
  *   (header-resolve ทำเองในไฟล์นี้ · normalize ให้ตรงกับ lib/sheets/clean.ts เป๊ะ)
  * 🔴 ห้าม hardcode ตัวเลขราคา/ค่าส่ง/เพดาน — อ่านจาก rows/config ที่ caller ส่งมาจากชีตเท่านั้น
  */
+import { bangkokYMD } from "./time";
 
 // ── ชื่อคอลัมน์/คีย์ (identifier ไม่ใช่ค่าตัวเลข — ระบุชื่อได้) ──
 const PRODUCT_COLS = { sku: "sku", name: "ชื่อสินค้า", unit: "หน่วย", normalPrice: "ราคาปกติ_ต่อหน่วย", status: "สถานะ" };
@@ -135,11 +136,6 @@ function toNum(v: string | undefined): number {
   const n = Number(s);
   return Number.isFinite(n) ? n : NaN;
 }
-/** YYYY-MM-DD ตามเวลาไทย (UTC+7) จาก Date — เทียบช่วงโปรแบบ date-only */
-function toBangkokYMD(d: Date): string {
-  const shifted = new Date(d.getTime() + 7 * 60 * 60 * 1000);
-  return shifted.toISOString().slice(0, 10);
-}
 
 /** map ชื่อคอลัมน์ (normalize) → index · คืน null ถ้าขาด required ตัวใดตัวหนึ่ง */
 function resolveCols(rows: string[][], required: string[]): { cols: Record<string, number>; headerRow: number } | null {
@@ -177,7 +173,7 @@ export function calculatePrice(
 ): PriceResult {
   const empty: PriceResult = { lines: [], subtotal: 0, shippingFee: 0, total: 0, nextTier: null, error: null, needsHandoff: false };
   const now = input.now ?? new Date();
-  const today = toBangkokYMD(now);
+  const today = bangkokYMD(now);
 
   // items ว่าง = ยังไม่ได้สั่ง (ปกติในช่วงต้นบทสนทนา) — ไม่ใช่ error ไม่ push
   if (!input.items || input.items.length === 0) return empty;

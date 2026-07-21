@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getConfig, resolveFeatureSwitches } from "@/lib/config";
 import { listPendingOrders, markOrderSent, OrderRow } from "@/lib/orders";
 import { nextOrderNumber } from "@/lib/db";
+import { bangkokShift } from "@/lib/core/time";
 import { pushRawText } from "@/lib/line";
 
 export const maxDuration = 30;
@@ -10,14 +11,9 @@ function pad2(n: number): string {
   return String(n).padStart(2, "0");
 }
 
-/** เวลาไทย (UTC+7) แบบไม่พึ่ง timezone db เพิ่ม: บวก offset แล้วอ่านผ่าน getUTC* */
-function nowInBangkok(): Date {
-  return new Date(Date.now() + 7 * 60 * 60 * 1000);
-}
-
 /** อิงเวลารอบตัดออเดอร์ (เวลาปัจจุบันตอน cron รัน ไม่ใช่เวลาที่ลูกค้าสั่ง): ก่อนตัด=วันนี้ / หลังตัด=วันถัดไป */
 function resolveOrderDay(cutoffTime: string): string {
-  const bkk = nowInBangkok();
+  const bkk = bangkokShift(); // เวลาไทย (D-37 · ฐานเดียว)
   const [cutHRaw, cutMRaw] = cutoffTime.split(":");
   const cutH = parseInt(cutHRaw, 10) || 0;
   const cutM = parseInt(cutMRaw, 10) || 0;

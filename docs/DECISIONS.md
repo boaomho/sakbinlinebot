@@ -550,5 +550,14 @@ handoff ทุก path (edit/AI-semantic/keyword) ตั้งแค่ `human_m
 > **Q2 (reset ตอน handoff) = ตัวหลักแก้บั๊กที่รายงาน · Q3 (timeout) = ปิด edge "เข้า intake แล้วทิ้ง" · /reset = เทสต์** → ครอบเคสจริงครบ
 **harness:** reset ตอน handoff → intake_turns=0 · timeout (setLastSeenAgo 60นาที) → นับใหม่ (1 ไม่ใช่ 2) · 257 passed · tsc+build เขียว · log `handoff-decision` คงไว้ (มี persistIntakeTurns/intakeStale)
 
+### D-37 · เวลาไทยฐานเดียว `lib/core/time.ts` + แก้บั๊กคอลัมน์ B (UTC→ไทย)
+**บั๊ก:** Orders คอลัมน์ B (วันที่) = `new Date().toISOString()` → UTC "…Z" (เขียนตอน D-15 · ก่อนมี bangkokStamp ตอน D-31) · logic +7 shift **กระจาย 5 จุด**
+**ผลกระทบ (แคบกว่าที่กลัว):** order_id date / เวลาตัดรอบ (cron) / วันส่ง (formatThaiNow) = **Bangkok อยู่แล้ว ✅** · B **ไม่เคยถูกอ่านกลับเป็น logic** (listPendingOrders ไม่ parse วันที่) → กระทบแค่แอดมินเห็นเวลาผิดในชีต
+**ทำ (refactor ไม่เปลี่ยนพฤติกรรม · เฉพาะ B เปลี่ยน UTC→ไทย):**
+- `lib/core/time.ts` (pure · inject now): `bangkokShift` · `bangkokDateTime`("YYYY-MM-DD HH:MM" · B/Y) · `bangkokYMD`("YYYY-MM-DD" · promo/ตัดรอบ) · `bangkokYMDCompact`("YYYYMMDD" · order_id)
+- ย้าย **5 จุด** มาใช้ helper (ค่าเดิมเป๊ะ): `formatThaiNow`(prompt) · `nowInBangkok`(cron→`bangkokShift`) · `toBangkokYMD`(pricing→`bangkokYMD`) · `generateOrderId`(→`bangkokYMDCompact`) · `bangkokStamp`(Y→`bangkokDateTime`)
+- 🔴 **แก้ B:** orders.ts `วันที่: bangkokDateTime()` (รูปแบบเดียวกับ Y) · go-forward เท่านั้น (ข้อมูลเก่า=เทส)
+> **กันเพี้ยนถาวร:** +7 อยู่ที่เดียว · จุดใหม่ (business-hours C3) ใช้ helper นี้ · **harness:** time.test (4 helper · ข้ามวัน UTC→ไทย) · order_id/promo/Y ค่าเดิม · sheet-layout B = ไทย ไม่มี T/Z · **261 passed** · tsc+build เขียว
+
 ### Phase C · ลบ ENV ค้างใน Vercel
 `SHEET_STEP_URL` `SHEET_FAQ_URL` `SHEET_CONFIG_URL` `SHEET_FOLLOW_URL` — โค้ดไม่อ่านแล้ว ลบทิ้งได้

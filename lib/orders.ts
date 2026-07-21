@@ -1,4 +1,5 @@
 import { sanitizePhone, sanitizeAmount, sanitizeShortText } from "./core/orders";
+import { bangkokDateTime } from "./core/time";
 import { resolveSpreadsheetId } from "./core/sheet-id";
 import { getSheets } from "./sheets/client";
 import { resolveColumns, cell, columnLetter, rowFromValues, ColumnMap } from "./sheets/columns";
@@ -136,7 +137,7 @@ export async function appendOrderRow(input: NewOrderInput): Promise<void> {
   // (Q–X เว้นว่างไว้ก่อน · Step 2/3 จะเติม)
   const values: Record<string, string> = {
     ลำดับ: "", // cron แจกตอนคอนเฟิร์ม
-    วันที่: new Date().toISOString(),
+    วันที่: bangkokDateTime(), // B = เวลาไทย (D-37) — เดิม toISOString() เป็น UTC "Z"
     ชื่อไลน์ลูกค้า: sanitizeShortText(input.lineDisplayName, 100),
     "ชื่อ-นามสกุล": sanitizeShortText(input.customerName),
     เบอร์โทร: sanitizePhone(input.phone),
@@ -252,13 +253,6 @@ const EDIT_LABELS: Record<string, string> = {
   ค่าส่ง: "ค่าส่ง",
 };
 
-/** "2026-07-21 09:34" เวลาไทย (UTC+7) — ใช้ใน Y (แก้ไขล่าสุด) */
-function bangkokStamp(now: Date): string {
-  const b = new Date(now.getTime() + 7 * 60 * 60 * 1000);
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${b.getUTCFullYear()}-${p(b.getUTCMonth() + 1)}-${p(b.getUTCDate())} ${p(b.getUTCHours())}:${p(b.getUTCMinutes())}`;
-}
-
 /**
  * แก้แถวออเดอร์เดิม (หาโดย order_id คอลัมน์ Q) — header-driven ทุกช่อง
  * 🔴 M(คอนเฟิร์ม)=TRUE → คืน "confirmed" (ไม่แก้ · ผู้เรียก handoff) · หา order_id ไม่เจอ → "not_found" (ไม่เขียนแถวใหม่)
@@ -309,7 +303,7 @@ export async function updateOrderRow(orderId: string, changes: Record<string, st
 
     // Y (แก้ไขล่าสุด) — ต่อท้ายประวัติ · summary เฉพาะ field ที่มี label (ซ่อน items_json)
     const summary = changed.filter((c) => c.label).map((c) => `${c.label}: ${c.from || "-"} → ${c.to}`).join(" · ");
-    const entry = `${bangkokStamp(now)} · ${summary}`;
+    const entry = `${bangkokDateTime(now)} · ${summary}`;
     const yIdx = cols["แก้ไขล่าสุด"];
     const zIdx = cols["แก้ไขกี่ครั้ง"];
     const oldY = (row[yIdx] ?? "").trim();
