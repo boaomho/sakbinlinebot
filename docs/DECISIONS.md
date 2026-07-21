@@ -532,5 +532,13 @@ handoff ทุก path (edit/AI-semantic/keyword) ตั้งแค่ `human_m
 > 🔴 **เจ้าของต้องรู้:** คำ trigger เข้า intake **ห้ามซ้ำกับ `คำ_handoff`** (เช่น "ของเสีย" อยู่ใน DEFAULT_HANDOFF_KEYWORDS → keyword pre-check ปิดบอทก่อนเข้า intake) · ถ้าอยากคุยก่อน ใช้คำอื่นใน "เข้าเมื่อ" หรือเอาคำนั้นออกจาก `คำ_handoff`
 > config: `เพดานเทิร์นก่อนส่งแอดมิน` (default 3) · **harness:** handoff-intake (เข้า→ไม่ handoff · เกินเพดาน→handoff · keyword→ทันที · AI flag→handoff · pivot→push-on-exit ไม่ footer · 📦ไม่ตีกัน · funnel_stage=handoff ไม่ regression) · inject (stayStage additive) · **255 passed** · tsc+build เขียว
 
+### D-35 · แก้บั๊ก C1: intake handoff เทิร์นแรก (AI flag ข้ามการถาม) — เพิ่ม "ถามขั้นต่ำ"
+**บั๊ก:** ในประตู handoff_after_intake · AI ตั้ง handoff=true เอง (บทพูด "ส่งต่อแอดมิน") ตั้งแต่เทิร์นแรก → โค้ดเห็น flag → handoff ทันที ข้ามเพดาน = **ประตู intake ไม่เคยถามก่อนเลย = ไร้ความหมาย**
+**แก้:** config `เทิร์นขั้นต่ำก่อนส่งแอดมิน` (default 1) · **เพิกเฉย AI flag จนถามครบขั้นต่ำ** — `intakeMinReached = newIntakeTurns > intakeMin` (🔴 strict `>`: เทิร์น 1..min = ถาม · handoff เทิร์นที่ min+1 · default 1 → เทิร์น 1 ถามเสมอ เทิร์น 2+ ยอม flag)
+- `intakeHandoff = intakeCapReached || (geminiOutput.handoff && intakeMinReached)` — เพดาน = ตาข่ายแข็ง (handoff แน่นอน · ไม่พึ่ง min) · flag = ยอมหลังถามครบ
+- non-intake (funnel_stage=handoff/AI flag ประตูปกติ) = handoff ทันทีเหมือนเดิม (D-33 ไม่ regression)
+- "ขอคุยแอดมิน" = keyword pre-check (ก่อน Gemini) → override ทันที ไม่ต้องรอถาม
+> min ควร < cap (min=ต้องถาม · cap=คุยได้มากสุด) · **harness:** AI flag เทิร์นแรก→ไม่ handoff · เทิร์น 2+flag→handoff · keyword เทิร์นแรก→ทันที · funnel_stage=handoff→ทันที · 255 passed · tsc+build เขียว
+
 ### Phase C · ลบ ENV ค้างใน Vercel
 `SHEET_STEP_URL` `SHEET_FAQ_URL` `SHEET_CONFIG_URL` `SHEET_FOLLOW_URL` — โค้ดไม่อ่านแล้ว ลบทิ้งได้

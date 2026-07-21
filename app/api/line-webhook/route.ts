@@ -776,9 +776,11 @@ async function processMessage(
   const stageIsHandoff = stageFunnel === "handoff"; // ส่งต่อทันที (D-33)
   const stageIsIntake = stageFunnel === "handoff_after_intake";
   const prevIntakeTurns = customer?.intakeTurns ?? 0;
-  const intakeCap = numFromRaw(config, "เพดานเทิร์นก่อนส่งแอดมิน", 3);
+  const intakeCap = numFromRaw(config, "เพดานเทิร์นก่อนส่งแอดมิน", 3); // คุยได้มากสุด → handoff แน่นอน
+  const intakeMin = numFromRaw(config, "เทิร์นขั้นต่ำก่อนส่งแอดมิน", 1); // ต้องถามอย่างน้อย N เทิร์น (1..N=ถาม) → handoff เทิร์นที่ N+1
   const newIntakeTurns = stageIsIntake ? prevIntakeTurns + 1 : 0;
   const intakeCapReached = stageIsIntake && newIntakeTurns >= intakeCap;
+  const intakeMinReached = stageIsIntake && newIntakeTurns > intakeMin; // > : เทิร์น 1..min = ถาม (ยอม handoff เทิร์นถัดจาก min)
 
   if (switches.memory) {
     await addMessage(userId, "user", userMessage);
@@ -807,9 +809,13 @@ async function processMessage(
     await runOrderGate(userId, customer, pending, postQuote?.price ?? null, slipThisTurn, config, nameMap, outReply, allowed);
   }
 
-  // handoff: AI ตั้ง handoff=true · funnel_stage=handoff (โค้ดการันตี D-33) · หรือ intake เกินเพดาน (กันค้าง D-34)
-  //   ตาข่าย: H1 (สุขภาพ/แพ้อาหาร) ไม่พึ่ง AI flag อย่างเดียว · "ขอคุยแอดมิน" = keyword pre-check (ก่อน Gemini) แล้ว
-  const doHandoff = switches.handoff && (geminiOutput.handoff || stageIsHandoff || intakeCapReached) && !damageHandled && !editHandled;
+  // handoff: funnel_stage=handoff (โค้ดการันตี D-33 · ทันที) · AI flag · intake (D-34)
+  //   🔴 intake ต้อง "ถามก่อนอย่างน้อย [ขั้นต่ำ] เทิร์น" → เพิกเฉย AI flag จน intakeMinReached · เพดาน = ตาข่ายแข็ง handoff แน่นอน
+  //   "ขอคุยแอดมิน" = keyword pre-check (ก่อน Gemini) → override ทันทีไม่ต้องรอถาม
+  const intakeHandoff = stageIsIntake && (intakeCapReached || (geminiOutput.handoff && intakeMinReached));
+  const doHandoff =
+    switches.handoff && !damageHandled && !editHandled &&
+    (intakeHandoff || (!stageIsIntake && (geminiOutput.handoff || stageIsHandoff)));
   if (doHandoff) {
     const reason =
       intakeCapReached && !geminiOutput.handoff && !stageIsHandoff

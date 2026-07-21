@@ -66,10 +66,17 @@ describe("handoff_after_intake — คุยก่อนค่อยส่งค
     expect((await readCustomer(U))?.human_mode).toBe(true);
   });
 
-  it("AI ตั้ง handoff=true ใน intake (คุยครบ) → handoff + footer", async () => {
-    scriptGemini([turn({ reply: "ขอส่งต่อแอดมินนะคะ", stage: "H_CLAIM", handoff: true, handoffReason: "เคลมของเสีย" })]);
+  it("🔴 AI ตั้ง handoff=true เทิร์นแรก → ยังไม่ handoff (ถามก่อนอย่างน้อย min=1) · เทิร์น 2 + flag → handoff", async () => {
+    scriptGemini([
+      turn({ reply: "ขอส่งต่อแอดมินนะคะ", stage: "H_CLAIM", handoff: true, handoffReason: "เคลม" }),
+      turn({ reply: "ขอส่งต่อแอดมินค่ะ", stage: "H_CLAIM", handoff: true, handoffReason: "เคลม" }),
+    ]);
     await sendText(U, "สินค้ามีปัญหา");
-    expect(JSON.stringify(adminPushes())).toContain(FOOTER);
+    expect(JSON.stringify(adminPushes()), "เทิร์น 1 แม้ AI flag → ยังถามก่อน").not.toContain(FOOTER);
+    expect((await readCustomer(U))?.human_mode, "เทิร์น 1 ไม่ปิดบอท").toBe(false);
+    await sendText(U, "รายละเอียดเพิ่มค่ะ");
+    expect(JSON.stringify(adminPushes()), "เทิร์น 2 + flag → handoff").toContain(FOOTER);
+    expect((await readCustomer(U))?.human_mode).toBe(true);
   });
 
   it("🔴 pivot: เคลมแล้ว 'ขอสั่งเพิ่ม' → ย้ายประตูขาย · push-on-exit (ไม่ footer) · บอทขายต่อ · intake_turns=0", async () => {
