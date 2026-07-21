@@ -60,6 +60,8 @@ export const ORDERS_HEADER = [
   "ref_code", // V 21
   "ยอดในสลิป", // W 22
   "bot_version", // X 23
+  "แก้ไขล่าสุด", // Y 24 ← ประวัติการแก้ (timestamp + สรุป · ต่อท้าย) · D-31
+  "แก้ไขกี่ครั้ง", // Z 25 ← ตัวนับการแก้
 ];
 
 // getSheets() ย้ายไป lib/sheets/client.ts (client เดียวใช้ทั้งอ่าน BotLibrary + อ่าน/เขียน Orders)
@@ -228,6 +230,90 @@ export async function listPendingOrders(): Promise<OrderRow[]> {
   }));
 
   return parsed.filter((o) => o.confirmed && !o.cancelled && !o.sent);
+}
+
+// ---- แก้ออเดอร์ที่เขียนแล้ว (D-31 · Plan B) — แก้แถวเดิมด้วย order_id ห้ามเขียนแถวใหม่ ----
+
+export type OrderEditResult =
+  | { status: "updated"; changed: { label: string; from: string; to: string }[] }
+  | { status: "confirmed" } // M=TRUE (แอดมินคอนเฟิร์มแล้ว = ของไปแพ็ค) → ห้ามแก้อัตโนมัติ
+  | { status: "not_found" } // หา order_id ไม่เจอ → ห้ามเขียนแถวใหม่
+  | { status: "no_change" }; // ไม่มีค่าใหม่ที่ต่างจริง (ลูกค้ายืนยัน/ขอบคุณเฉยๆ) → ไม่แตะ
+
+/** label ที่โชว์ใน Y/แจ้งแอดมิน (คอลัมน์ที่ไม่มีใน map = internal เช่น items_json — อัปเดตเงียบ ไม่โชว์) */
+const EDIT_LABELS: Record<string, string> = {
+  "ชื่อ-นามสกุล": "ชื่อ",
+  เบอร์โทร: "เบอร์",
+  ที่อยู่: "ที่อยู่",
+  "สินค้า+จำนวน": "รายการ",
+  ยอดเงิน: "ยอด",
+  ค่าส่ง: "ค่าส่ง",
+};
+
+/** "2026-07-21 09:34" เวลาไทย (UTC+7) — ใช้ใน Y (แก้ไขล่าสุด) */
+function bangkokStamp(now: Date): string {
+  const b = new Date(now.getTime() + 7 * 60 * 60 * 1000);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${b.getUTCFullYear()}-${p(b.getUTCMonth() + 1)}-${p(b.getUTCDate())} ${p(b.getUTCHours())}:${p(b.getUTCMinutes())}`;
+}
+
+/**
+ * แก้แถวออเดอร์เดิม (หาโดย order_id คอลัมน์ Q) — header-driven ทุกช่อง
+ * 🔴 M(คอนเฟิร์ม)=TRUE → คืน "confirmed" (ไม่แก้ · ผู้เรียก handoff) · หา order_id ไม่เจอ → "not_found" (ไม่เขียนแถวใหม่)
+ * แก้เฉพาะ field ที่ "มีค่าใหม่ต่างจากเดิมจริง" · Y ต่อท้ายประวัติ (ไม่ทับ) · Z +1
+ * @param changes ค่าใหม่ที่อยากได้ keyed ด้วยชื่อคอลัมน์ (เฉพาะที่ลูกค้าแก้เทิร์นนี้)
+ */
+export async function updateOrderRow(orderId: string, changes: Record<string, string>, now: Date): Promise<OrderEditResult> {
+  if (!process.env.SHEET_ORDERS_ID || !orderId) return { status: "not_found" };
+
+  return withOrdersColumns(async (cols) => {
+    const lastCol = columnLetter(Math.max(...Object.values(cols)));
+    const res = await getSheets().spreadsheets.values.get({
+      spreadsheetId: ordersSheetId(),
+      range: `${SHEET_NAME}!A2:${lastCol}`,
+    });
+    const rows = (res.data.values as string[][] | undefined) ?? [];
+    const qIdx = cols["order_id"];
+    const rowNum = rows.findIndex((r) => (r[qIdx] ?? "").trim() === orderId);
+    if (rowNum === -1) return { status: "not_found" };
+
+    const row = rows[rowNum];
+    const rowIndex = rowNum + 2; // +2: header อยู่แถว 1, data เริ่มแถว 2
+    if (isTrue(cell(row, cols, "คอนเฟิร์ม"))) return { status: "confirmed" };
+
+    // diff เฉพาะที่ "มีค่าใหม่ต่างจริง" (ค่าว่าง/เท่าเดิม = ไม่นับแก้ · กัน "ถูกต้องครับ" เพิ่ม Y/Z)
+    const changed: { label: string; from: string; to: string; col: number }[] = [];
+    for (const [colName, newVal] of Object.entries(changes)) {
+      const idx = cols[colName];
+      if (idx === undefined) continue;
+      const old = (row[idx] ?? "").trim();
+      const nv = (newVal ?? "").trim();
+      if (nv === "" || nv === old) continue;
+      changed.push({ label: EDIT_LABELS[colName] ?? "", from: old, to: nv, col: idx });
+    }
+    if (changed.length === 0) return { status: "no_change" };
+
+    const data: { range: string; values: string[][] }[] = changed.map((c) => ({
+      range: `${SHEET_NAME}!${columnLetter(c.col)}${rowIndex}:${columnLetter(c.col)}${rowIndex}`,
+      values: [[c.to]],
+    }));
+
+    // Y (แก้ไขล่าสุด) — ต่อท้ายประวัติ · summary เฉพาะ field ที่มี label (ซ่อน items_json)
+    const summary = changed.filter((c) => c.label).map((c) => `${c.label}: ${c.from || "-"} → ${c.to}`).join(" · ");
+    const entry = `${bangkokStamp(now)} · ${summary}`;
+    const yIdx = cols["แก้ไขล่าสุด"];
+    const zIdx = cols["แก้ไขกี่ครั้ง"];
+    const oldY = (row[yIdx] ?? "").trim();
+    data.push({ range: `${SHEET_NAME}!${columnLetter(yIdx)}${rowIndex}:${columnLetter(yIdx)}${rowIndex}`, values: [[oldY ? `${oldY}\n${entry}` : entry]] });
+    const oldZ = Number((row[zIdx] ?? "").trim()) || 0;
+    data.push({ range: `${SHEET_NAME}!${columnLetter(zIdx)}${rowIndex}:${columnLetter(zIdx)}${rowIndex}`, values: [[String(oldZ + 1)]] });
+
+    await getSheets().spreadsheets.values.batchUpdate({
+      spreadsheetId: ordersSheetId(),
+      requestBody: { valueInputOption: "USER_ENTERED", data },
+    });
+    return { status: "updated", changed: changed.map((c) => ({ label: c.label || "รายการ", from: c.from, to: c.to })) };
+  });
 }
 
 export async function markOrderSent(rowIndex: number, orderNumber: string): Promise<void> {

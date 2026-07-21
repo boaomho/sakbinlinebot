@@ -22,6 +22,7 @@ import {
   clearPendingOrderAndSlip,
   isOrderWritten,
   markOrderWritten,
+  setLastOrderId,
   setHasWrittenOrder,
   setPaidNoAddressNotified,
   reconcileWaitTags,
@@ -64,8 +65,8 @@ import {
   PENDING_CHOICES_TTL_MS,
 } from "@/lib/admin-commands";
 import { uploadSlip, getSlipSignedUrl } from "@/lib/blob";
-import { appendOrderRow } from "@/lib/orders";
-import { evaluateOrderGate, buildNewOrderAdminText, buildBrokenOrderAdminText, buildPriceStuckAdminText, buildOrderStateWarning, generateOrderId, itemsEqual, normalizeItems, PendingOrder } from "@/lib/core/orders";
+import { appendOrderRow, updateOrderRow } from "@/lib/orders";
+import { evaluateOrderGate, buildNewOrderAdminText, buildBrokenOrderAdminText, buildPriceStuckAdminText, buildOrderStateWarning, buildOrderEditAdminText, generateOrderId, sanitizePhone, itemsEqual, normalizeItems, PendingOrder } from "@/lib/core/orders";
 import { resolveRuntimeVars, formatLinesForSheet, formatOrderSummary, buildProductNameMap, resolveAiItems, buildAllowedPriceStrings, RuntimeVarContext, PriceResult } from "@/lib/core/pricing";
 import { computeQuote, hasUnresolvedPricingVars, resolveTransferVars, unresolvedTransferVars, findBannedClaims, parseClaimsList, findBadPrices, extractBahtNumbers, extractPriceNumbers } from "@/lib/agent/quote";
 
@@ -361,6 +362,7 @@ async function runOrderGate(
     }
     // เขียนชีตสำเร็จ → บันทึกใน Neon ทันที (source of truth กันเขียนซ้ำ) ก่อน clear/push
     await markOrderWritten(orderId, userId);
+    if (orderId) await setLastOrderId(userId, orderId); // D-31: จำไว้แก้แถวเดิมตอนลูกค้าขอแก้
     await clearPendingOrderAndSlip(userId);
     await reconcileWaitTags(userId, null);
     await setHasWrittenOrder(userId);
@@ -578,17 +580,45 @@ async function processMessage(
   // damage = เคลม/ของเสียหาย → จัดการเป็น handoff ผ่าน image-intent handler (กันยิงซ้ำกับ handoff ทั่วไป)
   const damageHandled = Boolean(imageContent && !imageFallback && geminiOutput.imageIntent === "damage");
 
-  // ลูกค้าขอแก้ออเดอร์ที่ "บันทึกลงชีตแล้ว" → handoff (คำนวณก่อน order flow เพื่อข้าม)
+  // ลูกค้าขอแก้ออเดอร์ที่ "บันทึกลงชีตแล้ว" (D-31 Plan B): M≠TRUE → แก้แถวเดิมด้วย order_id (ไม่ handoff) · M=TRUE/หาไม่เจอ → handoff
   let editHandled = false;
   if (geminiOutput.orderEditRequest && customer?.hasWrittenOrder) {
+    editHandled = true; // ข้าม order flow (ห้ามเขียนแถวใหม่) + ข้าม AI-semantic handoff ท้ายเทิร์น
     const adminGroupId = process.env.ADMIN_GROUP_ID;
-    if (adminGroupId) {
-      const name = await getProfileName(userId);
-      const what = geminiOutput.handoffReason || "ลูกค้าขอแก้ไข";
-      await pushRawText(adminGroupId, `✏️ ลูกค้าขอแก้ออเดอร์ที่บันทึกแล้ว: ${what}\n\nLineOA: ${name}`);
+    const orderId = customer.lastOrderId ?? "";
+    const name = await getProfileName(userId);
+
+    // ค่าใหม่ที่ลูกค้าแก้เทิร์นนี้ (เฉพาะที่ AI ส่งมา) → keyed ด้วยชื่อคอลัมน์ Orders
+    const { items: aiEditItems, ...editReceiver } = geminiOutput.orderData;
+    const changes: Record<string, string> = {};
+    if (editReceiver["ชื่อ"]?.trim()) changes["ชื่อ-นามสกุล"] = editReceiver["ชื่อ"].trim();
+    if (editReceiver["ที่อยู่"]?.trim()) changes["ที่อยู่"] = editReceiver["ที่อยู่"].trim();
+    if (editReceiver["เบอร์"]?.trim()) changes["เบอร์โทร"] = sanitizePhone(editReceiver["เบอร์"]);
+    const editItems = resolveAiItems(aiEditItems, lib?.CSV_Products ?? []);
+    if (editItems.length > 0 && geminiOutput.paymentMethod) {
+      const q = computeQuote({ items: editItems, การชำระเงิน: geminiOutput.paymentMethod }, lib, config, nowDate);
+      if (q?.ok) {
+        changes["สินค้า+จำนวน"] = formatLinesForSheet(q.price.lines);
+        changes["ยอดเงิน"] = String(q.price.total);
+        changes["ค่าส่ง"] = String(q.price.shippingFee);
+        changes["items_json"] = JSON.stringify(normalizeItems(editItems));
+      }
     }
-    if (switches.memory) await setHumanMode(userId, true);
-    editHandled = true;
+
+    const result = await updateOrderRow(orderId, changes, nowDate);
+    console.log(JSON.stringify({ scope: "orders", event: "order-edit", orderId, status: result.status, changedFields: Object.keys(changes) }));
+    if (result.status === "updated") {
+      if (adminGroupId) await pushRawText(adminGroupId, buildOrderEditAdminText(orderId, result.changed, name));
+    } else if (result.status === "confirmed") {
+      // แอดมินคอนเฟิร์มแล้ว (ของไปแพ็ค) → คนต้องจัดการ
+      if (adminGroupId) await pushRawText(adminGroupId, `✏️ ลูกค้าขอแก้ออเดอร์ที่คอนเฟิร์มแล้ว ${orderId}\nรบกวนแอดมินดูแล (ของอาจแพ็คแล้ว)\n———\nLineOA: ${name}`);
+      if (switches.memory) await setHumanMode(userId, true);
+    } else if (result.status === "not_found") {
+      console.error(JSON.stringify({ scope: "orders", event: "order-edit-not-found", orderId }));
+      if (adminGroupId) await pushRawText(adminGroupId, `✏️ ลูกค้าขอแก้ออเดอร์ ${orderId || "(ไม่มี id)"} แต่หาแถวในชีตไม่เจอ — รบกวนแอดมินตรวจ\n———\nLineOA: ${name}`);
+      if (switches.memory) await setHumanMode(userId, true);
+    }
+    // no_change → ลูกค้ายืนยัน/ขอบคุณเฉยๆ (ไม่มีค่าใหม่) → ไม่แก้ ไม่ push ไม่ handoff (Bug 2 หาย)
   }
 
   // ---- order flow (1-pass · AI เป็นเจ้าของบทสนทนา · โค้ดเป็นเจ้าของเงิน) ----

@@ -42,6 +42,7 @@ export async function ensureSchema(): Promise<void> {
   await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS pending_order JSONB`;
   await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS has_written_order BOOLEAN NOT NULL DEFAULT false`;
   await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS paid_no_address_notified BOOLEAN NOT NULL DEFAULT false`;
+  await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS last_order_id TEXT`;
   await sql`CREATE INDEX IF NOT EXISTS customers_last_seen_idx ON customers (last_seen DESC)`;
   await sql`
     CREATE TABLE IF NOT EXISTS messages (
@@ -127,6 +128,8 @@ export interface CustomerState {
   pendingOrder: PendingOrder;
   hasWrittenOrder: boolean;
   paidNoAddressNotified: boolean;
+  /** order_id ของออเดอร์ล่าสุดที่เขียนชีตสำเร็จ — ใช้แก้แถวเดิมตอนลูกค้าขอแก้ (D-31) */
+  lastOrderId: string | null;
   createdAt: Date;
 }
 
@@ -142,6 +145,7 @@ function rowToCustomer(r: Record<string, unknown>): CustomerState {
     pendingOrder: (r.pending_order as PendingOrder | null) ?? {},
     hasWrittenOrder: Boolean(r.has_written_order),
     paidNoAddressNotified: Boolean(r.paid_no_address_notified),
+    lastOrderId: (r.last_order_id as string | null) ?? null,
     humanMode: Boolean(r.human_mode),
     humanModeSince: (r.human_mode_since as Date | null) ?? null,
     isReturning: Boolean(r.is_returning),
@@ -192,6 +196,7 @@ function emptyCustomer(userId: string): CustomerState {
     pendingOrder: {},
     hasWrittenOrder: false,
     paidNoAddressNotified: false,
+    lastOrderId: null,
     createdAt: new Date(),
   };
 }
@@ -389,6 +394,13 @@ export async function mergePendingOrder(userId: string, fields: PendingOrder): P
   }
   await sql`UPDATE customers SET pending_order = ${JSON.stringify(merged)}::jsonb WHERE user_id = ${userId}`;
   return merged;
+}
+
+/** จำ order_id ที่เขียนชีตสำเร็จล่าสุด — ให้แก้แถวเดิมตอนลูกค้าขอแก้ (D-31) */
+export async function setLastOrderId(userId: string, orderId: string): Promise<void> {
+  await ensureSchema();
+  const sql = getSql();
+  await sql`UPDATE customers SET last_order_id = ${orderId} WHERE user_id = ${userId}`;
 }
 
 /** idempotency: order_id นี้เขียนชีตสำเร็จแล้วหรือยัง (source of truth = Neon · เร็ว มี index · ไม่กิน Sheets quota) */

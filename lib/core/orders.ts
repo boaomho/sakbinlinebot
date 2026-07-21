@@ -261,6 +261,18 @@ export function buildPriceStuckAdminText(
   ].join("\n");
 }
 
+/** แจ้งแอดมินเมื่อลูกค้าแก้ออเดอร์ที่เขียนแล้ว (M≠TRUE · แก้ในชีตอัตโนมัติ · D-31) */
+export function buildOrderEditAdminText(orderId: string, changed: { label: string; from: string; to: string }[], lineName: string): string {
+  const lines = changed.map((c) => `${c.label}: ${c.from || "-"} → ${c.to}`).join(" · ");
+  return [
+    `✏️ ลูกค้าแก้ออเดอร์ ${orderId}`,
+    lines,
+    `แก้ในชีตแล้ว — รบกวนเช็คความถูกต้องในแถว ${orderId}`,
+    "———",
+    `LineOA: ${lineName}`,
+  ].join("\n");
+}
+
 /**
  * ข้อความแจ้งกลุ่มแอดมินเมื่อออเดอร์สมบูรณ์ขึ้นชีต (push จุดที่ 2)
  * 🔴 ยอด/สรุปรายการ มาจาก lib/core/pricing (ผู้เรียกส่งเข้ามา) — ไม่อ่านตัวเลขจาก AI
