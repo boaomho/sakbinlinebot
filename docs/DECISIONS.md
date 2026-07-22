@@ -652,5 +652,14 @@ handoff ทุก path (edit/AI-semantic/keyword) ตั้งแค่ `human_m
 - ⚠️ **สังเกต (แจ้งเจ้าของ · ไม่แก้เอง):** "ท้อง" substring ชนคำประสม เช่น "ท้องฟ้า"/"ท้องเสีย" → pre-check handoff ทันที · ทิศ false-positive = ส่งหาคน (ปลอดภัย) แต่ "ท้องเสีย" (เคส H3 เคลม) จะถูกดักก่อนเข้า intake — ถ้าไม่ต้องการ ให้แก้คำในชีต (`คำ_handoff`) ไม่ใช่โค้ด
 **harness (a):** handoff.test rewrite (H1 8 สำนวน · คำที่ตัด 5 คำไม่ดัก · KI-01 ผ่าน configured · default 19 คำ) + S_UNKNOWN pipeline (pattern 2 บอลลูน + footer + human_mode) · **325 passed | 3 expected-fail** · tsc+build เขียว
 
+**D-44b — systemInstruction v2.0 ("จำแนกและสกัด" ไม่ใช่ "นักขาย"):**
+- rewrite `buildStaticSystemInstruction` ทั้งก้อน (Edit เท่านั้น · KI-03): บทบาท = ระบบจำแนก+สกัด · ประกาศชัด "ไม่ได้เขียนข้อความถึงลูกค้า" · งาน 4 อย่าง (stage/objection/order_data/handoff)
+- **ขนาด: 12,529 → 4,898 chars ≈ 5,507 → ~2,153 tokens (est ratio จากที่วัดจริง) = ลด 61% · ต่ำกว่าเป้า <2,500** ✅
+- **คงห้ามตีความใหม่ (ครบ):** order_data 6 ช่อง (bug A: ใส่ทันที/qty≠เบอร์/ที่อยู่ก้อนดิบ/ห้าม placeholder/แก้=เต็มก้อน) · C6 ห้ามคำนวณราคา (prompt-lint คุม — จับได้จริงตอน rewrite แล้วเติมกลับ) · กัน injection ทั้งบล็อก · H1=handoff เสมอ · สลิปอ่านไม่ชัด=slip · JSON ทุก field เดิม (reply=fallback)
+- **เพิ่ม:** กฎเลือก S_UNKNOWN (ไม่ match/นอกเรื่อง/ไม่มีข้อมูล + handoff=true · กฎ 10) · FAQ → คง stage ประตูขาย (ให้ stepClosing วกกลับถูกประตู D-42) · intake → เลือกประตูโดยไม่ตั้ง flag (ระบบคุมจังหวะ D-34)
+- **ตัด:** ทุกบล็อกสอนแต่งคำ/โทน/สำนวน/จังหวะ (บับเบิลสุดท้าย=ข้อความ → `enforceTextLast` โค้ดคุมอยู่แล้ว · วันจัดส่ง → resolver D-43 · วกกลับ funnel → stepClosing D-42)
+- rewrite `SYSTEM-PROMPT-BREAKDOWN.md` ทั้งไฟล์ตรง v2.0
+**harness (b):** prompt-lint + gemini-guard เขียว (lint จับ order_data example + C6 ตอน rewrite — ตาข่ายทำงานจริง) · **325 passed | 3 expected-fail** · tsc+build เขียว
+
 ### Phase C · ลบ ENV ค้างใน Vercel
 `SHEET_STEP_URL` `SHEET_FAQ_URL` `SHEET_CONFIG_URL` `SHEET_FOLLOW_URL` — โค้ดไม่อ่านแล้ว ลบทิ้งได้
