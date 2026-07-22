@@ -69,7 +69,7 @@ import { uploadSlip, getSlipSignedUrl } from "@/lib/blob";
 import { appendOrderRow, updateOrderRow } from "@/lib/orders";
 import { evaluateOrderGate, buildNewOrderAdminText, buildBrokenOrderAdminText, buildPriceStuckAdminText, buildOrderStateWarning, buildOrderEditAdminText, generateOrderId, sanitizePhone, itemsEqual, normalizeItems, PendingOrder } from "@/lib/core/orders";
 import { resolveRuntimeVars, formatLinesForSheet, formatOrderSummary, buildProductNameMap, resolveAiItems, buildAllowedPriceStrings, RuntimeVarContext, PriceResult } from "@/lib/core/pricing";
-import { computeQuote, resolveTransferVars, unresolvedTransferVars, resolveOrderVars, findBannedClaims, parseClaimsList, findBadPrices, extractBahtNumbers, extractPriceNumbers, dropUnresolvedVarBubbles } from "@/lib/agent/quote";
+import { computeQuote, unresolvedTransferVars, resolveOrderVars, findBannedClaims, parseClaimsList, findBadPrices, extractBahtNumbers, extractPriceNumbers, dropUnresolvedVarBubbles, resolveAllVars, AllVarsContext } from "@/lib/agent/quote";
 
 export const maxDuration = 30;
 
@@ -724,10 +724,12 @@ async function processMessage(
 
   // เติมตัวแปรราคา (template ที่เจ้าของเขียนในชีต) ด้วยเลข Core · มี items = ใช้ค่าล่าสุด, ยังไม่มี = preVars
   const outVars = postQuote?.ok ? postQuote.vars : preVars;
-  let outReply = resolveRuntimeVars(baseReply, outVars);
-  // ตัวแปรข้อมูลโอนเงิน (เลขที่บัญชี/ชื่อบัญชี/ธนาคาร) — โค้ด resolve จาก CSV_Config
-  outReply = resolveTransferVars(outReply, config);
-  outReply = resolveOrderVars(outReply, lastOrder, lastOrderItemsText); // D-32: {ออเดอร์_*} ในคำพูดบอท
+  // D-39: resolver รวม pass เดียว — AI reply(เปิด)+verbatim(ปิด) ตัวเดียวกัน · R1→R2→R3 คงลำดับ + Group X
+  const varCtx: AllVarsContext = {
+    priceVars: outVars, config, lastOrder, lastOrderItemsText,
+    pending, products: lib?.CSV_Products ?? [], promo: lib?.CSV_Promo ?? [], now: nowDate,
+  };
+  let outReply = resolveAllVars(baseReply, varCtx);
   // 🔴 guard ร้ายแรง (ต่างจากราคา): ตัวแปรโอนเงิน resolve ไม่ได้ → ห้ามส่งข้อความจริง (ลูกค้าโอนไม่ได้ + เสียเครดิต)
   //    → ส่งข้อความพักสายปลอดภัยแทน + push แจ้งแอดมินให้แก้ CSV_Config
   const unresolvedTransfer = unresolvedTransferVars(outReply);
@@ -792,13 +794,14 @@ async function processMessage(
     const { clean, dropped } = dropUnresolvedVarBubbles(outReply);
     if (dropped.length > 0) {
       const vmode = verbatimMode ? "ปิด" : "เปิด";
-      console.warn(JSON.stringify({ scope: "var-guard", event: "unresolved-runtime-var", mode: vmode, dropped, before: outReply }));
+      // 🔴 log ชัด: ชื่อตัวแปรที่ค้าง + step ที่ AI เลือก (เจ้าของไล่ได้ว่าประตูไหนใส่ตัวแปรผิด)
+      console.warn(JSON.stringify({ scope: "var-guard", event: "unresolved-runtime-var", mode: vmode, stage: geminiOutput.stage, dropped, before: outReply }));
       if (clean) {
         outReply = clean;
       } else if (verbatimMode) {
         // ปิด + เหลือว่างหมด → fallback AI (resolve reply ของ AI ซ้ำ · เช็คตัวแปรค้างอีกชั้น)
-        console.error(JSON.stringify({ scope: "var-guard", event: "all-bubbles-dropped", mode: "ปิด", fallback: "ai" }));
-        const aiResolved = resolveOrderVars(resolveTransferVars(resolveRuntimeVars(geminiOutput.reply, outVars), config), lastOrder, lastOrderItemsText);
+        console.error(JSON.stringify({ scope: "var-guard", event: "all-bubbles-dropped", mode: "ปิด", stage: geminiOutput.stage, fallback: "ai" }));
+        const aiResolved = resolveAllVars(geminiOutput.reply, varCtx);
         outReply = dropUnresolvedVarBubbles(aiResolved).clean || VAR_FALLBACK_REPLY;
       } else {
         // เปิด + เหลือว่างหมด = เคสแปลก (AI พ่นตัวแปรทุกบอลลูน) → log หนัก + พักสาย

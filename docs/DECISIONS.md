@@ -582,5 +582,17 @@ handoff ทุก path (edit/AI-semantic/keyword) ตั้งแค่ `human_m
 **harness:** verbatim.test 20 เคส (parseThinkMode/stepVerbatim/dropUnresolvedVarBubbles/objection.verbatim pure + pipeline: ปิด→ชีต+แทนตัวแปร · เปิด/ว่าง→AI · ปิด+ว่าง→fallback · ตัวแปรค้าง→ทิ้งบอลลูน · objection ปิดชนะ/เปิดไม่ชนะ · ปิด+gate/handoff ยังทำงาน) · 289 passed · tsc+build เขียว
 **ค้างต่อ (Phase2 ถัดไป):** S2/X2 ยังไม่เซตปิด (เจ้าของเซตในชีตเองเมื่อพร้อม) · ชั้น② (บังคับลำดับ) ถ้าเจ้าของต้องการภายหลัง = design decision (ขัด D-18)
 
+### D-39B (Phase2 #1 ต่อ) · verbatim ส่งไม่ครบ → resolver รวม pass เดียว (post-process เท่ากับ AI reply)
+**บั๊กที่เจอ (log จริงโหมดปิด):** `[[แยก]] {ชื่อสินค้า}... {โปรโมชั่นทั้งหมด}` ส่งดิบ — verbatim reuse แค่ 3 resolver (15 token) แต่ตัวแปรที่เจ้าของใช้จริงหลายตัว **AI เคยเติมเองจาก catalog** (ไม่มี code resolver) · พอตัด AI (verbatim) → ทะลุ · + `[[แยก]]` ไม่เคยถูก parse (delivery รู้จักแค่ `[[เว้น]]`)
+**ราก:** "verbatim = AI reply ต่างแค่แหล่งข้อความ" — จริง แต่ post-process ต้อง **ครบ** · จุด merge (`baseReply`) ถูกแล้ว · ปัญหาคือ **resolver เองไม่ครบ** (AI แค่บังหน้าให้)
+**ทำ (แก้รอบเดียว · ครอบปัจจุบัน+อนาคต):**
+- 🔴 `resolveAllVars(text, ctx)` (quote.ts) = **pass เดียว** แทนขั้น resolve เดิม — ลำดับ R1(เงิน)→R2(บัญชี)→R3(snapshot) **คงเดิมเป๊ะ** (AI mode ไม่ regression) + Group X ต่อท้าย · **AI reply(เปิด)+verbatim(ปิด) เรียกตัวเดียวกัน** → ตัวแปรใหม่เพิ่มที่นี่ที่เดียว ผ่านทั้ง 2 path
+- **Group X ที่เพิ่ม (9 token):** catalog `{ชื่อสินค้า}{วิธีเก็บรักษา}{โปรโมชั่นทั้งหมด}`(pricing.ts · สินค้า/promo live) · pending `{ชื่อ}{ที่อยู่เต็ม}{เบอร์}{การชำระเงินใหม่}`(quote.ts · **pending ปัจจุบัน** ไม่ใช่ snapshot) · time `{วันจัดส่ง}`(time.ts `bangkokDeliveryDay` · เวลาตัดรอบ→วันนี้/พรุ่งนี้)
+- 🔴 **กับดักชื่อ (comment ชัด):** `{ชื่อ}`(pending) ≠ `{ออเดอร์_ชื่อ}`(snapshot) · `{การชำระเงินใหม่}`(X1 เปลี่ยนวิธีจ่าย) ≠ `{การชำระเงิน}`(R1)
+- **`[[แยก]]` = alias `[[เว้น]]`** ใน `parseReplyIntoMessages` (line.ts · แยกบอลลูนทั้งคู่) · รูป `[[รูป:URL]]`/`\n\n`/enforceTextLast ทำใน deliverReply อยู่แล้ว (verbatim ได้ฟรี)
+- var-guard: `KNOWN_RUNTIME_VARS` ขยายเป็น 6 กลุ่ม (+catalog/pending/delivery) · resolve ไม่ได้ (ว่าง/cutoff พัง) → ทิ้งบอลลูน + log (ชื่อตัวแปร+stage · visibility แบบ Step 6)
+- **CSV_Vars** (ตัวแปรข้อความเจ้าของนิยามเอง · ไม่พึ่ง dev) = **เฟสถัดไป** (เฟสนี้ทำ Group X ระบบก่อน)
+**harness:** allvars.test (catalog/pending/delivery/bangkokDeliveryDay/resolveAllVars/parseReply [[แยก]]+รูป+\n · AI-parity ไม่มี token→ไม่แตะ) + verbatim Group X pipeline (catalog+[[แยก]]แยกบอลลูน · pending 2 เทิร์น · delivery · resolver ไม่ครบ→ไม่ส่งดิบ) · เขียวทั้งหมด · tsc+build เขียว
+
 ### Phase C · ลบ ENV ค้างใน Vercel
 `SHEET_STEP_URL` `SHEET_FAQ_URL` `SHEET_CONFIG_URL` `SHEET_FOLLOW_URL` — โค้ดไม่อ่านแล้ว ลบทิ้งได้

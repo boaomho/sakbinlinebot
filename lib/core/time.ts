@@ -33,3 +33,18 @@ export function bangkokYMDCompact(now: Date = new Date()): string {
   const b = bangkokShift(now);
   return `${b.getUTCFullYear()}${p2(b.getUTCMonth() + 1)}${p2(b.getUTCDate())}`;
 }
+
+/**
+ * วันจัดส่ง (ส่งทุกวัน) จาก "เวลาตัดรอบออเดอร์" (HH:MM) — ก่อนตัดรอบ=วันนี้ · เท่า/หลัง=พรุ่งนี้ (D-39)
+ * 🔴 cutoff อ่านไม่ได้ (ว่าง/รูปแบบผิด) → null (ผู้เรียกคง `{วันจัดส่ง}` ดิบ → var-guard จับ · ไม่เดาวัน)
+ */
+export function bangkokDeliveryDay(cutoff: string, now: Date = new Date()): "วันนี้" | "พรุ่งนี้" | null {
+  const m = /^(\d{1,2}):(\d{2})$/.exec((cutoff ?? "").trim());
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (h > 23 || min > 59) return null;
+  const b = bangkokShift(now);
+  const nowMin = b.getUTCHours() * 60 + b.getUTCMinutes();
+  return nowMin < h * 60 + min ? "วันนี้" : "พรุ่งนี้";
+}

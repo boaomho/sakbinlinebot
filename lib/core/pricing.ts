@@ -8,7 +8,7 @@
  *   (header-resolve ทำเองในไฟล์นี้ · normalize ให้ตรงกับ lib/sheets/clean.ts เป๊ะ)
  * 🔴 ห้าม hardcode ตัวเลขราคา/ค่าส่ง/เพดาน — อ่านจาก rows/config ที่ caller ส่งมาจากชีตเท่านั้น
  */
-import { bangkokYMD } from "./time";
+import { bangkokYMD, bangkokDeliveryDay } from "./time";
 
 // ── ชื่อคอลัมน์/คีย์ (identifier ไม่ใช่ค่าตัวเลข — ระบุชื่อได้) ──
 const PRODUCT_COLS = { sku: "sku", name: "ชื่อสินค้า", unit: "หน่วย", normalPrice: "ราคาปกติ_ต่อหน่วย", status: "สถานะ" };
@@ -514,6 +514,71 @@ export function resolveRuntimeVars(text: string, ctx: RuntimeVarContext): string
   if (ctx.breakdown !== null) out = out.split("{วิธีคิดยอด}").join(ctx.breakdown);
   if (ctx.nextTierOffer !== null) out = out.split("{ทางเลือกถัดไป}").join(ctx.nextTierOffer);
   return out;
+}
+
+// ── Group X resolvers (D-39) — ตัวแปรที่ AI เคยเติมเอง · verbatim ต้องให้โค้ด resolve ──
+/** token catalog ที่ resolveCatalogVars จัดการ (var-guard อ้างชุดนี้) */
+export const CATALOG_TEXT_VARS = ["{ชื่อสินค้า}", "{วิธีเก็บรักษา}", "{โปรโมชั่นทั้งหมด}"] as const;
+/** token time ที่ resolveDeliveryVar จัดการ */
+export const DELIVERY_VARS = ["{วันจัดส่ง}"] as const;
+
+/** ข้อความโชว์ของโปร live ทั้งหมด (สถานะ live + ในช่วงวันที่) เรียงตามชีต — {โปรโมชั่นทั้งหมด} */
+function livePromoShowTexts(promoRows: string[][], now: Date): string[] {
+  const prCols = resolveCols(promoRows, [PROMO_COLS.sku, PROMO_COLS.status, PROMO_COLS.start, PROMO_COLS.end]);
+  if (!prCols) return [];
+  const showTextIdx = promoRows[prCols.headerRow].map(normHeader).indexOf(PROMO_COLS.showText);
+  if (showTextIdx === -1) return [];
+  const today = bangkokYMD(now);
+  const out: string[] = [];
+  for (let i = prCols.headerRow + 1; i < promoRows.length; i++) {
+    const row = promoRows[i];
+    if (!cleanCell(row[prCols.cols[PROMO_COLS.sku]])) continue; // แถวหมายเหตุ/ว่าง
+    if (cleanCell(row[prCols.cols[PROMO_COLS.status]]) !== STATUS_LIVE) continue;
+    const start = cleanCell(row[prCols.cols[PROMO_COLS.start]]);
+    const end = cleanCell(row[prCols.cols[PROMO_COLS.end]]);
+    if (start && today < start) continue;
+    if (end && today > end) continue;
+    const show = cleanCell(row[showTextIdx]);
+    if (show) out.push(show);
+  }
+  return out;
+}
+
+/**
+ * แทนตัวแปร catalog (D-39): {ชื่อสินค้า}/{วิธีเก็บรักษา} = สินค้า live ตัวแรก · {โปรโมชั่นทั้งหมด} = ข้อความโชว์ promo live (\n คั่น)
+ * 🔴 แทนเฉพาะเมื่อมีค่า (ว่าง/ไม่มี live = คงวงเล็บ → var-guard จับ) · โดเมนตอนนี้ live 1 ตัว (ตัวแรกพอ)
+ */
+export function resolveCatalogVars(text: string, productRows: string[][], promoRows: string[][], now: Date = new Date()): string {
+  if (!CATALOG_TEXT_VARS.some((v) => text.includes(v))) return text;
+  let out = text;
+  if (out.includes("{ชื่อสินค้า}") || out.includes("{วิธีเก็บรักษา}")) {
+    const pCols = resolveCols(productRows, [PRODUCT_COLS.sku, PRODUCT_COLS.name, PRODUCT_COLS.status]);
+    if (pCols) {
+      const storageIdx = productRows[pCols.headerRow].map(normHeader).indexOf("วิธีเก็บรักษา");
+      for (let i = pCols.headerRow + 1; i < productRows.length; i++) {
+        const row = productRows[i];
+        const sku = cleanCell(row[pCols.cols[PRODUCT_COLS.sku]]);
+        if (!sku || cleanCell(row[pCols.cols[PRODUCT_COLS.status]]) !== STATUS_LIVE) continue;
+        const name = cleanCell(row[pCols.cols[PRODUCT_COLS.name]]);
+        const storage = storageIdx !== -1 ? cleanCell(row[storageIdx]) : "";
+        if (name) out = out.split("{ชื่อสินค้า}").join(name);
+        if (storage) out = out.split("{วิธีเก็บรักษา}").join(storage);
+        break; // live ตัวแรกพอ
+      }
+    }
+  }
+  if (out.includes("{โปรโมชั่นทั้งหมด}")) {
+    const texts = livePromoShowTexts(promoRows, now);
+    if (texts.length > 0) out = out.split("{โปรโมชั่นทั้งหมด}").join(texts.join("\n"));
+  }
+  return out;
+}
+
+/** แทน {วันจัดส่ง} จาก "เวลาตัดรอบออเดอร์" (D-39) — cutoff อ่านไม่ได้ → คงวงเล็บ (var-guard จับ · ไม่เดาวัน) */
+export function resolveDeliveryVar(text: string, cutoff: string, now: Date = new Date()): string {
+  if (!text.includes("{วันจัดส่ง}")) return text;
+  const day = bangkokDeliveryDay(cutoff, now); // "วันนี้"|"พรุ่งนี้" (เจ้าของคุมคำว่า "ส่ง/จัดส่ง" รอบตัวแปรเอง)
+  return day ? text.split("{วันจัดส่ง}").join(day) : text;
 }
 
 /** map sku → ชื่อสินค้า (CSV_Products) — ใช้แทน sku ในข้อความแจ้งแอดมิน (pure) */

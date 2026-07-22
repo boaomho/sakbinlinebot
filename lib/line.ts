@@ -93,7 +93,10 @@ function enforceTextLast(messages: Message[]): Message[] {
  *   หลายบับเบิล) เพื่อให้ข้อความรวมอยู่ใน reply เดียว ไม่ล้นจนต้องไป push (คุมค่า LINE)
  */
 export function parseReplyIntoMessages(reply: string, collapseBubbles = false): Message[] {
-  const segments = collapseBubbles ? [reply.replace(/\[\[เว้น\]\]/g, "\n\n")] : reply.split("[[เว้น]]");
+  // D-39: [[แยก]] = alias ของ [[เว้น]] (เจ้าของเขียนสลับกันในชีตได้ · แยกบอลลูนเหมือนกัน)
+  const segments = collapseBubbles
+    ? [reply.replace(/\[\[(?:เว้น|แยก)\]\]/g, "\n\n")]
+    : reply.split(/\[\[(?:เว้น|แยก)\]\]/);
   let messages: Message[] = [];
   for (const seg of segments) {
     messages.push(...parseSegmentToMessages(seg));

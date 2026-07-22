@@ -29,8 +29,14 @@ function stepSheet(): string[][] {
     r("S_CLOSED", "quoted", { ตัวอย่างคำตอบ: "สนใจโปรไหนดีคะ โอนมาที่ {เลขที่บัญชี} ได้เลยค่ะ", คิดเอง: "ปิด" }),
     r("S_EMPTY", "quoted", { ตัวอย่างคำตอบ: "", คิดเอง: "ปิด" }),
     r("S_TYPO", "awaiting_address", { ตัวอย่างคำตอบ: "สวัสดีค่ะ[[เว้น]]ที่อยู่เดิมคือ {ออเดอร์_ที่อยู่}", คิดเอง: "ปิด" }),
+    r("S_CAT", "quoted", { ตัวอย่างคำตอบ: "{ชื่อสินค้า} เก็บ{วิธีเก็บรักษา}ค่ะ[[แยก]]โปรตอนนี้:\n{โปรโมชั่นทั้งหมด}", คิดเอง: "ปิด" }),
+    r("S_PEND", "awaiting_address", { ตัวอย่างคำตอบ: "ยืนยันนะคะ[[เว้น]]{ชื่อ}\n{ที่อยู่เต็ม}\n{เบอร์}", คิดเอง: "ปิด" }),
+    r("S_DELIV", "won", { ตัวอย่างคำตอบ: "รับของ{วันจัดส่ง}ค่ะ · จ่าย{การชำระเงินใหม่}", คิดเอง: "ปิด" }),
     r("H1", "handoff", { ตัวอย่างคำตอบ: "เดี๋ยวแอดมินมาช่วยดูแลนะคะ", คิดเอง: "ปิด", ห้ามทำ: "ห้ามตอบเอง" }),
   ];
+}
+function textBubbles(): string[] {
+  return lineCalls.replies.flatMap((rr) => rr.messages).map((m) => (m.type === "text" ? m.text : "[IMG]"));
 }
 const OBJ_H = ["objection_id", "ลูกค้าพูดแบบไหนบ้าง", "ความกังวลที่แท้จริง", "หลักการตอบ", "คิดเอง", "ตัวอย่างคำตอบ"];
 function cfg(extra: [string, string][] = []): Map<string, string> {
@@ -74,10 +80,10 @@ describe("dropUnresolvedVarBubbles (pure)", () => {
   it("ทุกบอลลูนมีตัวแปรค้าง → clean ว่าง", () => {
     expect(dropUnresolvedVarBubbles("ยอด {ยอดรวม}[[แยก]]โอน {เลขที่บัญชี}").clean).toBe("");
   });
-  it("🔴 กันเฉพาะตัวแปรที่รู้จัก ไม่ใช่ { ทุกตัว (emoji/วงเล็บอื่นไม่โดน)", () => {
-    const res = dropUnresolvedVarBubbles("ราคาดีมาก {น่าสนใจ} 😊 {ชื่อสินค้า}");
+  it("🔴 กันเฉพาะตัวแปรที่รู้จัก ไม่ใช่ { ทุกตัว (token ที่ไม่มี resolver ไม่โดน)", () => {
+    const res = dropUnresolvedVarBubbles("ราคาดีมาก {น่าสนใจ} 😊 {อะไรสักอย่าง}");
     expect(res.dropped).toEqual([]);
-    expect(res.clean).toBe("ราคาดีมาก {น่าสนใจ} 😊 {ชื่อสินค้า}");
+    expect(res.clean).toBe("ราคาดีมาก {น่าสนใจ} 😊 {อะไรสักอย่าง}");
   });
   it("KNOWN_RUNTIME_VARS ครอบ pricing + transfer + order", () => {
     expect(KNOWN_RUNTIME_VARS).toContain("{ยอดรวม}");
@@ -165,6 +171,51 @@ describe("objection verbatim — precedence over step", () => {
     const t = customerText();
     expect(t).toContain("AI ตอบเรื่องแพงเอง");
     expect(t).not.toContain("แพตเทิร์นที่ไม่ควรส่ง");
+  });
+});
+
+describe("verbatim Group X — catalog/pending/delivery resolve ครบ (D-39)", () => {
+  it("🔴 ปิด + catalog: {ชื่อสินค้า}/{วิธีเก็บรักษา}/{โปรโมชั่นทั้งหมด} → ค่าจริง + [[แยก]] แยกบอลลูน", async () => {
+    scriptGemini([turn({ reply: "AI พูดเอง", stage: "S_CAT" })]);
+    await sendText(U, "ขอข้อมูลหน่อย");
+    const bubbles = textBubbles();
+    expect(bubbles.length, "[[แยก]] แยกเป็น 2 บอลลูน").toBe(2);
+    expect(bubbles[0]).toContain("น้ำพริกปลาทูฟรีซดราย");
+    expect(bubbles[0]).toContain("อุณหภูมิห้อง");
+    expect(bubbles[1], "โปรทั้งหมด \\n คั่น").toContain("1 ถ้วย 95 บาท");
+    expect(bubbles[1]).toContain("10 ถ้วย");
+    expect(customerText()).not.toContain("{"); // ไม่เหลือตัวแปรดิบ
+  });
+
+  it("ปิด + pending: {ชื่อ}/{ที่อยู่เต็ม}/{เบอร์} = ออเดอร์ที่กำลังคุย (เก็บจากเทิร์นก่อน)", async () => {
+    scriptGemini([
+      turn({ reply: "รับข้อมูลแล้วค่ะ", stage: "S_OPEN", orderData: { ชื่อ: "สมหญิง", ที่อยู่: "9 ถ.รักดี กทม 10230", เบอร์: "0899999999" } }),
+      turn({ reply: "AI", stage: "S_PEND" }),
+    ]);
+    await sendText(U, "ชื่อสมหญิง 9 ถ.รักดี กทม 10230 เบอร์ 0899999999");
+    await sendText(U, "ถูกแล้วค่ะ");
+    const t = customerText();
+    expect(t).toContain("สมหญิง");
+    expect(t).toContain("9 ถ.รักดี กทม 10230");
+    expect(t).toContain("0899999999");
+    expect(t).not.toContain("{ชื่อ}");
+  });
+
+  it("ปิด + delivery: {วันจัดส่ง} จากเวลาตัดรอบ + {การชำระเงินใหม่}", async () => {
+    scriptGemini([turn({ reply: "AI", stage: "S_DELIV", paymentMethod: "โอน" })]);
+    harnessOverrides.config = { raw: cfg([["เวลาตัดรอบออเดอร์", "23:59"]]) };
+    await sendText(U, "โอนแล้วค่ะ");
+    const t = customerText();
+    expect(t).toContain("รับของวันนี้ค่ะ"); // 23:59 → ก่อนตัดรอบเสมอ
+    expect(t).toContain("โอนเงิน");
+  });
+
+  it("🔴 resolver ไม่ครบ (pending ไม่มีข้อมูล) → ไม่ส่ง {...} ดิบ", async () => {
+    scriptGemini([turn({ reply: "AI", stage: "S_PEND" })]); // ลูกค้าใหม่ pending ว่าง
+    await sendText(U, "ทัก");
+    const t = customerText();
+    expect(t, "ไม่มีตัวแปรดิบหลุด").not.toContain("{");
+    expect(t, "บอลลูน 'ยืนยันนะคะ' ยังส่ง").toContain("ยืนยันนะคะ");
   });
 });
 

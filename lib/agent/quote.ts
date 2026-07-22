@@ -12,6 +12,11 @@ import {
   formatPayment,
   buildBreakdownVars,
   PRICING_RUNTIME_VARS,
+  resolveRuntimeVars,
+  resolveCatalogVars,
+  resolveDeliveryVar,
+  CATALOG_TEXT_VARS,
+  DELIVERY_VARS,
 } from "@/lib/core/pricing";
 import { PendingOrder, LastOrder } from "@/lib/core/orders";
 import { AppConfig } from "@/lib/config";
@@ -120,7 +125,7 @@ export function resolveOrderVars(text: string, order: LastOrder | null, itemsTex
   return out;
 }
 
-// ---- ตัวแปรออเดอร์ล่าสุดทั้งหมด (D-32) — ใช้ในชุด KNOWN สำหรับ var-guard ----
+// ---- ตัวแปรออเดอร์ล่าสุดทั้งหมด (D-32) — snapshot last_order (คนละชุดกับ pending!) ----
 export const ORDER_VARS = [
   "{ออเดอร์_ชื่อ}",
   "{ออเดอร์_ที่อยู่}",
@@ -130,11 +135,63 @@ export const ORDER_VARS = [
   "{ออเดอร์_เลขที่}",
 ] as const;
 
+// ---- ตัวแปร "ออเดอร์ที่กำลังคุย" (pending ปัจจุบัน · D-39) — สรุปก่อนบันทึก ----
+// 🔴 {ชื่อ}/{ที่อยู่เต็ม}/{เบอร์} = pending (กำลังเก็บ) · ต่างจาก {ออเดอร์_*} = snapshot ที่บันทึกแล้ว
+// {การชำระเงินใหม่} = วิธีจ่ายที่เพิ่งเปลี่ยน (เคส X1) · ต่างจาก {การชำระเงิน}(R1 · ต้องมี items)
+export const PENDING_VARS = ["{ชื่อ}", "{ที่อยู่เต็ม}", "{เบอร์}", "{การชำระเงินใหม่}"] as const;
+
 /**
- * Phase2 var-guard — ตัวแปร "ที่ resolver รู้จัก" ทั้งหมด (pricing + transfer + order)
+ * แทนตัวแปร pending ปัจจุบัน (D-39) — จาก pending_order ที่กำลังเก็บ (ไม่ใช่ last_order)
+ * 🔴 แทนเฉพาะเมื่อมีค่า (ว่าง = คงวงเล็บ → var-guard จับ · ไม่ส่งช่องว่างให้ลูกค้า)
+ */
+export function resolvePendingVars(text: string, pending: PendingOrder): string {
+  if (!PENDING_VARS.some((v) => text.includes(v))) return text;
+  let out = text;
+  const name = (pending["ชื่อ"] ?? "").trim();
+  const addr = (pending["ที่อยู่"] ?? "").trim();
+  const phone = (pending["เบอร์"] ?? "").trim();
+  const pay = (pending["การชำระเงิน"] ?? "").trim();
+  if (name) out = out.split("{ชื่อ}").join(name);
+  if (addr) out = out.split("{ที่อยู่เต็ม}").join(addr);
+  if (phone) out = out.split("{เบอร์}").join(phone);
+  if (pay) out = out.split("{การชำระเงินใหม่}").join(formatPayment(pay));
+  return out;
+}
+
+/**
+ * D-39 var-guard — ตัวแปร "ที่ resolver รู้จัก" ทั้งหมด (pricing + transfer + order + catalog + pending + delivery)
  * 🔴 กันเฉพาะชุดนี้ ไม่ใช่ `{...}` ทุกตัว (AI/เจ้าของอาจพิมพ์วงเล็บปีกกาในบริบทอื่น)
  */
-export const KNOWN_RUNTIME_VARS = [...PRICING_RUNTIME_VARS, ...TRANSFER_VARS, ...ORDER_VARS] as const;
+export const KNOWN_RUNTIME_VARS = [
+  ...PRICING_RUNTIME_VARS, ...TRANSFER_VARS, ...ORDER_VARS,
+  ...CATALOG_TEXT_VARS, ...PENDING_VARS, ...DELIVERY_VARS,
+] as const;
+
+/**
+ * D-39 · resolver รวม pass เดียว — ทั้ง AI reply (โหมดเปิด) + verbatim (โหมดปิด) เรียกตัวนี้
+ * 🔴 ลำดับ R1→R2→R3 คงเดิมเป๊ะ (AI mode ไม่ regression) · Group X (catalog/pending/delivery) ต่อท้าย
+ *    ตัวแปรใหม่อนาคต = เพิ่มที่นี่ที่เดียว → ผ่านทั้ง 2 path อัตโนมัติ
+ */
+export interface AllVarsContext {
+  priceVars: RuntimeVarContext;
+  config: AppConfig;
+  lastOrder: LastOrder | null;
+  lastOrderItemsText: string;
+  pending: PendingOrder;
+  products: string[][];
+  promo: string[][];
+  now: Date;
+}
+export function resolveAllVars(text: string, ctx: AllVarsContext): string {
+  let out = text;
+  out = resolveRuntimeVars(out, ctx.priceVars); // R1 เงิน/รายการ
+  out = resolveTransferVars(out, ctx.config); // R2 บัญชี
+  out = resolveOrderVars(out, ctx.lastOrder, ctx.lastOrderItemsText); // R3 ออเดอร์ snapshot
+  out = resolveCatalogVars(out, ctx.products, ctx.promo, ctx.now); // catalog
+  out = resolvePendingVars(out, ctx.pending); // pending ปัจจุบัน
+  out = resolveDeliveryVar(out, ctx.config.raw.get("เวลาตัดรอบออเดอร์") ?? ctx.config.raw.get("เวลารอบตัดออเดอร์") ?? "", ctx.now); // วันจัดส่ง
+  return out;
+}
 
 /**
  * แยกบอลลูน ([[เว้น]]/[[แยก]]) แล้วทิ้งบอลลูนที่ยังเหลือตัวแปร "ที่รู้จัก" resolve ไม่ได้
