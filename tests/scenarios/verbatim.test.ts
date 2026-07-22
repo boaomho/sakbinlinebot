@@ -32,6 +32,9 @@ function stepSheet(): string[][] {
     r("S_CAT", "quoted", { ตัวอย่างคำตอบ: "{ชื่อสินค้า} เก็บ{วิธีเก็บรักษา}ค่ะ[[แยก]]โปรตอนนี้:\n{โปรโมชั่นทั้งหมด}", คิดเอง: "ปิด" }),
     r("S_PEND", "awaiting_address", { ตัวอย่างคำตอบ: "ยืนยันนะคะ[[เว้น]]{ชื่อ}\n{ที่อยู่เต็ม}\n{เบอร์}", คิดเอง: "ปิด" }),
     r("S_DELIV", "won", { ตัวอย่างคำตอบ: "รับของ{วันจัดส่ง}ค่ะ · จ่าย{การชำระเงินใหม่}", คิดเอง: "ปิด" }),
+    r("S_BOTH", "quoted", { ตัวอย่างคำตอบ: "รับทราบค่ะ", ตัวอย่างประโยคปิดท้าย: "ขอบคุณนะคะ 🙏", คิดเอง: "ปิด" }),
+    r("S_CLOSEONLY", "quoted", { ตัวอย่างคำตอบ: "", ตัวอย่างประโยคปิดท้าย: "แล้วเจอกันค่ะ", คิดเอง: "ปิด" }),
+    r("S_MULTI", "quoted", { ตัวอย่างคำตอบ: "บรรทัดแรกค่ะ[[แยก]]บรรทัดสองค่ะ", ตัวอย่างประโยคปิดท้าย: "ปิดท้ายค่ะ", คิดเอง: "ปิด" }),
     r("H1", "handoff", { ตัวอย่างคำตอบ: "เดี๋ยวแอดมินมาช่วยดูแลนะคะ", คิดเอง: "ปิด", ห้ามทำ: "ห้ามตอบเอง" }),
   ];
 }
@@ -58,12 +61,18 @@ describe("parseThinkMode + stepVerbatim (pure)", () => {
     expect(parseThinkMode("เปิด")).toBe("เปิด");
     expect(parseThinkMode("อะไรก็ไม่รู้")).toBe("เปิด");
   });
-  it("stepVerbatim: ปิด → {mode,example} · เปิด · ไม่มี step → null", () => {
+  it("stepVerbatim: ปิด → {mode,pattern} · เปิด · ไม่มี step → null", () => {
     const rows = stepSheet();
-    expect(stepVerbatim(rows, "S_CLOSED")).toEqual({ mode: "ปิด", example: "สนใจโปรไหนดีคะ โอนมาที่ {เลขที่บัญชี} ได้เลยค่ะ" });
+    expect(stepVerbatim(rows, "S_CLOSED")).toEqual({ mode: "ปิด", pattern: "สนใจโปรไหนดีคะ โอนมาที่ {เลขที่บัญชี} ได้เลยค่ะ" });
     expect(stepVerbatim(rows, "S_OPEN")?.mode).toBe("เปิด");
     expect(stepVerbatim(rows, "S1")?.mode, "ว่าง = เปิด (default)").toBe("เปิด");
     expect(stepVerbatim(rows, "ไม่มีจริง")).toBeNull();
+  });
+  it("stepVerbatim รวม 2 ช่อง: ตัวอย่างคำตอบ [[แยก]] ปิดท้าย (D-39B2)", () => {
+    const rows = stepSheet();
+    expect(stepVerbatim(rows, "S_BOTH")?.pattern, "2 ช่อง → คั่น [[แยก]]").toBe("รับทราบค่ะ[[แยก]]ขอบคุณนะคะ 🙏");
+    expect(stepVerbatim(rows, "S_CLOSEONLY")?.pattern, "คำตอบว่าง → แค่ปิดท้าย").toBe("แล้วเจอกันค่ะ");
+    expect(stepVerbatim(rows, "S_CLOSED")?.pattern, "ปิดท้ายว่าง → แค่คำตอบ").toBe("สนใจโปรไหนดีคะ โอนมาที่ {เลขที่บัญชี} ได้เลยค่ะ");
   });
   it("ชีตเดิมไม่มีคอลัมน์ คิดเอง → default เปิด (ไม่ regression)", () => {
     const noThink = stepSheet().map((row) => row.slice(0, 12)); // ตัดคอลัมน์ คิดเอง ทิ้ง
@@ -216,6 +225,31 @@ describe("verbatim Group X — catalog/pending/delivery resolve ครบ (D-39)
     const t = customerText();
     expect(t, "ไม่มีตัวแปรดิบหลุด").not.toContain("{");
     expect(t, "บอลลูน 'ยืนยันนะคะ' ยังส่ง").toContain("ยืนยันนะคะ");
+  });
+});
+
+describe("verbatim รวม 2 ช่อง — คำตอบ + ปิดท้าย (D-39B2 · ปิดท้าย=บอลลูนสุดท้าย)", () => {
+  it("🔴 2 ช่องมีทั้งคู่ → 2 บอลลูน (คั่น [[แยก]] อัตโนมัติ · ปิดท้ายสุดท้าย)", async () => {
+    scriptGemini([turn({ reply: "AI", stage: "S_BOTH" })]);
+    await sendText(U, "โอเคค่ะ");
+    const b = textBubbles();
+    expect(b).toEqual(["รับทราบค่ะ", "ขอบคุณนะคะ 🙏"]);
+  });
+  it("ปิดท้ายว่าง → แค่คำตอบ (ไม่มีบอลลูนเปล่า)", async () => {
+    harnessOverrides.config = { raw: cfg([["เลขที่บัญชี", "1234567890"]]) };
+    scriptGemini([turn({ reply: "AI", stage: "S_CLOSED" })]);
+    await sendText(U, "สนใจค่ะ");
+    expect(textBubbles().length).toBe(1);
+  });
+  it("คำตอบว่าง + ปิดท้ายมี → แค่ปิดท้าย", async () => {
+    scriptGemini([turn({ reply: "AI", stage: "S_CLOSEONLY" })]);
+    await sendText(U, "บาย");
+    expect(textBubbles()).toEqual(["แล้วเจอกันค่ะ"]);
+  });
+  it("คำตอบมี [[แยก]] เอง + ปิดท้าย → ปิดท้ายเป็นบอลลูนสุดท้าย (3 บอลลูน)", async () => {
+    scriptGemini([turn({ reply: "AI", stage: "S_MULTI" })]);
+    await sendText(U, "ขอข้อมูล");
+    expect(textBubbles()).toEqual(["บรรทัดแรกค่ะ", "บรรทัดสองค่ะ", "ปิดท้ายค่ะ"]);
   });
 });
 

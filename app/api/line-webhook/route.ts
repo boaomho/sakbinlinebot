@@ -707,13 +707,13 @@ async function processMessage(
     console.log(JSON.stringify({ scope: "verbatim", source: "objection", id: objection.verbatim.id }));
   } else {
     const sv = lib ? stepVerbatim(lib.CSV_Step, geminiOutput.stage) : null;
-    if (sv?.mode === "ปิด" && sv.example) {
-      baseReply = sv.example;
+    if (sv?.mode === "ปิด" && sv.pattern) {
+      baseReply = sv.pattern; // ตัวอย่างคำตอบ [[แยก]] ปิดท้าย (join แล้ว)
       verbatimMode = true;
       console.log(JSON.stringify({ scope: "verbatim", source: "step", stage: geminiOutput.stage }));
     } else {
-      // safety: ปิดแต่ตัวอย่างว่าง → fallback เปิด (AI) + log (กันเซตปิดลืมกรอก → ข้อความว่าง)
-      if (sv?.mode === "ปิด" && !sv.example) {
+      // safety: ปิดแต่ 2 ช่องว่างทั้งคู่ → fallback เปิด (AI) + log (กันเซตปิดลืมกรอก → ข้อความว่าง)
+      if (sv?.mode === "ปิด" && !sv.pattern) {
         console.warn(JSON.stringify({ scope: "verbatim", event: "empty-pattern-fallback-ai", stage: geminiOutput.stage }));
       }
       baseReply = geminiOutput.reply;

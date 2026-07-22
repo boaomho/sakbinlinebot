@@ -594,5 +594,15 @@ handoff ทุก path (edit/AI-semantic/keyword) ตั้งแค่ `human_m
 - **CSV_Vars** (ตัวแปรข้อความเจ้าของนิยามเอง · ไม่พึ่ง dev) = **เฟสถัดไป** (เฟสนี้ทำ Group X ระบบก่อน)
 **harness:** allvars.test (catalog/pending/delivery/bangkokDeliveryDay/resolveAllVars/parseReply [[แยก]]+รูป+\n · AI-parity ไม่มี token→ไม่แตะ) + verbatim Group X pipeline (catalog+[[แยก]]แยกบอลลูน · pending 2 เทิร์น · delivery · resolver ไม่ครบ→ไม่ส่งดิบ) · เขียวทั้งหมด · tsc+build เขียว
 
+### D-39B2 (Phase2 #1 ต่อ) · verbatim รวม 2 ช่อง (ตัวอย่างคำตอบ + ปิดท้าย)
+**ทิศทางเจ้าของ:** Phase2 = บอทเข้าใจบริบท (ชั้น①) + ตอบตามเจ้าของเป๊ะ (คิดเอง=ปิด) · เทรนละเอียดผ่าน **2 ช่องนี้ทุก step**
+**ก่อน:** verbatim ดึงแค่ "ตัวอย่างคำตอบ" (`stepVerbatim` คืน `{mode,example}`) · "ตัวอย่างประโยคปิดท้าย" ไม่ถูกส่งโหมดปิด (โหมดเปิดใช้เป็นไกด์ AI ใน `fullSalesBlock` injection · ไม่แตะ)
+**ทำ (แบบ 1 · ปิดท้าย=บอลลูนแยกอัตโนมัติ):**
+- `stepVerbatim` คืน `{mode, pattern}` · `pattern = joinVerbatimParts(example, closing)` = 2 ช่องคั่น **`[[แยก]]` อัตโนมัติ** (เจ้าของไม่ต้องพิมพ์เอง)
+- ข้ามช่องว่าง: ปิดท้ายว่าง → แค่คำตอบ · คำตอบว่าง+ปิดท้าย → แค่ปิดท้าย · 2 ช่องว่าง → fallback AI (ไม่มีบอลลูนเปล่า/`[[แยก]]` เกิน)
+- ทั้ง pattern ผ่าน `resolveAllVars` + `[[แยก]]`/`[[รูป]]`/`\n`/cap 5 เดิม (ทำที่ route/deliver เหมือน AI reply) · คำตอบมี `[[แยก]]` เอง + ปิดท้าย → ปิดท้ายเป็นบอลลูนสุดท้าย
+- **CSV_Objections ไม่มีช่องปิดท้าย** → objection verbatim ใช้ช่องเดียว (`ตัวอย่างคำตอบ`) ตามเดิม
+**harness:** stepVerbatim join (2 ช่อง/ปิดท้ายว่าง/คำตอบว่าง) + pipeline (2 ช่อง→2 บอลลูน · ปิดท้ายว่าง→แค่คำตอบ · คำตอบว่าง→แค่ปิดท้าย · คำตอบมี [[แยก]] เอง+ปิดท้าย→3 บอลลูน) · โหมดเปิดไม่ regression · tsc+build เขียว
+
 ### Phase C · ลบ ENV ค้างใน Vercel
 `SHEET_STEP_URL` `SHEET_FAQ_URL` `SHEET_CONFIG_URL` `SHEET_FOLLOW_URL` — โค้ดไม่อ่านแล้ว ลบทิ้งได้

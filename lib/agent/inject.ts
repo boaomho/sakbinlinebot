@@ -163,15 +163,22 @@ export function stepNameOf(rows: string[][], stepId: string): string | null {
   return parsed?.steps.find((s) => s.stepId === stepId)?.name ?? null;
 }
 
+/** ต่อ "ตัวอย่างคำตอบ" + "ตัวอย่างประโยคปิดท้าย" เป็น pattern เดียว (D-39B2) — ปิดท้าย = บอลลูนสุดท้ายเสมอ
+ *  🔴 คั่นด้วย [[แยก]] อัตโนมัติ (เจ้าของไม่ต้องพิมพ์เอง) · ช่องว่างถูกข้าม (ไม่มีบอลลูนเปล่า/[[แยก]] เกิน) */
+export function joinVerbatimParts(...parts: string[]): string {
+  return parts.map((p) => p.trim()).filter(Boolean).join("[[แยก]]");
+}
+
 /**
- * Phase2 ชั้น③ — โหมด "คิดเอง" + ตัวอย่างคำตอบ ของ step_id ที่ AI เลือก
- * โหมดปิด → route ส่ง example เป๊ะ (verbatim) แทน reply ที่ AI แต่ง · ไม่เจอ step → null (route ใช้ AI)
+ * Phase2 ชั้น③ — โหมด "คิดเอง" + pattern (ตัวอย่างคำตอบ + ปิดท้าย) ของ step_id ที่ AI เลือก
+ * โหมดปิด → route ส่ง pattern เป๊ะ (verbatim) แทน reply ที่ AI แต่ง · ไม่เจอ step → null (route ใช้ AI)
+ * pattern = "ตัวอย่างคำตอบ" [[แยก]] "ปิดท้าย" (ข้ามช่องว่าง) · resolve/แยกบอลลูน ทำที่ route เหมือน AI reply
  */
-export function stepVerbatim(rows: string[][], stepId: string): { mode: ThinkMode; example: string } | null {
+export function stepVerbatim(rows: string[][], stepId: string): { mode: ThinkMode; pattern: string } | null {
   if (!stepId) return null;
   const parsed = parseStepRows(rows);
   const s = parsed?.steps.find((x) => x.stepId === stepId);
-  return s ? { mode: s.think, example: s.example } : null;
+  return s ? { mode: s.think, pattern: joinVerbatimParts(s.example, s.closing) } : null;
 }
 
 function nextFunnelStage(stage: string): string | null {
