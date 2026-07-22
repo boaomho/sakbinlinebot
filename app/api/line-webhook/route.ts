@@ -9,7 +9,7 @@ import {
   FeatureSwitches,
 } from "@/lib/config";
 import { loadBotLibrary } from "@/lib/sheets/loader";
-import { buildStepInjection, buildFaqInjection, buildCatalogInjection, buildObjectionInjection, readConfigDescription, funnelStageOf, stepNameOf, stepVerbatim } from "@/lib/agent/inject";
+import { buildStepInjection, buildFaqInjection, buildCatalogInjection, buildObjectionInjection, readConfigDescription, funnelStageOf, stepNameOf, stepVerbatim, stepClosing, joinVerbatimParts } from "@/lib/agent/inject";
 import {
   ensureCustomer,
   updateCustomerAfterTurn,
@@ -525,7 +525,8 @@ async function processMessage(
     : null;
   const orderWarning = customer && preGate ? buildOrderStateWarning(customer.pendingOrder, preGate) : null;
 
-  const faqText = lib && lib.CSV_FAQ.length > 0 ? buildFaqInjection(lib.CSV_FAQ, userMessage) : "(ไม่มีข้อมูล FAQ)";
+  const faqInj = lib && lib.CSV_FAQ.length > 0 ? buildFaqInjection(lib.CSV_FAQ, userMessage) : { text: "(ไม่มีข้อมูล FAQ)", verbatim: null };
+  const faqText = faqInj.text;
   // ยัดสินค้า+ราคาโปรเสมอ (บอทห้ามแต่งราคา C6) — CSV_Products/CSV_Promo ไม่เคยถูกยัดมาก่อน
   // ตารางราคาสำเร็จรูป (D-24): เลขทุกตัวจาก calculatePrice (แหล่งเดียวกับ gate) · payment ตาม pending เพื่อให้ตรงที่จะบันทึก
   const catalogText = lib
@@ -692,16 +693,24 @@ async function processMessage(
     postQuote = computeQuote(pending, lib, config, nowDate);
   }
 
-  // ---- เลือกที่มาข้อความ (Phase2 ชั้น③): objection ปิด(มี pattern) > step ปิด > AI ----
+  // ---- เลือกที่มาข้อความ (D-42 precedence): handoff > objection pattern > FAQ answer > step pattern ----
   // 🔴 AI ยังเลือก step + สกัด order_data + handoff เสมอ (ชั้น①) · โหมดปิด = ทิ้งแค่ reply ที่ AI แต่ง แทนด้วย pattern ชีต
+  // 🔴 เทิร์น handoff (AI flag / ประตู funnel=handoff|intake) → ห้ามแทรก objection/FAQ answer (ปล่อย step pattern = ข้อความประตูส่งต่อ/intake)
+  const stageFunnelReply = lib ? funnelStageOf(lib.CSV_Step, geminiOutput.stage) : null;
+  const isHandoffTurn = geminiOutput.handoff || stageFunnelReply === "handoff" || stageFunnelReply === "handoff_after_intake";
   let verbatimMode = false;
   let baseReply: string;
   if (imageFallback) {
     baseReply = imageReceivedReply(config); // AI degraded อ่านรูปไม่ได้ → ไม่ verbatim (stage ไม่น่าเชื่อถือ)
-  } else if (objection.verbatim) {
+  } else if (!isHandoffTurn && objection.verbatim) {
     baseReply = objection.verbatim.pattern;
     verbatimMode = true;
     console.log(JSON.stringify({ scope: "verbatim", source: "objection", id: objection.verbatim.id }));
+  } else if (!isHandoffTurn && faqInj.verbatim) {
+    // D-42: FAQ answer + ปิดท้ายของ step ที่ AI เลือกเทิร์นนี้ (วกกลับ funnel) · joinVerbatimParts ข้ามช่องว่าง
+    baseReply = joinVerbatimParts(faqInj.verbatim.answer, lib ? stepClosing(lib.CSV_Step, geminiOutput.stage) : "");
+    verbatimMode = true;
+    console.log(JSON.stringify({ scope: "verbatim", source: "faq", stage: geminiOutput.stage }));
   } else {
     const sv = lib ? stepVerbatim(lib.CSV_Step, geminiOutput.stage) : null;
     if (sv?.mode === "ปิด" && sv.pattern) {

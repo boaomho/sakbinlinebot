@@ -569,26 +569,44 @@ function parseFaqRows(rows: string[][]): FaqRow[] | null {
   return faqs.length > 0 ? faqs : null;
 }
 
-export function buildFaqInjection(rows: string[][], userMessage: string): string {
+export interface FaqInjection {
+  text: string;
+  /** D-42: FAQ ที่ match + action=answer + มีคำตอบ (ตัวแรก) → route ส่ง verbatim (คำตอบ + ปิดท้าย step)
+   *  🔴 action=handoff → verbatim=null เสมอ (ห้ามส่งช่องคำตอบ · พฤติกรรม v1.5) */
+  verbatim: { answer: string } | null;
+}
+
+export function buildFaqInjection(rows: string[][], userMessage: string): FaqInjection {
   const faqs = parseFaqRows(rows);
   if (!faqs) {
     console.warn(JSON.stringify({ scope: "inject", warning: "CSV_FAQ header ไม่ครบ fallback ยัดทั้งก้อน" }));
-    return tabToText(rows);
+    return { text: tabToText(rows), verbatim: null };
   }
 
   const matched = faqs.filter((f) => f.keywords.some((k) => userMessage.includes(k))).slice(0, FAQ_MAX_FULL);
 
   const fullBlocks = matched.map((f) => {
-    // action=handoff → ไม่ยัดคำตอบ (กันบอท parrot) แค่บอกให้ส่งต่อ · การบังคับจริงฝั่งโค้ด = Step 4
+    // action=handoff → ไม่ยัดคำตอบ (กันบอท parrot) แค่บอกให้ส่งต่อ · การบังคับจริงฝั่งโค้ด = handoff flow
     if (f.action === "handoff") return `${f.question}\n[action=handoff — ให้ส่งต่อแอดมิน ห้ามตอบเอง]`;
     return `${f.question}\n→ ${f.answer}`;
   });
 
-  return [
+  const text = [
     "=== สารบัญคำถามที่ตอบได้ (ถ้าไม่มีคำตอบเต็ม = ไม่มีข้อมูล ให้ส่งต่อแอดมิน ห้ามเดา) ===",
     ...faqs.map((f) => f.question),
     "",
     "=== คำตอบที่เกี่ยวกับข้อความลูกค้า ===",
     ...(fullBlocks.length > 0 ? fullBlocks : ["(ไม่มีคำถามที่ตรง — ถ้าลูกค้าถามเรื่องที่ไม่มีในสารบัญ ให้ส่งต่อแอดมิน)"]),
   ].join("\n");
+
+  // D-42: verbatim = FAQ แรกที่ action=answer + มีคำตอบ (route ต่อ ปิดท้าย step แล้วส่ง)
+  const vFaq = matched.find((f) => f.action === "answer" && f.answer.length > 0);
+  return { text, verbatim: vFaq ? { answer: vFaq.answer } : null };
+}
+
+/** D-42: ปิดท้ายของ step_id ที่ระบุ (AI เลือกเทิร์นนี้) — route ต่อท้าย FAQ answer เพื่อวกกลับ funnel */
+export function stepClosing(rows: string[][], stepId: string): string {
+  if (!stepId) return "";
+  const parsed = parseStepRows(rows);
+  return parsed?.steps.find((s) => s.stepId === stepId)?.closing ?? "";
 }

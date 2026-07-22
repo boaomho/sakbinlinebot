@@ -626,4 +626,13 @@ handoff ทุก path (edit/AI-semantic/keyword) ตั้งแค่ `human_m
 - **ลบ Examples ทั้งระบบ** (answer B): `buildExampleInjection`/`EXAMPLE_ANSWER_COL`/config key `จำนวนตัวอย่างที่ยัดเข้า prompt` · param `exampleText` + `<ตัวอย่างน้ำเสียง>` จาก gemini.ts/prompt/system.ts/route.ts
 **gotcha ที่เจอ:** test helper `step()` เติม สถานะ placeholder "S1-สถานะ" → status filter ตัดทุกแถว → parse null → fallback · แก้ helper default สถานะ="live"
 **harness:** fixtures v2.0 (Promo reorder + CSV_Vars +draft row) · inject.test/gemini-guard/resolver/real-gemini อัปเดต · **310 passed | 4 expected-fail** · tsc+build เขียว
+
+### D-42 · FAQ เข้า verbatim path เดียวกัน
+**ทำ:** `buildFaqInjection` คืน `{text, verbatim}` · verbatim = FAQ แรก `action=answer`+มีคำตอบ · **`action=handoff` → verbatim=null เสมอ** (ห้ามส่งช่องคำตอบ · v1.5) · `stepClosing(rows, stepId)` helper
+- **precedence (route baseReply):** 🔴 **handoff > objection pattern > FAQ answer > step pattern** · `isHandoffTurn` = AI handoff / funnel=handoff / handoff_after_intake → **ตัด objection+FAQ ออก** (ปล่อย step pattern = ข้อความประตูส่งต่อ/intake)
+- FAQ answer = `joinVerbatimParts(คำตอบ, stepClosing(stage ที่ AI เลือกเทิร์นนี้))` — ปิดท้าย step ปัจจุบัน (วกกลับ funnel) · ข้ามช่องว่าง
+- ผ่าน resolveAllVars + var-guard + deliver เดิม (FAQ answer มี {var} = D-43 resolve)
+**harness:** buildFaqInjection.verbatim (answer/handoff→null) + pipeline (FAQ answer+ปิดท้าย 2 บอลลูน · ปิดท้ายว่าง→1 บอลลูน · handoff turn→ไม่แทรก FAQ · action=handoff→ตกไป step) · **314 passed** · tsc+build เขียว
+
+### Phase C · ลบ ENV ค้างใน Vercel
 `SHEET_STEP_URL` `SHEET_FAQ_URL` `SHEET_CONFIG_URL` `SHEET_FOLLOW_URL` — โค้ดไม่อ่านแล้ว ลบทิ้งได้

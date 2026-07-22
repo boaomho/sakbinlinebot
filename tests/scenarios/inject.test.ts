@@ -382,25 +382,28 @@ describe("buildFaqInjection — สารบัญทุกข้อ + เต็
   }
 
   it("สารบัญมีทุกคำถาม เสมอ", () => {
-    const out = buildFaqInjection(faqSheet(), "อะไรก็ได้");
+    const out = buildFaqInjection(faqSheet(), "อะไรก็ได้").text;
     expect(out).toContain("ส่งกี่วัน");
     expect(out).toContain("เก็บได้นานมั้ย");
     expect(out).toContain("แพ้อาหารกินได้มั้ย");
   });
 
-  it("keyword match → ยัดคำตอบเต็ม", () => {
-    const out = buildFaqInjection(faqSheet(), "ของส่งกี่วันคะ");
-    expect(out).toContain("→ 1-2 วันทำการค่ะ");
+  it("keyword match → ยัดคำตอบเต็ม (text) + verbatim.answer (D-42)", () => {
+    const r = buildFaqInjection(faqSheet(), "ของส่งกี่วันคะ");
+    expect(r.text).toContain("→ 1-2 วันทำการค่ะ");
+    expect(r.verbatim, "action=answer → verbatim").toEqual({ answer: "1-2 วันทำการค่ะ" });
   });
 
-  it("🔴 action=handoff match → ไม่ยัดคำตอบ (กัน parrot) แค่บอกให้ส่งต่อ", () => {
-    const out = buildFaqInjection(faqSheet(), "แพ้กุ้งกินได้มั้ย");
-    expect(out).toContain("[action=handoff");
-    expect(out, "ห้ามยัดคำตอบของ handoff FAQ").not.toContain("ควรปรึกษาแพทย์");
+  it("🔴 action=handoff match → ไม่ยัดคำตอบ + verbatim=null (ห้ามส่งช่องคำตอบ · D-42)", () => {
+    const r = buildFaqInjection(faqSheet(), "แพ้กุ้งกินได้มั้ย");
+    expect(r.text).toContain("[action=handoff");
+    expect(r.text, "ห้ามยัดคำตอบของ handoff FAQ").not.toContain("ควรปรึกษาแพทย์");
+    expect(r.verbatim, "handoff → ไม่มี verbatim answer").toBeNull();
   });
 
-  it("ไม่ match → บอกให้ส่งต่อ ไม่เดา (กฎ 10)", () => {
-    const out = buildFaqInjection(faqSheet(), "เรื่องที่ไม่มีในชีตเลย");
-    expect(out).toContain("ส่งต่อแอดมิน");
+  it("ไม่ match → บอกให้ส่งต่อ ไม่เดา (กฎ 10) · verbatim=null", () => {
+    const r = buildFaqInjection(faqSheet(), "เรื่องที่ไม่มีในชีตเลย");
+    expect(r.text).toContain("ส่งต่อแอดมิน");
+    expect(r.verbatim).toBeNull();
   });
 });
