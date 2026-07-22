@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { productsRows, promoRows } from "../harness/botlib-fixture";
-import { resolveCatalogVars, resolveDeliveryVar } from "@/lib/core/pricing";
+import { productsRows, promoRows, varsRows, PRICING_CONFIG } from "../harness/botlib-fixture";
+import { resolveCatalogVars, resolveDeliveryVar, buildAllowedPriceStrings } from "@/lib/core/pricing";
 import { bangkokDeliveryDay } from "@/lib/core/time";
-import { resolvePendingVars, resolveAllVars, KNOWN_RUNTIME_VARS, AllVarsContext } from "@/lib/agent/quote";
+import { resolvePendingVars, resolveAllVars, resolveConfigVars, loadLiveVars, resolveCsvVars, findBadPrices, KNOWN_RUNTIME_VARS, AllVarsContext } from "@/lib/agent/quote";
 import { parseReplyIntoMessages } from "@/lib/line";
 import type { AppConfig } from "@/lib/config";
 
@@ -70,6 +70,7 @@ describe("resolveAllVars — pass เดียว ครบทุกกลุ่
     pending: { ชื่อ: "สมชาย", ที่อยู่: "1 ถ.สุข", เบอร์: "0811111111", การชำระเงิน: "โอน" },
     products: productsRows(),
     promo: promoRows(),
+    varsRows: [],
     now: NOW,
   };
   it("R1+R2 + catalog + pending + delivery ครบในครั้งเดียว", () => {
@@ -83,6 +84,43 @@ describe("resolveAllVars — pass เดียว ครบทุกกลุ่
     for (const v of ["{ยอดรวม}", "{เลขที่บัญชี}", "{ออเดอร์_ที่อยู่}", "{ชื่อสินค้า}", "{ที่อยู่เต็ม}", "{วันจัดส่ง}"]) {
       expect(KNOWN_RUNTIME_VARS).toContain(v);
     }
+  });
+});
+
+describe("D-43 · catalog/config/composed/CSV_Vars resolvers", () => {
+  it("catalog ใหม่: {เลข อย.}/{ราคาต่อหน่วย}/{รูปสินค้า}(URL ดิบ)", () => {
+    const out = resolveCatalogVars("{เลข อย.} {ราคาต่อหน่วย} [[รูป:{รูปสินค้า}]]", productsRows(), promoRows(), NOW);
+    expect(out).toBe("22-2-02365-6-0041 95 [[รูป:https://ex/npt.jpg]]");
+  });
+  it("🔴 {รูปสินค้า} ว่าง → ตัด wrapper [[รูป:...]] ทิ้ง · บอลลูนข้อความยังอยู่", () => {
+    const noImg = productsRows().map((r, i) => (i === 1 ? r.map((c, j) => (j === 11 ? "" : c)) : r)); // col 11 = รูปสินค้า
+    expect(resolveCatalogVars("ดูสินค้า[[รูป:{รูปสินค้า}]]สวยมั้ยคะ", noImg, promoRows(), NOW)).toBe("ดูสินค้าสวยมั้ยคะ");
+  });
+  it("{โปรแนะนำ} = โปร live ที่ประหยัดสูงสุด (P10 ประหยัด 100)", () => {
+    expect(resolveCatalogVars("{โปรแนะนำ}", productsRows(), promoRows(), NOW)).toContain("10 ถ้วย");
+  });
+
+  it("config: {ค่าส่ง_มาตรฐาน}/{ยอดขั้นต่ำส่งฟรี_บาท}/{นโยบายค่าส่ง}", () => {
+    const cfg = { raw: new Map([["ค่าส่ง_มาตรฐาน", "30"], ["ยอดขั้นต่ำส่งฟรี_บาท", "275"]]) } as unknown as AppConfig;
+    expect(resolveConfigVars("ส่ง{ค่าส่ง_มาตรฐาน} · {นโยบายค่าส่ง}", cfg)).toBe("ส่ง30 · ค่าส่ง 30 บาทค่ะ สั่งครบ 275 บาท ส่งฟรีเลยค่ะ");
+  });
+  it("🔴 {นโยบายค่าส่ง} เลข 30/275 ไม่โดน price-guard ทิ้ง (buildAllowedPriceStrings ครอบ config)", () => {
+    const cfg = { raw: new Map([["ค่าส่ง_มาตรฐาน", "30"], ["ยอดขั้นต่ำส่งฟรี_บาท", "275"]]) } as unknown as AppConfig;
+    const resolved = resolveConfigVars("{นโยบายค่าส่ง}", cfg);
+    const allowed = buildAllowedPriceStrings(productsRows(), promoRows(), { ...PRICING_CONFIG }, "", NOW);
+    expect(findBadPrices(resolved, allowed), "30/275 ต้องอยู่ใน allowed").toEqual([]);
+  });
+
+  it("CSV_Vars: loadLiveVars กรอง draft + แถวกติกา (เหลือ live)", () => {
+    const live = loadLiveVars(varsRows());
+    expect(live.map((v) => v.name)).toEqual(["{สัดส่วนปลาทู}"]);
+  });
+  it("🔴 CSV_Vars ชื่อชนตัวแปรระบบ → ระบบชนะ ({ชื่อสินค้า} ไม่ถูกแทนด้วยค่า Vars)", () => {
+    const rows = [["ตัวแปร", "ค่า", "หมายเหตุ", "สถานะ"], ["{ชื่อสินค้า}", "ของปลอม", "", "live"], ["{สัดส่วนปลาทู}", "45%", "", "live"]];
+    expect(resolveCsvVars("{ชื่อสินค้า} {สัดส่วนปลาทู}", rows, KNOWN_RUNTIME_VARS)).toBe("{ชื่อสินค้า} 45%");
+  });
+  it("KNOWN_RUNTIME_VARS ครอบ catalog/config ใหม่", () => {
+    for (const v of ["{เลข อย.}", "{ราคาต่อหน่วย}", "{นโยบายค่าส่ง}", "{ค่าส่ง_มาตรฐาน}"]) expect(KNOWN_RUNTIME_VARS).toContain(v);
   });
 });
 

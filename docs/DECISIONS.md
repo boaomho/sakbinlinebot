@@ -634,5 +634,15 @@ handoff ทุก path (edit/AI-semantic/keyword) ตั้งแค่ `human_m
 - ผ่าน resolveAllVars + var-guard + deliver เดิม (FAQ answer มี {var} = D-43 resolve)
 **harness:** buildFaqInjection.verbatim (answer/handoff→null) + pipeline (FAQ answer+ปิดท้าย 2 บอลลูน · ปิดท้ายว่าง→1 บอลลูน · handoff turn→ไม่แทรก FAQ · action=handoff→ตกไป step) · **314 passed** · tsc+build เขียว
 
+### D-43 · ขยาย resolver (catalog/config/composed/CSV_Vars)
+**ทำ (เพิ่มใน `resolveAllVars` ที่เดียว + `KNOWN_RUNTIME_VARS`):**
+- **catalog** (pricing.ts · สินค้า live ตัวแรก): `{เลข อย.}{ส่วนประกอบตามฉลาก}{ราคาต่อหน่วย}` · `{รูปสินค้า}`=**URL ดิบ** (ชีตใส่ `[[รูป:{รูปสินค้า}]]` เอง · รูปว่าง→ตัด wrapper ทิ้ง+log · บอลลูนข้อความยังส่ง) · `{โปรแนะนำ}`=ข้อความโชว์โปร live ประหยัดสูงสุด (เสมอ→จำนวนน้อย) · 🔴 **ไม่ทำ `{สารก่อภูมิแพ้}`** (ช่องแอดมิน · H1)
+- **config** (quote.ts): `{ค่าส่ง_มาตรฐาน}{ยอดขั้นต่ำส่งฟรี_บาท}` (ตรง) · `{นโยบายค่าส่ง}`=ประกอบ "ค่าส่ง {X} บาทค่ะ สั่งครบ {Y} บาท ส่งฟรีเลยค่ะ" (🔴 ไม่รองรับ COD เพิ่ม)
+- **CSV_Vars** (แท็บใหม่): `loadLiveVars` โหลดเฉพาะ สถานะ=live + ชื่อมีปีกกา (กรอง draft/แถวกติกา) · `resolveCsvVars` — 🔴 **ชื่อชนตัวแปรระบบ (KNOWN) → ข้าม+log (ระบบชนะ)** · resolve ท้ายสุด
+- 🔴 **`buildAllowedPriceStrings` เพิ่มเลข config** (ค่าส่ง/ยอดขั้นต่ำ/COD) → `{นโยบายค่าส่ง}` (30/275) ไม่โดน price-guard ทิ้ง · CSV_Vars ยังผ่าน claims+price guard ปกติ
+- `AllVarsContext` +`varsRows` · route ส่ง `lib.CSV_Vars`
+**harness:** allvars D-43 (catalog ใหม่/รูปว่าง→ตัด/โปรแนะนำ/config/นโยบายค่าส่ง+price-guard/loadLiveVars draft/collision ระบบชนะ) + pipeline verbatim (CSV_Var+นโยบายค่าส่ง ไหลผ่าน) · **323 passed** · tsc+build เขียว
+**+ กติกาถาวรใหม่:** จบ D-xx/phase → อัปเดต `STATUS.md` ในคอมมิตเดียวกัน (เพิ่มใน CLAUDE.md "เวลาแก้โค้ด")
+
 ### Phase C · ลบ ENV ค้างใน Vercel
 `SHEET_STEP_URL` `SHEET_FAQ_URL` `SHEET_CONFIG_URL` `SHEET_FOLLOW_URL` — โค้ดไม่อ่านแล้ว ลบทิ้งได้

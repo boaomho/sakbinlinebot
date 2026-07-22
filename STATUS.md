@@ -1,37 +1,38 @@
 # STATUS — SakbinAdvBot ("ปลาทู")
 
-> สแนปช็อตสำหรับย้ายแชทใหม่ (ต่อ Phase 2) · อัปเดต 2026-07-22 · commit ล่าสุด `8ff95a2`
-> รายละเอียดการตัดสินใจ → [docs/DECISIONS.md](docs/DECISIONS.md) · แผนที่โค้ด → [REPO-MAP.md](REPO-MAP.md)
+> สแนปช็อตสำหรับคนรับช่วงต่อ (ไม่เห็นแชทนี้ก็ทำต่อได้) · อัปเดต 2026-07-23
+> รายละเอียด → [docs/DECISIONS.md](docs/DECISIONS.md) · แผนที่โค้ด → [REPO-MAP.md](REPO-MAP.md) · brief → [docs/P2-REBUILD-BRIEF.md](docs/P2-REBUILD-BRIEF.md)
 
-## เสร็จ (Phase 1 core + เครื่องมือ Phase 2)
-order flow · pricing · gate · handoff รวมศูนย์ (D-33) · handoff_after_intake (D-34) ·
-เวลาไทย (D-37) · Step 6 stage validate (D-38) · คิดเอง=ปิด/verbatim 2 ช่อง (D-39/B/B2)
-= ตัวแปร resolve ครบ (15 เดิม + Group X 9) · แยกบอลลูน (`[[เว้น]]`/`[[แยก]]`) · ปิดท้ายแยกอัตโนมัติ ·
-ทิ้งบอลลูนตัวแปรว่าง (var-guard)
+## 🔴 อยู่ตรงไหนตอนนี้ (สำคัญสุด)
+- **branch: `phase2-v2`** — 🔴 **ยังไม่ merge เข้า main** (รอเจ้าของสั่ง) · main = ระบบ v1.x ที่รันโปรดักชันอยู่
+- **ยังไม่สลับชีต/ENV** — โค้ด v2.0 รองรับชีต `03_BotLibrary_สากบิน_v2.0.xlsx` เท่านั้น · ENV `SHEET_BOTLIB_ID` ยังชี้ชีตเก่า · **ห้าม deploy branch นี้จนกว่าจะสลับชีต** (ดูลำดับ deploy ใน P2-REBUILD-BRIEF §"ลำดับ deploy")
+- contract ชีต v2.0 = [docs/BOTLIB-V2-HEADERS.txt](docs/BOTLIB-V2-HEADERS.txt) (header จริง + แถวตัวอย่าง)
 
-## ทิศทาง Phase 2 (เจ้าของตัดสิน)
-บอทเข้าใจบริบทลูกค้า (ชั้น ①) + ตอบตามเจ้าของเป๊ะ (คิดเอง=ปิด) เท่านั้น
-ไม่พึ่ง AI ประกอบเอง · เทรนละเอียดผ่าน 2 ช่อง (ตัวอย่างคำตอบ + ปิดท้าย) ทุก step
+## กำลังทำ: P2-REBUILD (D-40 → D-44) — "AI ไม่เขียนข้อความถึงลูกค้าอีกต่อไป"
+เจตนา: AI เหลือ 4 งาน (เลือก step · จับ objection/FAQ · สกัด order_data · ตัดสิน handoff) · **ทุกคำที่ลูกค้าเห็นมาจากชีต (pattern) + resolver** · เคสนอกตาราง = S_UNKNOWN (ตอบสวย + handoff)
 
-## เจ้าของกำลังจะทำ (Phase 2 งานหลัก)
-- เขียน pattern (ตัวอย่างคำตอบ + ปิดท้าย) ทุก step + เซต `คิดเอง=ปิด`
-- ตัวแปร pending `{ชื่อ}` ≠ snapshot `{ออเดอร์_ชื่อ}` (อย่าสับสน — คนละแหล่ง)
-- รูป: ใส่ `[[รูป:URL]]` เมื่อมี URL (อาจต้องเพิ่ม resolver `{รูปสินค้า}`)
+| D | เรื่อง | สถานะ | commit |
+|---|---|---|---|
+| D-40 | verbatim = default (flip parseThinkMode) | ✅ | `64acce8` |
+| D-41 | schema v2.0 (ตัด CSV_Examples/brain · +CSV_Vars · status filter) | ✅ | `e6ce4a7` |
+| D-42 | FAQ เข้า verbatim (precedence handoff>objection>FAQ>step) | ✅ | `10ffc13` |
+| D-43 | ขยาย resolver (catalog/config/composed/CSV_Vars) | ✅ | (คอมมิตนี้) |
+| **D-44** | **routing S_UNKNOWN + หด คำ_handoff + systemInstruction v2.0 + golden tests** | ⏳ **ถัดไป** | — |
+- ทุก D: `npm test`+`npm run build` เขียวก่อน commit · 1 commit 1 decision · อัปเดต DECISIONS+REPO-MAP+STATUS ในคอมมิตเดียว
+- เทสล่าสุด: **323 passed | 4 expected-fail | 1 skipped** · build เขียว
 
-## ค้าง ยังไม่ทำ
-- **CSV_Objections/CSV_Examples:** เช็คว่า inject จริงมั้ย + ปรัชญา "ประกอบเอง/เลียนโทน"
-  (ออกแบบเดิม) ขัดกับ คิดเอง=ปิด — ตัดสินว่าใช้ยังไงในโลกที่ปิด
-- **System Prompt เขียนตอนโหมดเปิด** — เช็คขัด คิดเอง=ปิด มั้ย (Phase 2)
-- claims blocklist (พ.ร.บ.อาหาร · โค้ด guard เสร็จ D-26 · เหลือเจ้าของกรอกคำในชีต) · ลด prompt · cron 📦
-- จัด `คำ_handoff` (ย้ายคำ H1-H4 · substring KI-01) · 🔴 H1 สุขภาพ = handoff ทันทีเสมอ
-- CSV_Vars (ตัวแปรข้อความเจ้าของนิยามเอง · เฟสถัดไป)
-- เทสค้าง: cap=3, timeout 45 นาที
+## D-44 เหลือทำ (รายละเอียดใน brief §D-44)
+1. **S_UNKNOWN** (funnel=handoff) — AI เลือกเมื่อไม่ match ประตู/objection/FAQ · ส่ง pattern + handoff (ผ่าน D-33)
+2. **หด `คำ_handoff`** — `DEFAULT_HANDOFF_KEYWORDS` ให้ตรงชีต v2.0 (เคาะแล้ว: `ขอแอดมิน,คุยกับคน,คุยกับแอดมิน,เจ้าของ,ฟ้อง,แพ้,ภูมิแพ้,แพ้กุ้ง,แพ้อาหารทะเล,แพ้ปลา,กลูเตน,ท้อง,ตั้งครรภ์,ให้นม,เบาหวาน,ความดัน,โรคไต,ผู้ป่วย,กินยา` — ตัด ร้องเรียน/เคลม/ขายส่ง ออก → เข้า H2-H4 intake) · คง word-boundary (KI-01)
+3. **เขียน systemInstruction ใหม่ (v2.0)** — ตัดบล็อกสอน AI แต่งคำ/โทน/ความยาว · เป้า <2,500 tokens (เดิม ~5,507) · คงกฎ order_data 6 ช่อง + H1 + injection guard · 🔴 KI-03 backtick (ใช้ Edit ห้าม bash heredoc) · อัปเดต SYSTEM-PROMPT-BREAKDOWN.md
+4. **golden routing tests** — แปลง [docs/golden-routing-cases.csv](docs/golden-routing-cases.csv) 25 เคส → assert stage/objection/handoff · gate `HARNESS_REAL_GEMINI=1` (scripted=skip · ไม่ block npm test)
 
-## อนาคตไกล (หลังเปิดขายเสถียร — จากบรีฟเดิม)
-- **Follow engine ใหม่ (tag-triggered)** — spec เดิมยังไม่ build (โค้ดปัจจุบัน = `follow_log` dedup + cron "เงียบเกิน N วัน" dormant · `customer_tags`/`follow_queue` ยังไม่มีในโค้ด) · สวิตช์ `เปิด_ระบบติดตาม` ปิดอยู่
-- **ทำบอทธุรกิจอื่น:** ก๊อป repo + เปลี่ยน env + เปลี่ยนชีต (engine เป็นกลาง) · ไม่ใช้บรีฟเก่า · 🔴 เช็ค hardcode ชื่อธุรกิจก่อน
-- Dashboard + attribution · AI supervisor · Salepage · Marketplace sync (Gosell/BigSeller) · สินค้าตัวที่ 2
+## 🔴 จุดอันตรายห้ามลืม
+- **สิ่งที่ห้ามแตะ** (เส้นตายในบรีฟ): order gate · `calculatePrice` · 2-pass/quota-saver · idempotency (D-29) · last_order/S_EDIT (D-31/32) · handoff รวมศูนย์ (D-33) · intake (D-34-36) · เวลาไทย (D-37) · validate funnel_stage (D-38) · invariants 10 (REPO-MAP §10) · **กฎ H1 ทุกชั้น** (สุขภาพ/แพ้ = handoff เสมอ · ห้ามใส่หลักการสุขภาพใน CSV_Objections)
+- 🔴 **`{รูปสินค้า}` = URL ดิบ** (ชีตใส่ `[[รูป:{รูปสินค้า}]]` เอง) · **ไม่ทำ `{สารก่อภูมิแพ้}`** (H1)
+- verbatim = ปิด default (D-40) · คอลัมน์ `คิดเอง` = override ถ้ากลับมา
+- CSV_Vars: โหลดเฉพาะ live · ตัวแปรระบบชนะเสมอ
 
 ## กฎทำงาน
-report ก่อน code · 1 commit 1 เรื่อง · วัดก่อนแก้ · ไม่ over-engineer ·
-แชทภาพรวม = สถาปนิก · CC = ลงมือ · ห้าม hallucinate · guard ส่งสัญญาณคน ไม่แทนคน
+report ก่อน code · 1 commit 1 เรื่อง · วัดก่อนแก้ · ไม่ over-engineer · เจอเปลี่ยน contract นอกบรีฟ → หยุดถาม ·
+🔴 จบ D-xx/phase → อัปเดต STATUS.md ในคอมมิตเดียวกัน (สแนปช็อตให้คนใหม่รับช่วงต่อได้)

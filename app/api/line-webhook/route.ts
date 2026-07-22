@@ -733,7 +733,7 @@ async function processMessage(
   // D-39: resolver รวม pass เดียว — AI reply(เปิด)+verbatim(ปิด) ตัวเดียวกัน · R1→R2→R3 คงลำดับ + Group X
   const varCtx: AllVarsContext = {
     priceVars: outVars, config, lastOrder, lastOrderItemsText,
-    pending, products: lib?.CSV_Products ?? [], promo: lib?.CSV_Promo ?? [], now: nowDate,
+    pending, products: lib?.CSV_Products ?? [], promo: lib?.CSV_Promo ?? [], varsRows: lib?.CSV_Vars ?? [], now: nowDate,
   };
   let outReply = resolveAllVars(baseReply, varCtx);
   // 🔴 guard ร้ายแรง (ต่างจากราคา): ตัวแปรโอนเงิน resolve ไม่ได้ → ห้ามส่งข้อความจริง (ลูกค้าโอนไม่ได้ + เสียเครดิต)
