@@ -1,7 +1,7 @@
 # SAKBIN — DECISIONS & KNOWN ISSUES
 
-> บันทึกการตัดสินใจนอกบรีฟ + บั๊กที่รู้แล้วแต่ยังไม่แก้ (พร้อมเหตุผลว่าทำไมถึงยังไม่แก้)
-> อ้างอิง: `BRIEF-ClaudeCode-v1.5.md` · `SAKBIN-CONTRACTS-v1.5.md` · `SAKBIN-FOLLOW-SPEC.md`
+> บันทึกการตัดสินใจ + บั๊กที่รู้แล้วแต่ยังไม่แก้ (พร้อมเหตุผลว่าทำไมถึงยังไม่แก้)
+> คู่กับ `STATUS.md` · `REPO-MAP.md` · `CLAUDE.md` (บรีฟ/contracts v1.5 เดิม ดูดเข้า 3 ไฟล์นี้แล้ว · ต้นฉบับอยู่ git history) · Follow feature → `FOLLOW-SPEC.md` `[UNBUILT]`
 
 ---
 

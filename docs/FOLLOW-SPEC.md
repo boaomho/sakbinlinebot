@@ -1,7 +1,8 @@
-# SAKBIN — FOLLOW ENGINE SPEC v1.3
-> ระบบติดตามลูกค้าแบบ **tag-triggered** · ใช้คู่กับ `SAKBIN-CONTRACTS.md`
-> 🔴 **สวิตช์ `เปิด_ระบบติดตาม` ต้องปิดไว้จนกว่า spec นี้จะ implement เสร็จ**
-> โค้ดปัจจุบันตามจาก "เงียบเกิน D วัน" อย่างเดียว → กฎ 6 ข้อจะยิงพร้อมกันใส่คนที่ไม่เคยสั่ง
+# FOLLOW ENGINE SPEC — `[UNBUILT]`
+
+> 🔴 **`[UNBUILT]` — feature นี้ยังไม่สร้าง** · โค้ดปัจจุบันมีแค่ `follow_log` dedup + cron "เงียบเกิน N วัน" (dormant · สวิตช์ `เปิด_ระบบติดตาม` ปิด) · `customer_tags`/`follow_queue`/tag-triggered engine **ไม่มีในโค้ดเลย**
+> เอกสารนี้ = **design เต็มของระบบ follow ใหม่ (tag-triggered)** ที่ตั้งใจ replace ของ dormant ปัจจุบัน · พอ build เสร็จ → ดูดสรุปเข้า REPO-MAP แล้วลบไฟล์นี้
+> ระบบติดตามลูกค้าแบบ **tag-triggered** — "ไม่มีแท็ก = ไม่ตาม · ขั้นเลื่อนเมื่อส่งจริง · ลูกค้าทัก = ยกเลิกคิวไม่รีเซ็ตขั้น"
 
 ---
 
