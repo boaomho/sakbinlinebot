@@ -51,16 +51,20 @@ interface StepRow {
   collect: string;
   example: string;
   closing: string;
-  /** โหมด "คิดเอง" (Phase2 · optional col) — "ปิด" = ส่ง example เป๊ะ (verbatim) · default "เปิด" (AI เรียบเรียง) */
+  /** โหมด "คิดเอง" — 🔴 D-40: default = "ปิด" (verbatim) · "เปิด" = override รายแถว (AI เรียบเรียง) */
   think: ThinkMode;
 }
 
 export type ThinkMode = "เปิด" | "ปิด";
 
-/** แปลงค่าช่อง "คิดเอง" → โหมด · ว่าง/ไม่รู้จัก = เปิด (default AI) · reuse ตรรกะสวิตช์ (ปิด/false/off/0/ไม่) */
+/**
+ * แปลงค่าช่อง "คิดเอง" → โหมด · 🔴 D-40: verbatim = default ของทั้งระบบ
+ * ว่าง/ไม่มีคอลัมน์/ไม่รู้จัก = **ปิด (verbatim)** · เฉพาะ "เปิด/true/on/1/ใช่/yes" = เปิด (AI · override รายแถว)
+ * (ชีต v2.0 ไม่มีคอลัมน์ `คิดเอง` แล้ว → ทุกประตูปิด · ถ้าคอลัมน์กลับมาโผล่ ยังอ่านเป็น override ได้)
+ */
 export function parseThinkMode(raw: string): ThinkMode {
   const v = (raw ?? "").trim().toLowerCase();
-  return ["ปิด", "false", "off", "0", "no", "ไม่", "ไม่คิด"].includes(v) ? "ปิด" : "เปิด";
+  return ["เปิด", "true", "on", "1", "ใช่", "yes"].includes(v) ? "เปิด" : "ปิด";
 }
 
 interface ParsedSteps {

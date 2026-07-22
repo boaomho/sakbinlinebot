@@ -604,5 +604,13 @@ handoff ทุก path (edit/AI-semantic/keyword) ตั้งแค่ `human_m
 - **CSV_Objections ไม่มีช่องปิดท้าย** → objection verbatim ใช้ช่องเดียว (`ตัวอย่างคำตอบ`) ตามเดิม
 **harness:** stepVerbatim join (2 ช่อง/ปิดท้ายว่าง/คำตอบว่าง) + pipeline (2 ช่อง→2 บอลลูน · ปิดท้ายว่าง→แค่คำตอบ · คำตอบว่าง→แค่ปิดท้าย · คำตอบมี [[แยก]] เอง+ปิดท้าย→3 บอลลูน) · โหมดเปิดไม่ regression · tsc+build เขียว
 
-### Phase C · ลบ ENV ค้างใน Vercel
+## P2-REBUILD v2.0 (branch `phase2-v2` · brief `docs/P2-REBUILD-BRIEF.md`)
+> เจตนา: AI ไม่เขียนข้อความถึงลูกค้าอีกต่อไป (สถาปัตยกรรม) — เหลือ 4 งาน: เลือก step · จับ objection/FAQ · สกัด order_data · ตัดสิน handoff · ทุกคำจากชีต (pattern) + resolver · engine เดิม (gate/pricing/resolver/harness) ห้ามรื้อ
+
+### D-40 · verbatim = default ของทั้งระบบ (flip `parseThinkMode`)
+**ก่อน (D-39):** ไม่มีคอลัมน์ `คิดเอง`/ค่าว่าง = **เปิด** (AI เรียบเรียง) · **v2.0:** ชีตตัดคอลัมน์ `คิดเอง` ทิ้ง → ต้อง flip
+**ทำ:** `parseThinkMode` (inject.ts) — ว่าง/ไม่มีคอลัมน์/ไม่รู้จัก = **ปิด (verbatim)** · เฉพาะ `เปิด/true/on/1/ใช่/yes` = เปิด (override รายแถวถ้าคอลัมน์กลับมา)
+- `stepVerbatim`/`joinVerbatimParts`/`resolveAllVars`/var-guard/objection precedence/safety-net (2 ช่องว่าง→fallback AI) — **คงเดิมทั้งหมด**
+**blast radius:** วัดแล้ว = **verbatim.test เท่านั้น** (5 เคส · blank เดิมคาด เปิด → ปิด) · อีก 25 ไฟล์เขียว (default seedBotLib header ไม่ valid→stepVerbatim null→AI · fixture อื่น example ว่าง→fallback AI · ไม่ regression)
+**harness:** verbatim.test 29 passed · (full suite + build ดูคอมมิต)
 `SHEET_STEP_URL` `SHEET_FAQ_URL` `SHEET_CONFIG_URL` `SHEET_FOLLOW_URL` — โค้ดไม่อ่านแล้ว ลบทิ้งได้
