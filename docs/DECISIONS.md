@@ -644,5 +644,13 @@ handoff ทุก path (edit/AI-semantic/keyword) ตั้งแค่ `human_m
 **harness:** allvars D-43 (catalog ใหม่/รูปว่าง→ตัด/โปรแนะนำ/config/นโยบายค่าส่ง+price-guard/loadLiveVars draft/collision ระบบชนะ) + pipeline verbatim (CSV_Var+นโยบายค่าส่ง ไหลผ่าน) · **323 passed** · tsc+build เขียว
 **+ กติกาถาวรใหม่:** จบ D-xx/phase → อัปเดต `STATUS.md` ในคอมมิตเดียวกัน (เพิ่มใน CLAUDE.md "เวลาแก้โค้ด")
 
+### D-44 · routing S_UNKNOWN + หด คำ_handoff + systemInstruction v2.0 + golden tests (3 คอมมิตย่อย a/b/c)
+**D-44a — หด `DEFAULT_HANDOFF_KEYWORDS` + S_UNKNOWN routing:**
+- `DEFAULT_HANDOFF_KEYWORDS` (handoff.ts) หดเหลือ **19 คำ ตรงชีต v2.0 คำต่อคำ**: ขอแอดมิน/คุยกับคน/คุยกับแอดมิน/เจ้าของ/ฟ้อง + H1 สุขภาพ (แพ้/ภูมิแพ้/แพ้กุ้ง/แพ้อาหารทะเล/แพ้ปลา/กลูเตน/ท้อง/ตั้งครรภ์/ให้นม/เบาหวาน/ความดัน/โรคไต/ผู้ป่วย/กินยา) · **ตัด** ร้องเรียน/ของเสีย/ของไม่ตรงปก/ขายส่ง/แฟรนไชส์/สื่อ/PR/wholesale → เข้า H2-H4 (intake · บอทถามก่อนส่งคน) · ตรรกะ match คงเดิม (KI-01 word-boundary สำหรับ ASCII · ไทย substring)
+- **S_UNKNOWN** = แถวชีต funnel=handoff — โค้ดรองรับผ่าน D-33 อยู่แล้ว (การันตี handoff แม้ AI ไม่ตั้ง flag) + D-40 ส่ง pattern verbatim · เทส scripted พิสูจน์ code-path (กฎให้ AI เลือก = D-44b prompt)
+- ปลด `.fails` บท 2 (แพ้กุ้ง → keyword handoff) — เขียวจริงแล้วตามที่ไฟล์ออกแบบไว้
+- ⚠️ **สังเกต (แจ้งเจ้าของ · ไม่แก้เอง):** "ท้อง" substring ชนคำประสม เช่น "ท้องฟ้า"/"ท้องเสีย" → pre-check handoff ทันที · ทิศ false-positive = ส่งหาคน (ปลอดภัย) แต่ "ท้องเสีย" (เคส H3 เคลม) จะถูกดักก่อนเข้า intake — ถ้าไม่ต้องการ ให้แก้คำในชีต (`คำ_handoff`) ไม่ใช่โค้ด
+**harness (a):** handoff.test rewrite (H1 8 สำนวน · คำที่ตัด 5 คำไม่ดัก · KI-01 ผ่าน configured · default 19 คำ) + S_UNKNOWN pipeline (pattern 2 บอลลูน + footer + human_mode) · **325 passed | 3 expected-fail** · tsc+build เขียว
+
 ### Phase C · ลบ ENV ค้างใน Vercel
 `SHEET_STEP_URL` `SHEET_FAQ_URL` `SHEET_CONFIG_URL` `SHEET_FOLLOW_URL` — โค้ดไม่อ่านแล้ว ลบทิ้งได้

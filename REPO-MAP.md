@@ -22,7 +22,7 @@ lib/
   db.ts           Neon Postgres — customer state, messages, pending_order, ฯลฯ
   line.ts         LINE Messaging API — reply/push/download/parseReply
   orders.ts       Google Sheet Orders — append/list/mark (header-driven)
-  handoff.ts      keyword pre-check ส่งต่อแอดมิน
+  handoff.ts      keyword pre-check ส่งต่อแอดมิน (D-44: default 19 คำ ตรงชีต v2.0 — H1 สุขภาพ+ขอคุยกับคน+ฟ้อง เท่านั้น · เคลม/ขายส่ง/สื่อ → intake)
   blob.ts         Vercel Blob — สลิป (private) + สินค้า (public)
   admin-commands.ts  parse คำสั่งในกลุ่มแอดมิน (ปิด/เปิดบอท)
   flex-cards.ts   Flex Cards (ปิดอยู่)
