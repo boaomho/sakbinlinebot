@@ -33,6 +33,7 @@ app/api/
 tests/
   harness/        replay(webhook+HMAC จริง) · setup(mock) · state · db · sheet · assert · fixtures
   scenarios/      *.test.ts (golden/order-core/inject/sheet-*/config-parse/gemini-guard/prompt-lint/image-url/expect-fail)
+                  golden-routing.test.ts (D-44c · 25 เคสจาก docs/golden-routing-cases.csv · gate HARNESS_REAL_GEMINI=1 · scripted=skip)
 ```
 
 ## 2. Export หลัก (ชื่อ · หน้าที่)

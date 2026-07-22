@@ -661,5 +661,13 @@ handoff ทุก path (edit/AI-semantic/keyword) ตั้งแค่ `human_m
 - rewrite `SYSTEM-PROMPT-BREAKDOWN.md` ทั้งไฟล์ตรง v2.0
 **harness (b):** prompt-lint + gemini-guard เขียว (lint จับ order_data example + C6 ตอน rewrite — ตาข่ายทำงานจริง) · **325 passed | 3 expected-fail** · tsc+build เขียว
 
+**D-44c — golden routing tests (จบ phase โค้ด):**
+- `tests/scenarios/golden-routing.test.ts` — table-driven จาก `docs/golden-routing-cases.csv` **25 เคส** (parse CSV ตอนรัน · แก้ CSV = แก้เทส) · assert เฉพาะ **stage / objection_detected / handoff** — 🔴 ไม่ assert ข้อความ (คำพูด = ชีต)
+- gate `HARNESS_REAL_GEMINI=1` + `GEMINI_API_KEY` (pattern เดียวกับ real-gemini.test) · scripted mode = **skip 25 เคสอัตโนมัติ ไม่ block npm test** ✅
+- fixture จำลองชีต v2.0 (step routing cols 15 ประตู + objections 7 id + FAQ) — 🔴 ชีตจริงแก้ "เข้าเมื่อ/กรณี" → sync fixture เมื่อเทสแดง
+- เกณฑ์ handoff: AI flag **หรือ** ประตู funnel=handoff/handoff_after_intake (CSV หมายถึง "เคสจบที่คน" — intake ถึงมือคนผ่านจังหวะ D-34 ไม่ใช่ flag เทิร์นแรก)
+- `stateFor()` map "สถานะก่อนหน้า" 9 แบบ → stateText/history/signals (order_editable/order_confirmed_locked ครบ)
+**harness (c):** **325 passed | 3 expected-fail | 26 skipped (golden 25 + real-gemini 1)** · tsc+build เขียว → **จบ P2-REBUILD ฝั่งโค้ด (D-40..D-44)** · เหลือ: เจ้าของสลับชีต v2.0 + รัน golden ด้วย real Gemini + merge main
+
 ### Phase C · ลบ ENV ค้างใน Vercel
 `SHEET_STEP_URL` `SHEET_FAQ_URL` `SHEET_CONFIG_URL` `SHEET_FOLLOW_URL` — โค้ดไม่อ่านแล้ว ลบทิ้งได้
