@@ -65,9 +65,15 @@ diag: `DIAG_PROMPT_TOKENS` (=1 → `gemini.ts` log token จริงต่อ s
 - เสร็จแล้ว push GitHub → Vercel deploy เอง
 - **แก้ export / คำสั่งพิเศษ / ENV ที่โค้ดอ่าน → ต้องอัปเดต `REPO-MAP.md` ในคอมมิตเดียวกัน** (ไม่งั้นแผนที่เพี้ยน)
 
-## เอกสารอ้างอิง (อ่านจากโค้ดจริง · commit ล่าสุด)
+## เอกสาร = 5 ไฟล์คงที่ (โครงถาวร · ห้ามงอกไฟล์ใหม่)
 
-- **`REPO-MAP.md`** — แผนที่ repo: file tree · export หลัก · จุดประกอบ prompt · คำสั่งพิเศษ · ENV ที่โค้ดอ่านจริง · CSV_Config keys · Known issues
-- **`SYSTEM-PROMPT-BREAKDOWN.md`** — วิเคราะห์ systemInstruction ต่อบล็อก (chars/tokens) · จุดซ้ำซ้อน · 🔴 ห้ามตัด · catalogInjection
-- **`DIAG-LOG.md`** — log วินิจฉัยบั๊ก order_data + prompt size (bug A/B) · ส่วน `[[รอ paste]]` = ต้องรัน production
-- **`docs/DECISIONS.md`** — บันทึกการตัดสินใจ + งานค้าง (รอบ 2a/2b) + Known Issues (KI)
+🔴 **docs = 5 ไฟล์นี้เท่านั้น ห้ามสร้างไฟล์ `.md` ใหม่ลงท้าย `_v2`/`_vX`/`-new`/`-copy`** · มีอะไรใหม่ = **อัปเดตทับ** 5 ไฟล์นี้ · เวอร์ชันเก่าอยู่ git history (ไม่เก็บไฟล์เวอร์ชันคู่ขนาน)
+
+1. **`STATUS.md`** (root) — สแนปช็อตย้ายแชท: เสร็จอะไร · ทิศทาง Phase 2 · เจ้าของกำลังทำ · ค้าง · กฎทำงาน
+2. **`docs/DECISIONS.md`** — บันทึกการตัดสินใจ (D-xx) + งานค้าง + Known Issues (KI)
+3. **`REPO-MAP.md`** — แผนที่ repo: file tree · export หลัก · จุดประกอบ prompt · คำสั่งพิเศษ · ENV · CSV_Config keys · data contracts (Orders A–Z · state) · Known issues
+4. **`CLAUDE.md`** (ไฟล์นี้) — บอทคืออะไร · หัวใจ · stack · Don'ts · กฎทำงาน
+5. **`SYSTEM-PROMPT-BREAKDOWN.md`** — วิเคราะห์ systemInstruction ต่อบล็อก (chars/tokens) · 🔴 ห้ามตัด · catalogInjection
+
++ **`prompt/system.ts`** = โค้ด system prompt จริง (ไม่ใช่ doc · ห้ามแตะตอนงานเอกสาร)
+> `DIAG-LOG.md` = log วินิจฉัยชั่วคราว (ไม่นับใน 5 · ลบได้เมื่อปิดบั๊ก)

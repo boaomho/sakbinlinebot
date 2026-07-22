@@ -21,10 +21,16 @@ order flow · pricing · gate · handoff รวมศูนย์ (D-33) · hand
 ## ค้าง ยังไม่ทำ
 - **CSV_Objections/CSV_Examples:** เช็คว่า inject จริงมั้ย + ปรัชญา "ประกอบเอง/เลียนโทน"
   (ออกแบบเดิม) ขัดกับ คิดเอง=ปิด — ตัดสินว่าใช้ยังไงในโลกที่ปิด
-- claims blocklist (พ.ร.บ.อาหาร) · ลด prompt · cron 📦
+- **System Prompt เขียนตอนโหมดเปิด** — เช็คขัด คิดเอง=ปิด มั้ย (Phase 2)
+- claims blocklist (พ.ร.บ.อาหาร · โค้ด guard เสร็จ D-26 · เหลือเจ้าของกรอกคำในชีต) · ลด prompt · cron 📦
 - จัด `คำ_handoff` (ย้ายคำ H1-H4 · substring KI-01) · 🔴 H1 สุขภาพ = handoff ทันทีเสมอ
 - CSV_Vars (ตัวแปรข้อความเจ้าของนิยามเอง · เฟสถัดไป)
 - เทสค้าง: cap=3, timeout 45 นาที
+
+## อนาคตไกล (หลังเปิดขายเสถียร — จากบรีฟเดิม)
+- **Follow engine ใหม่ (tag-triggered)** — spec เดิมยังไม่ build (โค้ดปัจจุบัน = `follow_log` dedup + cron "เงียบเกิน N วัน" dormant · `customer_tags`/`follow_queue` ยังไม่มีในโค้ด) · สวิตช์ `เปิด_ระบบติดตาม` ปิดอยู่
+- **ทำบอทธุรกิจอื่น:** ก๊อป repo + เปลี่ยน env + เปลี่ยนชีต (engine เป็นกลาง) · ไม่ใช้บรีฟเก่า · 🔴 เช็ค hardcode ชื่อธุรกิจก่อน
+- Dashboard + attribution · AI supervisor · Salepage · Marketplace sync (Gosell/BigSeller) · สินค้าตัวที่ 2
 
 ## กฎทำงาน
 report ก่อน code · 1 commit 1 เรื่อง · วัดก่อนแก้ · ไม่ over-engineer ·
