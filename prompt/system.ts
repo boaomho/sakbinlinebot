@@ -13,10 +13,8 @@ export interface UserContentParams {
   faqText: string;
   /** สินค้า+ตารางราคาสำเร็จรูป (จาก CSV_Products/CSV_Promo) — บอทหยิบเลขนี้เท่านั้น ห้ามคิดเอง (C6) */
   catalogText: string;
-  /** ข้อโต้แย้งที่ตรวจพบ + สารบัญ (จาก CSV_Objections) — ใช้ประกอบคำตอบเอง (D-27) · "" = ไม่มี */
+  /** ข้อโต้แย้งที่ตรวจพบ + สารบัญ (จาก CSV_Objections) — ใช้จำแนก objection_detected (D-27) · "" = ไม่มี */
   objectionText: string;
-  /** ตัวอย่างน้ำเสียง (จาก CSV_Examples) — เลียนสไตล์ ห้ามลอกคำ (D-27) · "" = ไม่มี */
-  exampleText: string;
   stateText: string;
   historyText: string;
   userMessage: string;
@@ -210,7 +208,7 @@ order_data มี 4 ส่วน **สำคัญเท่ากันหมด
  * "ข้อมูล" อะไรคือ "คำสั่งระบบที่เชื่อถือได้" (กัน prompt injection ตาม CLAUDE.md)
  */
 export function buildUserContent(params: UserContentParams): string {
-  const { configText, stepText, faqText, catalogText, objectionText, exampleText, stateText, historyText, userMessage } = params;
+  const { configText, stepText, faqText, catalogText, objectionText, stateText, historyText, userMessage } = params;
 
   return `<ข้อมูลที่ระบบจะส่งให้>
 <ข้อมูล Config>
@@ -228,9 +226,6 @@ ${catalogText}
 <ข้อโต้แย้งและวิธีรับมือ>
 ${objectionText || "(ไม่มีข้อโต้แย้งที่ตรงกับข้อความลูกค้า)"}
 </ข้อโต้แย้งและวิธีรับมือ>
-<ตัวอย่างน้ำเสียง>
-${exampleText || "(ไม่มีตัวอย่างที่เกี่ยวข้อง)"}
-</ตัวอย่างน้ำเสียง>
 <เวลาปัจจุบัน>
 ${formatThaiNow()}
 </เวลาปัจจุบัน>

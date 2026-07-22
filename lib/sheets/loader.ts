@@ -10,16 +10,17 @@ import { validateStepFunnelStages, VALID_FUNNEL_STAGES } from "@/lib/agent/injec
  * โหลดไม่ได้ → ใช้ cache เก่า · ไม่มี cache เลย → คืน null (ผู้เรียกปิดฟีเจอร์ all-or-nothing)
  */
 
-/** ชื่อแท็บใน BotLibrary (ตาม CONTRACTS §2) — key ที่ผู้เรียกใช้อ้าง */
+/** ชื่อแท็บใน BotLibrary (v2.0 · D-41) — key ที่ผู้เรียกใช้อ้าง
+ *  🔴 ตัด CSV_Examples (เลิกใช้ "เลียนโทน" · verbatim ไม่ต้องมีตัวอย่างน้ำเสียง) · เพิ่ม CSV_Vars (ตัวแปรข้อความเจ้าของ · D-43) */
 export const BOTLIB_TABS = [
   "CSV_Step",
   "CSV_Objections",
-  "CSV_Examples",
   "CSV_FAQ",
   "CSV_Follow",
   "CSV_Config",
   "CSV_Products",
   "CSV_Promo",
+  "CSV_Vars",
 ] as const;
 
 export type BotLibTab = (typeof BOTLIB_TABS)[number];

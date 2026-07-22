@@ -613,4 +613,17 @@ handoff ทุก path (edit/AI-semantic/keyword) ตั้งแค่ `human_m
 - `stepVerbatim`/`joinVerbatimParts`/`resolveAllVars`/var-guard/objection precedence/safety-net (2 ช่องว่าง→fallback AI) — **คงเดิมทั้งหมด**
 **blast radius:** วัดแล้ว = **verbatim.test เท่านั้น** (5 เคส · blank เดิมคาด เปิด → ปิด) · อีก 25 ไฟล์เขียว (default seedBotLib header ไม่ valid→stepVerbatim null→AI · fixture อื่น example ว่าง→fallback AI · ไม่ regression)
 **harness:** verbatim.test 29 passed · (full suite + build ดูคอมมิต)
+
+### D-41 · schema v2.0 (breaking · contract = `docs/BOTLIB-V2-HEADERS.txt`)
+**verify #1 (สเตปแรก):** ✅ `resolveColumns` เรียก `headerRow.map(cleanHeader)` → header มีวงเล็บ ("เข้าเมื่อ (สัญญาณจากลูกค้า)"/"ตัวอย่างคำตอบ (บอลลูน)") `stripKeyAnnotation` ตัดให้ตรง required — **ไม่พังเงียบ**
+**ทำ:**
+- **loader:** `BOTLIB_TABS` ตัด `CSV_Examples` เพิ่ม `CSV_Vars` (คง 8) · `BotLibrary` type ตาม
+- **CSV_Step:** `STEP_COLS` required = เฉพาะโค้ดอ่าน (step_id/funnel_stage/ชื่อประตู/เข้าเมื่อ/ไปประตูถัดไปเมื่อ/ต้องเก็บข้อมูล/ตัวอย่างคำตอบ/ปิดท้าย) · ตัด brain (ความรู้สึก/ทำไมสำคัญ/หลักการนำพา/ห้ามทำ/คิดเอง) · เพิ่มอ่าน `กรณี` optional · **`fullSalesBlock`/`leanHandoffBlock` = routing เท่านั้น** (ตัด example/brain ออกจาก prompt → ประหยัด token)
+- **CSV_Objections:** ตัด หลักการตอบ/ห้ามทำ · full-block = concern เท่านั้น (AI ใช้จำแนก objection_detected) · pattern verbatim = "ตัวอย่างคำตอบ (บอลลูน)"
+- **CSV_FAQ:** status filter (คอลัมน์ `status`) · (faq_id key เตรียม T1)
+- **CSV_Promo:** สลับลำดับ (ค่าส่ง/ยอดจ่าย/ประหยัด) — pricing header-driven จึงทน (verify: calculatePrice/buildAllowedPriceStrings อ่านชื่อ ไม่ใช่ index)
+- **status filter ทุกแท็บ** (`isActiveStatus`): live/เปิด/ว่าง = ใช้ · draft/ปิด = ทิ้ง (Vars strict live = D-43)
+- **ลบ Examples ทั้งระบบ** (answer B): `buildExampleInjection`/`EXAMPLE_ANSWER_COL`/config key `จำนวนตัวอย่างที่ยัดเข้า prompt` · param `exampleText` + `<ตัวอย่างน้ำเสียง>` จาก gemini.ts/prompt/system.ts/route.ts
+**gotcha ที่เจอ:** test helper `step()` เติม สถานะ placeholder "S1-สถานะ" → status filter ตัดทุกแถว → parse null → fallback · แก้ helper default สถานะ="live"
+**harness:** fixtures v2.0 (Promo reorder + CSV_Vars +draft row) · inject.test/gemini-guard/resolver/real-gemini อัปเดต · **310 passed | 4 expected-fail** · tsc+build เขียว
 `SHEET_STEP_URL` `SHEET_FAQ_URL` `SHEET_CONFIG_URL` `SHEET_FOLLOW_URL` — โค้ดไม่อ่านแล้ว ลบทิ้งได้

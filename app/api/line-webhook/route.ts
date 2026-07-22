@@ -9,7 +9,7 @@ import {
   FeatureSwitches,
 } from "@/lib/config";
 import { loadBotLibrary } from "@/lib/sheets/loader";
-import { buildStepInjection, buildFaqInjection, buildCatalogInjection, buildObjectionInjection, buildExampleInjection, readConfigDescription, funnelStageOf, stepNameOf, stepVerbatim } from "@/lib/agent/inject";
+import { buildStepInjection, buildFaqInjection, buildCatalogInjection, buildObjectionInjection, readConfigDescription, funnelStageOf, stepNameOf, stepVerbatim } from "@/lib/agent/inject";
 import {
   ensureCustomer,
   updateCustomerAfterTurn,
@@ -536,11 +536,9 @@ async function processMessage(
         methodDescription: readConfigDescription(lib.CSV_Config, "จำนวนที่ไม่มีโปร_คิดยังไง"),
       })
     : "(ไม่มีข้อมูลสินค้า)";
-  // D-27 Objections/Examples: keyword match → ประกอบคำตอบเอง · cap จากชีต (ไม่ hardcode)
+  // D-27 Objections: keyword match → verbatim/จำแนก · cap จากชีต (ไม่ hardcode) · v2.0 (D-41): เลิก Examples
   const objCap = numFromRaw(config, "จำนวนข้อโต้แย้งที่ยัดเข้า prompt", 2);
-  const exCap = numFromRaw(config, "จำนวนตัวอย่างที่ยัดเข้า prompt", 3);
   const objection = lib ? buildObjectionInjection(lib.CSV_Objections, userMessage, objCap) : { text: "", matchedIds: [] as string[], verbatim: null };
-  const exampleText = lib ? buildExampleInjection(lib.CSV_Examples, customer?.stage ?? "", objection.matchedIds, exCap) : "";
   const configText = formatConfigForPrompt(config);
   const stateText = buildStateText(customer, orderWarning, preOrderPriceStuck, lastOrderLine);
 
@@ -558,7 +556,6 @@ async function processMessage(
       faqText,
       catalogText,
       objectionText: objection.text,
-      exampleText,
       stateText,
       historyText,
       userMessage,
