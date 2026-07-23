@@ -692,5 +692,11 @@ handoff ทุก path (edit/AI-semantic/keyword) ตั้งแค่ `human_m
 - 🔴 พฤติกรรม D-42 เปลี่ยน (ตั้งใจ): FAQ/OBJ ครั้งแรกของ step → ต่อ**เต็มก้อน** (เดิมต่อแค่ปิดท้าย) — แก้อาการ "ถามเลือกโปรทั้งที่ยังไม่เคยโชว์ตาราง"
 **harness (b):** step 2 เทิร์น (เต็ม→ปิดท้าย+ธงใน DB) · FAQ กลับบ้าน (เต็มครั้งแรก/ปิดท้ายครั้งสอง = G27 scripted) · เคยส่ง+ปิดท้ายว่าง→AI · hook clear+/reset · **329 passed | 3 expected-fail** · tsc+build เขียว
 
+**D-45c — ตัวแปร `{ชวนเลือกโปร}` (composed · spec อนุมัติแล้ว):**
+- `buildPromoInviteVar` (pricing.ts): ตัวเลือกแรก = contextQty (จำนวนล่าสุดใน `pending.items` · ไม่มี → 1) · ตัวเลือกสอง = `nextTier` จาก calculatePrice — "รับ 1 ถ้วย รวมค่าส่ง 125 บาท หรือโปร 3 ถ้วย 275 บาท ส่งฟรี ดีคะ" · ถึงชั้นสูงสุด (ไม่มี nextTier) → ประโยคตัวเลือกเดียว "…เลยนะคะ"
+- 🔴 **เลขทุกตัวจาก calculatePrice เท่านั้น** (เลขเดียวกับที่ gate บันทึก) · อยู่ใน allowed อยู่แล้ว (ตาราง enumerate) → ผ่าน price guard · **คำนวณไม่ได้ (error/เกินเพดาน/live≠1) → คืน "" → คงวงเล็บ → var-guard ทิ้งบอลลูน (ไม่มั่วเลข)**
+- เสียบใน `resolveAllVars` ก่อน CSV_Vars · `KNOWN_RUNTIME_VARS` +`{ชวนเลือกโปร}` · ไม่เพิ่มช่องชีต (เจ้าของใส่ token ใน ตัวอย่างคำตอบ S2 เอง)
+**harness (c):** unit 6 เคส (qty 1/5/10/เกินเพดาน/price-guard/KNOWN) + pipeline (step pattern มี token → ประโยคเต็ม) · **336 passed | 3 expected-fail** · tsc+build เขียว
+
 ### Phase C · ลบ ENV ค้างใน Vercel
 `SHEET_STEP_URL` `SHEET_FAQ_URL` `SHEET_CONFIG_URL` `SHEET_FOLLOW_URL` — โค้ดไม่อ่านแล้ว ลบทิ้งได้

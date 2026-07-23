@@ -15,10 +15,12 @@ import {
   resolveRuntimeVars,
   resolveCatalogVars,
   resolveDeliveryVar,
+  buildPromoInviteVar,
+  PROMO_INVITE_VAR,
   CATALOG_TEXT_VARS,
   DELIVERY_VARS,
 } from "@/lib/core/pricing";
-import { PendingOrder, LastOrder } from "@/lib/core/orders";
+import { PendingOrder, LastOrder, normalizeItems } from "@/lib/core/orders";
 import { AppConfig } from "@/lib/config";
 import { BotLibrary } from "@/lib/sheets/loader";
 import { cleanHeader } from "@/lib/sheets/clean";
@@ -215,6 +217,7 @@ export function resolveCsvVars(text: string, varsRows: string[][], knownVars: re
 export const KNOWN_RUNTIME_VARS = [
   ...PRICING_RUNTIME_VARS, ...TRANSFER_VARS, ...ORDER_VARS,
   ...CATALOG_TEXT_VARS, ...PENDING_VARS, ...DELIVERY_VARS, ...CONFIG_TEXT_VARS,
+  PROMO_INVITE_VAR, // D-45c
 ] as const;
 
 /**
@@ -243,6 +246,12 @@ export function resolveAllVars(text: string, ctx: AllVarsContext): string {
   out = resolvePendingVars(out, ctx.pending); // pending ปัจจุบัน
   out = resolveDeliveryVar(out, ctx.config.raw.get("เวลาตัดรอบออเดอร์") ?? ctx.config.raw.get("เวลารอบตัดออเดอร์") ?? "", ctx.now); // วันจัดส่ง
   out = resolveConfigVars(out, ctx.config); // D-43 config/นโยบายค่าส่ง
+  // D-45c {ชวนเลือกโปร}: contextQty = จำนวนล่าสุดใน pending (ไม่มี → 1) · เลขจาก calculatePrice เท่านั้น · คำนวณไม่ได้ → คงวงเล็บ (var-guard ทิ้ง)
+  if (out.includes(PROMO_INVITE_VAR)) {
+    const ctxQty = normalizeItems(ctx.pending.items)[0]?.qty ?? 1;
+    const invite = buildPromoInviteVar(ctx.products, ctx.promo, Object.fromEntries(ctx.config.raw), ctx.pending["การชำระเงิน"] ?? "", ctxQty, ctx.now);
+    if (invite) out = out.split(PROMO_INVITE_VAR).join(invite);
+  }
   out = resolveCsvVars(out, ctx.varsRows, KNOWN_RUNTIME_VARS); // D-43 CSV_Vars (ระบบชนะ) · ท้ายสุด
   return out;
 }

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { productsRows, promoRows, varsRows, PRICING_CONFIG } from "../harness/botlib-fixture";
-import { resolveCatalogVars, resolveDeliveryVar, buildAllowedPriceStrings } from "@/lib/core/pricing";
+import { resolveCatalogVars, resolveDeliveryVar, buildAllowedPriceStrings, buildPromoInviteVar } from "@/lib/core/pricing";
 import { bangkokDeliveryDay } from "@/lib/core/time";
 import { resolvePendingVars, resolveAllVars, resolveConfigVars, loadLiveVars, resolveCsvVars, findBadPrices, KNOWN_RUNTIME_VARS, AllVarsContext } from "@/lib/agent/quote";
 import { parseReplyIntoMessages } from "@/lib/line";
@@ -121,6 +121,33 @@ describe("D-43 · catalog/config/composed/CSV_Vars resolvers", () => {
   });
   it("KNOWN_RUNTIME_VARS ครอบ catalog/config ใหม่", () => {
     for (const v of ["{เลข อย.}", "{ราคาต่อหน่วย}", "{นโยบายค่าส่ง}", "{ค่าส่ง_มาตรฐาน}"]) expect(KNOWN_RUNTIME_VARS).toContain(v);
+  });
+});
+
+describe("D-45c · {ชวนเลือกโปร} — เลขจาก calculatePrice เท่านั้น", () => {
+  const CFG = { ...PRICING_CONFIG };
+  it("ไม่มีบริบท (qty=1) → 1 ถ้วย 125 vs โปรถัดไป 3 ถ้วย 275 ส่งฟรี", () => {
+    expect(buildPromoInviteVar(productsRows(), promoRows(), CFG, "", 1, NOW))
+      .toBe("รับ 1 ถ้วย รวมค่าส่ง 125 บาท หรือโปร 3 ถ้วย 275 บาท ส่งฟรี ดีคะ");
+  });
+  it("contextQty 5 → 5 ถ้วย 440 ส่งฟรี vs โปร 10 ถ้วย 850 ส่งฟรี", () => {
+    expect(buildPromoInviteVar(productsRows(), promoRows(), CFG, "", 5, NOW))
+      .toBe("รับ 5 ถ้วย 440 บาท ส่งฟรี หรือโปร 10 ถ้วย 850 บาท ส่งฟรี ดีคะ");
+  });
+  it("ถึงชั้นสูงสุด (qty=10 ไม่มี nextTier) → ประโยคตัวเลือกเดียว", () => {
+    expect(buildPromoInviteVar(productsRows(), promoRows(), CFG, "", 10, NOW))
+      .toBe("รับ 10 ถ้วย 850 บาท ส่งฟรีเลยนะคะ");
+  });
+  it("🔴 คำนวณไม่ได้ (เกินเพดาน) → '' (ผู้เรียกคงวงเล็บ → var-guard ทิ้ง · ไม่มั่วเลข)", () => {
+    expect(buildPromoInviteVar(productsRows(), promoRows(), CFG, "", 99, NOW)).toBe("");
+  });
+  it("🔴 เลขในประโยคผ่าน price guard (allowed ครอบตาราง enumerate)", () => {
+    const invite = buildPromoInviteVar(productsRows(), promoRows(), CFG, "", 1, NOW);
+    const allowed = buildAllowedPriceStrings(productsRows(), promoRows(), CFG, "", NOW);
+    expect(findBadPrices(invite, allowed)).toEqual([]);
+  });
+  it("KNOWN_RUNTIME_VARS มี {ชวนเลือกโปร} (var-guard รู้จัก)", () => {
+    expect(KNOWN_RUNTIME_VARS).toContain("{ชวนเลือกโปร}");
   });
 });
 

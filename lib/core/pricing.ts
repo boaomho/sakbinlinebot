@@ -635,6 +635,40 @@ export function resolveCatalogVars(text: string, productRows: string[][], promoR
   return out;
 }
 
+// ── {ชวนเลือกโปร} (D-45c) — ประโยคยื่น 2 ตัวเลือก · 🔴 เลขทุกตัวจาก calculatePrice เท่านั้น ──
+export const PROMO_INVITE_VAR = "{ชวนเลือกโปร}";
+
+/** "รวมค่าส่ง X บาท" / "X บาท ส่งฟรี" จากผล calculatePrice (เลขเดียวกับที่ gate บันทึก) */
+function priceOptionText(total: number, shippingFee: number): string {
+  return shippingFee === 0 ? `${total} บาท ส่งฟรี` : `รวมค่าส่ง ${total} บาท`;
+}
+
+/**
+ * สร้างประโยค {ชวนเลือกโปร} (D-45c): ตัวเลือกแรก = จำนวนที่ลูกค้าสนใจล่าสุด (contextQty) ·
+ * ตัวเลือกสอง = nextTier (โปรถัดไปที่คุ้มกว่า) จาก calculatePrice · ไม่มี nextTier → ประโยคตัวเลือกเดียว
+ * 🔴 คำนวณไม่ได้ (error/เกินเพดาน/ไม่มีสินค้า live) → คืน "" (ผู้เรียกคงวงเล็บ → var-guard ทิ้งบอลลูน · ไม่มั่วเลข)
+ */
+export function buildPromoInviteVar(
+  productRows: string[][],
+  promoRows: string[][],
+  config: Record<string, string>,
+  payment: string,
+  contextQty: number,
+  now: Date = new Date(),
+): string {
+  const live = liveProductSkus(productRows);
+  if (live.length !== 1) return ""; // หลาย sku = ไม่เดาว่าชวนตัวไหน (โดเมนปัจจุบัน live 1 ตัว)
+  const qty = Number.isFinite(contextQty) && contextQty >= 1 ? Math.floor(contextQty) : 1;
+  const p1 = calculatePrice({ items: [{ sku: live[0], qty }], paymentMethod: payment, now }, promoRows, productRows, config);
+  if (p1.error !== null || p1.needsHandoff) return "";
+  const unit = p1.lines[0]?.unit ?? "ชิ้น";
+  const opt1 = `รับ ${qty} ${unit} ${priceOptionText(p1.total, p1.shippingFee)}`;
+  if (!p1.nextTier) return `${opt1}เลยนะคะ`; // ถึงชั้นสูงสุดแล้ว → ตัวเลือกเดียว
+  const p2 = calculatePrice({ items: [{ sku: live[0], qty: p1.nextTier.qty }], paymentMethod: payment, now }, promoRows, productRows, config);
+  if (p2.error !== null || p2.needsHandoff) return `${opt1}เลยนะคะ`;
+  return `${opt1} หรือโปร ${p1.nextTier.qty} ${unit} ${priceOptionText(p2.total, p2.shippingFee)} ดีคะ`;
+}
+
 /** แทน {วันจัดส่ง} จาก "เวลาตัดรอบออเดอร์" (D-39) — cutoff อ่านไม่ได้ → คงวงเล็บ (var-guard จับ · ไม่เดาวัน) */
 export function resolveDeliveryVar(text: string, cutoff: string, now: Date = new Date()): string {
   if (!text.includes("{วันจัดส่ง}")) return text;
