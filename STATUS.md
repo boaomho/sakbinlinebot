@@ -4,9 +4,10 @@
 > รายละเอียด → [docs/DECISIONS.md](docs/DECISIONS.md) · แผนที่โค้ด → [REPO-MAP.md](REPO-MAP.md) · brief → [docs/P2-REBUILD-BRIEF.md](docs/P2-REBUILD-BRIEF.md)
 
 ## 🔴 อยู่ตรงไหนตอนนี้ (สำคัญสุด)
-- **P2-REBUILD (D-40 → D-44) จบฝั่งโค้ดแล้ว ✅** — branch **`phase2-v2`** พร้อม merge · 🔴 **ยังไม่ merge เข้า main** (รอเจ้าของสั่ง) · main = ระบบ v1.x ที่รันโปรดักชันอยู่
-- 🔴 **ยังไม่สลับชีต/ENV** — โค้ด v2.0 อ่านชีต `03_BotLibrary_สากบิน_v2.0.xlsx` เท่านั้น (contract = [docs/BOTLIB-V2-HEADERS.txt](docs/BOTLIB-V2-HEADERS.txt)) · ENV `SHEET_BOTLIB_ID` ยังชี้ชีตเก่า · **ห้าม deploy branch นี้จนกว่าจะสลับชีต** (ลำดับ deploy ใน brief)
-- เทสล่าสุด: **325 passed | 3 expected-fail | 26 skipped** (golden 25 + real-gemini 1 = gate ไว้) · tsc + build เขียว
+- **P2-REBUILD (D-40 → D-44) เสร็จ + merge เข้า `main` แล้ว ✅** — โค้ด v2.0 อยู่บน main
+- **golden real-Gemini: 24/25 ผ่าน** · เหลือ **G12 = known-tuning** (S2 vs S2_DIRECT · borderline "ขอลองถ้วยเดียว" ตีความสั่งซื้อ/ยังไม่สั่ง · **ไม่ใช่ความปลอดภัย** ยอมรับได้ · จูน "เข้าเมื่อ" ในชีตทีหลังได้)
+- 🔴 **ยังไม่ deploy prod / ยังไม่สลับ ENV** — โค้ด v2.0 อ่านชีต `03_BotLibrary_สากบิน_v2.0.xlsx` เท่านั้น (contract = [docs/BOTLIB-V2-HEADERS.txt](docs/BOTLIB-V2-HEADERS.txt)) · **รอเจ้าของเทส LINE จริง (dev OA) ก่อน** แล้วค่อยสลับ ENV `SHEET_BOTLIB_ID` + redeploy prod
+- เทสล่าสุด: **325 passed | 3 expected-fail | 26 skipped** (scripted) + golden real-Gemini 24/25 · tsc + build เขียว
 
 ## สรุป P2-REBUILD ที่จบ: "AI ไม่เขียนข้อความถึงลูกค้าอีกต่อไป"
 AI เหลือ 4 งาน (เลือก step · จำแนก objection · สกัด order_data · ตัดสิน handoff) · ทุกคำจากชีต (pattern) + resolver
@@ -21,11 +22,12 @@ AI เหลือ 4 งาน (เลือก step · จำแนก objectio
 | D-44b | systemInstruction v2.0 "จำแนกและสกัด" · **~2,153 tokens (ลด 61% · เป้า <2,500 ✅)** | `5efe3f5` |
 | D-44c | golden routing 25 เคส (gate real-Gemini · scripted=skip) | (คอมมิตนี้) |
 
-## เหลือทำ (มือเจ้าของ — โค้ดพร้อมแล้ว)
-1. **สลับชีต:** อัป `03_BotLibrary_สากบิน_v2.0.xlsx` เป็น Google Sheet + เปลี่ยน ENV `SHEET_BOTLIB_ID` → redeploy (ลำดับใน brief §deploy)
-2. **รัน golden จริง:** `HARNESS_REAL_GEMINI=1 GEMINI_API_KEY=... npx vitest run golden-routing` — 25 เคสต้องเขียว · แดง = จูน "เข้าเมื่อ/กรณี" ในชีต (+sync fixture ในเทส) · 🔴 **เช็ค `temperature` ในชีต v2.0 CSV_Config ให้ ≤0.2** (ถ้าชีตตั้ง 1.0 เดิม จะชนะ default 0.2 → variance กลับมา)
-3. เทสจริงบน LINE (dev OA) → **merge `phase2-v2` → main** เมื่อเจ้าของสั่ง
-4. หลัง merge: ลบ `handoff-decision` log (ใกล้ go-live) · ล้างแถวเทสในชีต Orders
+## เหลือทำ (มือเจ้าของ — โค้ดบน main พร้อมแล้ว)
+1. 🔴 **เทส LINE จริง (dev OA)** — จุดถัดไปที่รอ · สลับ ENV `SHEET_BOTLIB_ID` ชี้ชีต v2.0 บน dev ก่อน แล้วคุยกับบอทจริง (verbatim/FAQ/objection/handoff/order)
+2. **golden known-tuning:** G12 (S2 vs S2_DIRECT · "ขอลองถ้วยเดียว") ยอมรับแล้ว — ถ้าอยากปิด จูนคอลัมน์ "เข้าเมื่อ" ของ S2_ASK/S2_DIRECT ในชีต + sync fixture ในเทส
+3. 🔴 **เช็ค `temperature` ในชีต v2.0 CSV_Config ให้ ≤0.2** (ถ้าชีตตั้ง 1.0 เดิม จะชนะ default 0.2 → variance กลับมา)
+4. **Deploy prod:** เทส dev ผ่าน → สลับ ENV prod + redeploy (ลำดับใน brief §deploy)
+5. หลัง go-live เสถียร: ลบ `handoff-decision` log · ล้างแถวเทสในชีต Orders
 
 ## 🔴 จุดอันตรายห้ามลืม
 - **สิ่งที่ห้ามแตะ** (เส้นตาย): order gate · `calculatePrice` · 2-pass/quota-saver · idempotency (D-29) · last_order/S_EDIT (D-31/32) · handoff รวมศูนย์ (D-33) · intake (D-34-36) · เวลาไทย (D-37) · validate funnel_stage (D-38) · invariants 10 (REPO-MAP §10) · **กฎ H1 ทุกชั้น**
