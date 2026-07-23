@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getConfig, resolveFeatureSwitches } from "@/lib/config";
 import { listPendingOrders, markOrderSent, OrderRow } from "@/lib/orders";
-import { nextOrderNumber } from "@/lib/db";
+import { nextOrderNumber, clearDeliveredStepsExceptCurrent } from "@/lib/db";
 import { bangkokShift } from "@/lib/core/time";
 import { pushRawText } from "@/lib/line";
 
@@ -74,6 +74,10 @@ export async function GET(req: NextRequest) {
       const orderNumber = config.orderNumberResetDaily ? `${day.slice(5).replace("-", "")}-${seq}` : String(seq);
       await markOrderSent(order.rowIndex, orderNumber);
       await pushRawText(orderGroupId, formatOrderMessage(orderNumber, order));
+      // D-45b · v1 hook "ออเดอร์ปิดจบ" = จังหวะแจกเลข (จุดเดิม ไม่ประดิษฐ์ event ใหม่):
+      // ล้างธง delivered_steps (คงเฉพาะ step ปัจจุบัน) → ลูกค้ากลับมาซื้อรอบสองเห็นเนื้อหา S2/โปรได้อีก
+      // เฟสหลังการขาย (Follow CRM) จะย้าย/เพิ่มจุดล้างตามสัญญาณ "ได้รับของจริง" ได้
+      if (order.lineUserId) await clearDeliveredStepsExceptCurrent(order.lineUserId);
       processed++;
     } catch (error) {
       console.error(

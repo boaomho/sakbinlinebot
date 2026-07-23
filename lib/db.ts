@@ -46,6 +46,7 @@ export async function ensureSchema(): Promise<void> {
   await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS last_order JSONB`; // D-32: snapshot ออเดอร์ที่เขียนแล้ว
   await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS last_order_locked BOOLEAN NOT NULL DEFAULT false`; // M=TRUE (ล็อกแล้ว)
   await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS intake_turns INTEGER NOT NULL DEFAULT 0`; // D-34: เทิร์นใน handoff_after_intake
+  await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS delivered_steps TEXT[] NOT NULL DEFAULT '{}'`; // D-45b: step ที่ส่งเนื้อหา (ตัวอย่างคำตอบ) ไปแล้ว — กันโชว์ซ้ำ
   await sql`CREATE INDEX IF NOT EXISTS customers_last_seen_idx ON customers (last_seen DESC)`;
   await sql`
     CREATE TABLE IF NOT EXISTS messages (
@@ -139,6 +140,8 @@ export interface CustomerState {
   lastOrderLocked: boolean;
   /** เทิร์นที่อยู่ในประตู handoff_after_intake ต่อเนื่อง (D-34) — 0 = ไม่ได้อยู่ · ใช้เช็คเพดานกันค้าง */
   intakeTurns: number;
+  /** D-45b: step_id ที่ "ส่งเนื้อหา (ตัวอย่างคำตอบ) ไปแล้ว" — เคยส่ง = ส่งเฉพาะปิดท้าย (กันโชว์ตารางโปรซ้ำ) */
+  deliveredSteps: string[];
   createdAt: Date;
 }
 
@@ -158,6 +161,7 @@ function rowToCustomer(r: Record<string, unknown>): CustomerState {
     lastOrder: (r.last_order as LastOrder | null) ?? null,
     lastOrderLocked: Boolean(r.last_order_locked),
     intakeTurns: Number(r.intake_turns) || 0,
+    deliveredSteps: (r.delivered_steps as string[] | null) ?? [],
     humanMode: Boolean(r.human_mode),
     humanModeSince: (r.human_mode_since as Date | null) ?? null,
     isReturning: Boolean(r.is_returning),
@@ -212,6 +216,7 @@ function emptyCustomer(userId: string): CustomerState {
     lastOrder: null,
     lastOrderLocked: false,
     intakeTurns: 0,
+    deliveredSteps: [],
     createdAt: new Date(),
   };
 }
@@ -430,6 +435,33 @@ export async function setLastOrderLocked(userId: string): Promise<void> {
   await sql`UPDATE customers SET last_order_locked = true WHERE user_id = ${userId}`;
 }
 
+/** D-45b: ติดธงว่า step นี้ "ส่งเนื้อหา (ตัวอย่างคำตอบ) ไปแล้ว" — เรียกหลัง deliver สำเร็จเท่านั้น · กันซ้ำในตัว */
+export async function addDeliveredStep(userId: string, stepId: string): Promise<void> {
+  if (!stepId) return;
+  await ensureSchema();
+  const sql = getSql();
+  await sql`
+    UPDATE customers SET delivered_steps = array_append(delivered_steps, ${stepId})
+    WHERE user_id = ${userId} AND NOT (${stepId} = ANY(delivered_steps))
+  `;
+}
+
+/**
+ * D-45b: ล้างธง delivered_steps เมื่อ "ออเดอร์ปิดจบ" — คงเฉพาะ step ปัจจุบันของลูกค้า (กัน resend ทันที)
+ * 🔴 v1 hook = จังหวะ cron แจกเลขออเดอร์ (จุดเดิมที่ระบบถือว่าจบ flow ขาย · ห้ามประดิษฐ์ event ใหม่)
+ *    เฟสหลังการขาย (Follow CRM) จะย้าย/เพิ่มจุดล้างตามสัญญาณ "ได้รับของจริง" ได้
+ */
+export async function clearDeliveredStepsExceptCurrent(userId: string): Promise<void> {
+  if (!userId) return;
+  await ensureSchema();
+  const sql = getSql();
+  await sql`
+    UPDATE customers
+    SET delivered_steps = CASE WHEN stage IS NOT NULL AND stage = ANY(delivered_steps) THEN ARRAY[stage] ELSE '{}' END
+    WHERE user_id = ${userId}
+  `;
+}
+
 /** idempotency: order_id นี้เขียนชีตสำเร็จแล้วหรือยัง (source of truth = Neon · เร็ว มี index · ไม่กิน Sheets quota) */
 export async function isOrderWritten(orderId: string): Promise<boolean> {
   if (!orderId) return false;
@@ -496,7 +528,7 @@ export async function resetCustomerMemory(userId: string): Promise<void> {
         pending_order = NULL, has_written_order = false, paid_no_address_notified = false,
         human_mode = false, human_mode_since = NULL, resume_notice_pending = false,
         last_order_id = NULL, last_order = NULL, last_order_locked = false,
-        intake_turns = 0
+        intake_turns = 0, delivered_steps = '{}'
     WHERE user_id = ${userId}
   `;
   await sql`DELETE FROM messages WHERE user_id = ${userId}`;

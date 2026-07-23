@@ -174,6 +174,8 @@ export interface OrderRow {
   orderNumber: string;
   /** order_id (คอลัมน์ Q) — idempotency key · ยังว่างจน Step 2 */
   orderId: string;
+  /** line_user_id (คอลัมน์ R) — join key กับ Neon (D-45b: cron ใช้ล้างธง delivered_steps ตอนแจกเลข) */
+  lineUserId: string;
   lineDisplayName: string;
   customerName: string;
   phone: string;
@@ -228,6 +230,7 @@ export async function listPendingOrders(): Promise<OrderRow[]> {
     sent: isTrue(cell(r, cols, "ส่งออเดอร์แล้ว")),
     trackingNumber: cell(r, cols, "เลขTracking"),
     orderId: cell(r, cols, "order_id"), // หาโดยชื่อ ไม่ใช่ r[16]
+    lineUserId: cell(r, cols, "line_user_id"), // D-45b: cron ล้างธง delivered_steps
   }));
 
   return parsed.filter((o) => o.confirmed && !o.cancelled && !o.sent);

@@ -28,6 +28,7 @@ import {
   setPaidNoAddressNotified,
   reconcileWaitTags,
   resetCustomerMemory,
+  addDeliveredStep,
   addMessage,
   getRecentHistory,
   formatHistoryForPrompt,
@@ -92,9 +93,11 @@ function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T
 }
 
 /** ส่งข้อความถึงลูกค้า: reply ก่อน · ล้มเหลว (token หมดอายุ) → push */
-async function deliverReply(replyToken: string, userId: string, text: string, quotaSaver: boolean): Promise<void> {
+/** ส่งข้อความถึงลูกค้า (reply → fallback push) · คืน true เมื่อส่งสำเร็จจริง (D-45b: ใช้ตัดสินตั้งธง delivered_steps) */
+async function deliverReply(replyToken: string, userId: string, text: string, quotaSaver: boolean): Promise<boolean> {
   const sent = await replyMessages(replyToken, text, quotaSaver);
-  if (!sent) await pushMessages(userId, text, quotaSaver);
+  if (sent) return true;
+  return pushMessages(userId, text, quotaSaver);
 }
 
 const EMPTY_VARS: RuntimeVarContext = { summary: null, total: null, payment: null, breakdown: null, nextTierOffer: null };
@@ -696,31 +699,44 @@ async function processMessage(
   // ---- เลือกที่มาข้อความ (D-42 precedence): handoff > objection pattern > FAQ answer > step pattern ----
   // 🔴 AI ยังเลือก step + สกัด order_data + handoff เสมอ (ชั้น①) · โหมดปิด = ทิ้งแค่ reply ที่ AI แต่ง แทนด้วย pattern ชีต
   // 🔴 เทิร์น handoff (AI flag / ประตู funnel=handoff|intake) → ห้ามแทรก objection/FAQ answer (ปล่อย step pattern = ข้อความประตูส่งต่อ/intake)
+  // D-45b ธงต่อ step: step ที่เคย "ส่งเนื้อหา" แล้ว → ส่งเฉพาะปิดท้าย (กันโชว์ตารางโปรซ้ำ) · FAQ/OBJ = ทางแยก ต้อง "กลับบ้าน" เสมอ
   const stageFunnelReply = lib ? funnelStageOf(lib.CSV_Step, geminiOutput.stage) : null;
   const isHandoffTurn = geminiOutput.handoff || stageFunnelReply === "handoff" || stageFunnelReply === "handoff_after_intake";
+  const sv = lib ? stepVerbatim(lib.CSV_Step, geminiOutput.stage) : null;
+  const stepFull = sv?.mode === "ปิด" ? sv.pattern : ""; // เนื้อเต็มก้อน (คำตอบ+ปิดท้าย) — เฉพาะโหมดปิด
+  const stepClose = lib ? stepClosing(lib.CSV_Step, geminiOutput.stage) : "";
+  const stepAlreadySent = (customer?.deliveredSteps ?? []).includes(geminiOutput.stage);
+  // "กลับบ้าน" ต่อท้าย FAQ/OBJ: ยังไม่เคยส่งเนื้อหา step นี้ → เต็มก้อน · เคยแล้ว → ปิดท้าย (mode เปิด/เต็มว่าง → ปิดท้าย = พฤติกรรม D-42 เดิม)
+  const homeSuffix = stepAlreadySent ? stepClose : stepFull || stepClose;
+  const homeIsFull = !stepAlreadySent && stepFull !== "";
+  let deliverMarksStep = false; // ตั้งธงหลัง deliver สำเร็จเท่านั้น
   let verbatimMode = false;
   let baseReply: string;
   if (imageFallback) {
     baseReply = imageReceivedReply(config); // AI degraded อ่านรูปไม่ได้ → ไม่ verbatim (stage ไม่น่าเชื่อถือ)
   } else if (!isHandoffTurn && objection.verbatim) {
-    baseReply = objection.verbatim.pattern;
+    baseReply = joinVerbatimParts(objection.verbatim.pattern, homeSuffix);
     verbatimMode = true;
-    console.log(JSON.stringify({ scope: "verbatim", source: "objection", id: objection.verbatim.id }));
+    deliverMarksStep = homeIsFull;
+    console.log(JSON.stringify({ scope: "verbatim", source: "objection", id: objection.verbatim.id, homeFull: homeIsFull }));
   } else if (!isHandoffTurn && faqInj.verbatim) {
-    // D-42: FAQ answer + ปิดท้ายของ step ที่ AI เลือกเทิร์นนี้ (วกกลับ funnel) · joinVerbatimParts ข้ามช่องว่าง
-    baseReply = joinVerbatimParts(faqInj.verbatim.answer, lib ? stepClosing(lib.CSV_Step, geminiOutput.stage) : "");
+    // D-42/D-45b: FAQ answer + กลับบ้าน (เต็มก้อน step ครั้งแรก · ปิดท้ายเมื่อเคยส่งแล้ว)
+    baseReply = joinVerbatimParts(faqInj.verbatim.answer, homeSuffix);
     verbatimMode = true;
-    console.log(JSON.stringify({ scope: "verbatim", source: "faq", stage: geminiOutput.stage }));
+    deliverMarksStep = homeIsFull;
+    console.log(JSON.stringify({ scope: "verbatim", source: "faq", stage: geminiOutput.stage, homeFull: homeIsFull }));
   } else {
-    const sv = lib ? stepVerbatim(lib.CSV_Step, geminiOutput.stage) : null;
-    if (sv?.mode === "ปิด" && sv.pattern) {
-      baseReply = sv.pattern; // ตัวอย่างคำตอบ [[แยก]] ปิดท้าย (join แล้ว)
+    // step path: ยังไม่เคยส่ง → เต็มก้อน · เคยส่งแล้ว → ปิดท้ายอย่างเดียว (ปิดท้ายว่าง → fallback AI ผ่าน guard เดิม)
+    const stepPattern = stepAlreadySent ? stepClose : stepFull;
+    if (sv?.mode === "ปิด" && stepPattern) {
+      baseReply = stepPattern;
       verbatimMode = true;
-      console.log(JSON.stringify({ scope: "verbatim", source: "step", stage: geminiOutput.stage }));
+      deliverMarksStep = !stepAlreadySent;
+      console.log(JSON.stringify({ scope: "verbatim", source: "step", stage: geminiOutput.stage, resendClosingOnly: stepAlreadySent }));
     } else {
-      // safety: ปิดแต่ 2 ช่องว่างทั้งคู่ → fallback เปิด (AI) + log (กันเซตปิดลืมกรอก → ข้อความว่าง)
-      if (sv?.mode === "ปิด" && !sv.pattern) {
-        console.warn(JSON.stringify({ scope: "verbatim", event: "empty-pattern-fallback-ai", stage: geminiOutput.stage }));
+      // safety (D-39): ปิดแต่ pattern ว่าง (2 ช่องว่าง / เคยส่งแล้ว+ปิดท้ายว่าง) → fallback เปิด (AI ผ่าน guard ครบ) + log
+      if (sv?.mode === "ปิด" && !stepPattern) {
+        console.warn(JSON.stringify({ scope: "verbatim", event: "empty-pattern-fallback-ai", stage: geminiOutput.stage, alreadySent: stepAlreadySent }));
       }
       baseReply = geminiOutput.reply;
     }
@@ -750,6 +766,7 @@ async function processMessage(
       );
     }
     outReply = TRANSFER_UNRESOLVED_REPLY;
+    deliverMarksStep = false; // D-45b: เนื้อหา step ไม่ถึงลูกค้า → ไม่ตั้งธง
   }
   // claims guard (พ.ร.บ.อาหาร · D-26): วลีโฆษณาต้องห้ามจากชีต · โหมด เตือน(default)=ส่ง+log+push · บล็อก=ไม่ส่ง+พักสาย+push
   const bannedClaims = findBannedClaims(
@@ -770,7 +787,10 @@ async function processMessage(
         `⚠️ พบคำโฆษณาต้องห้าม (พ.ร.บ.อาหาร) · โหมด: ${claimsMode}\nวลีที่ชน: ${bannedClaims.join(", ")}\nข้อความบอท: ${outReply}\n———\nLineOA: ${name}`,
       );
     }
-    if (blockClaim) outReply = CLAIMS_BLOCKED_REPLY;
+    if (blockClaim) {
+      outReply = CLAIMS_BLOCKED_REPLY;
+      deliverMarksStep = false; // D-45b: บล็อกแล้ว เนื้อหาไม่ถึงลูกค้า
+    }
   }
   // KI-02 price guard (D-27): เลข "X บาท" ที่บอทพูด ต้องอยู่ใน allowed (raw+ตาราง+derived) · โหมด เตือน(default)/บล็อก
   if (lib) {
@@ -791,7 +811,10 @@ async function processMessage(
         const name = await getProfileName(userId);
         await pushRawText(adminGroupId, `⚠️ บอทพูดราคานอกระบบ · โหมด: ${priceMode}\nเลขที่ชน: ${badPrices.join(", ")} บาท\nข้อความบอท: ${outReply}\n———\nLineOA: ${name}`);
       }
-      if (blockPrice) outReply = PRICE_BAD_REPLY;
+      if (blockPrice) {
+        outReply = PRICE_BAD_REPLY;
+        deliverMarksStep = false; // D-45b: บล็อกแล้ว เนื้อหาไม่ถึงลูกค้า
+      }
     }
   }
   // 🔴 Phase2 var-guard (ทั้งโหมดเปิด/ปิด): กันลูกค้าเห็นตัวแปร "ที่รู้จัก" ดิบ ({ออเดอร์_ที่อยู่}/{การชำระเงิน}...)
@@ -809,15 +832,21 @@ async function processMessage(
         console.error(JSON.stringify({ scope: "var-guard", event: "all-bubbles-dropped", mode: "ปิด", stage: geminiOutput.stage, fallback: "ai" }));
         const aiResolved = resolveAllVars(geminiOutput.reply, varCtx);
         outReply = dropUnresolvedVarBubbles(aiResolved).clean || VAR_FALLBACK_REPLY;
+        deliverMarksStep = false; // D-45b: เนื้อหา step ถูกทิ้งหมด ไม่ถึงลูกค้า
       } else {
         // เปิด + เหลือว่างหมด = เคสแปลก (AI พ่นตัวแปรทุกบอลลูน) → log หนัก + พักสาย
         console.error(JSON.stringify({ scope: "var-guard", event: "all-bubbles-dropped", mode: "เปิด", reply: outReply }));
         outReply = VAR_FALLBACK_REPLY;
+        deliverMarksStep = false;
       }
     }
   }
   const assistantSaved = outReply;
-  await deliverReply(replyToken, userId, withResume(outReply), config.quotaSaver);
+  const deliveredOk = await deliverReply(replyToken, userId, withResume(outReply), config.quotaSaver);
+  // D-45b: ตั้งธง "ส่งเนื้อหา step นี้แล้ว" เฉพาะเมื่อ deliver สำเร็จจริง + เทิร์นนี้มีเนื้อเต็มก้อนของ step อยู่ในข้อความ
+  if (deliveredOk && deliverMarksStep && switches.memory && customer) {
+    await addDeliveredStep(userId, geminiOutput.stage);
+  }
 
   // D-34/D-35: handoff_after_intake — คุยก่อนค่อยส่งคน · นับเทิร์น + reset (ออกประตู/handoff/เงียบนาน) + เพดาน/ขั้นต่ำ
   const stageFunnel = lib ? funnelStageOf(lib.CSV_Step, geminiOutput.stage) : null;

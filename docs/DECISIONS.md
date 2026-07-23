@@ -684,5 +684,13 @@ handoff ทุก path (edit/AI-semantic/keyword) ตั้งแค่ `human_m
 - ขนาด: 4,898→5,664 chars ≈ 2,153→**~2,490 tokens (est)** — บล็อก ~337 (เกินไกด์ 150 เพราะตัวอย่างบังคับ+ปรัชญา ④) แต่**ต่ำกว่างบรวม ~2,700** ✅ · Edit เท่านั้น (KI-03) · prompt-lint ผ่าน
 **harness (a):** 325 passed | 3 expected-fail · tsc+build เขียว (ผล AI-behavior วัดจริงที่ golden 29 ใน D-45d)
 
+**D-45b — ธงต่อ step (โค้ดตัดสิน ไม่ใช่ AI):**
+- **schema (อนุมัติแล้ว):** `customers.delivered_steps TEXT[] NOT NULL DEFAULT '{}'` (additive) · db: `addDeliveredStep` (กันซ้ำในตัว) · `clearDeliveredStepsExceptCurrent` (คง stage ปัจจุบัน) · `/reset` ล้างหมด · `CustomerState.deliveredSteps`
+- **delivery กลับบ้าน 2 แบบ (route):** step ยังไม่เคยส่งเนื้อหา → เต็มก้อน (คำตอบ+ปิดท้าย) · เคยส่งแล้ว → เฉพาะปิดท้าย — ใช้ทั้ง 3 path: step ตรง / ต่อท้าย FAQ / ต่อท้าย OBJ (mode เปิด/เต็มว่าง → ปิดท้าย = D-42 เดิม) · เคยส่ง+ปิดท้ายว่าง → fallback AI (safety net D-39 มี guard ครบ)
+- **ตั้งธงเมื่อ deliver สำเร็จจริง:** `deliverReply` คืน boolean · ยกเลิกธงเมื่อข้อความจริงถูกแทน (transfer-block/claims-block/price-block/var-guard all-dropped) · memory off → ไม่มีธง = พฤติกรรมเดิม
+- **hook ล้างธง "ออเดอร์ปิดจบ" (เคาะแล้ว):** จังหวะ cron แจกเลขออเดอร์ (จุดเดิม ไม่ประดิษฐ์ event) → `clearDeliveredStepsExceptCurrent(order.lineUserId)` — ลูกค้ากลับมาซื้อรอบสองเห็นเนื้อหา S2/โปรอีก · `OrderRow` +`lineUserId` (คอลัมน์ R · header-driven) · 🔴 comment ในโค้ด: v1 hook · เฟสหลังการขาย (Follow CRM) ย้าย/เพิ่มจุดล้างตามสัญญาณได้รับของ
+- 🔴 พฤติกรรม D-42 เปลี่ยน (ตั้งใจ): FAQ/OBJ ครั้งแรกของ step → ต่อ**เต็มก้อน** (เดิมต่อแค่ปิดท้าย) — แก้อาการ "ถามเลือกโปรทั้งที่ยังไม่เคยโชว์ตาราง"
+**harness (b):** step 2 เทิร์น (เต็ม→ปิดท้าย+ธงใน DB) · FAQ กลับบ้าน (เต็มครั้งแรก/ปิดท้ายครั้งสอง = G27 scripted) · เคยส่ง+ปิดท้ายว่าง→AI · hook clear+/reset · **329 passed | 3 expected-fail** · tsc+build เขียว
+
 ### Phase C · ลบ ENV ค้างใน Vercel
 `SHEET_STEP_URL` `SHEET_FAQ_URL` `SHEET_CONFIG_URL` `SHEET_FOLLOW_URL` — โค้ดไม่อ่านแล้ว ลบทิ้งได้

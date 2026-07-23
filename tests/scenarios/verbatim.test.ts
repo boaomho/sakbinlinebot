@@ -4,6 +4,7 @@ import { scriptGemini, turn, adminPushes, lineCalls, harnessOverrides, sheetsCal
 import { seedBotLib, PRICING_CONFIG } from "../harness/botlib-fixture";
 import { readCustomer } from "../harness/db";
 import { parseThinkMode, stepVerbatim, buildObjectionInjection } from "@/lib/agent/inject";
+import { addDeliveredStep, clearDeliveredStepsExceptCurrent, resetCustomerMemory, ensureCustomer, updateCustomerAfterTurn } from "@/lib/db";
 import { dropUnresolvedVarBubbles, KNOWN_RUNTIME_VARS } from "@/lib/agent/quote";
 
 /**
@@ -270,16 +271,18 @@ describe("FAQ verbatim (D-42) — precedence handoff > objection > FAQ > step", 
   const FAQ_H = ["faq_id", "หมวด", "คำถาม", "action", "คำตอบ (บอลลูน)", "keywords", "image_url", "status", "updated_at"];
   const seedFaq = (rows: string[][]) => { sheetsCalls.botLibReturn.CSV_FAQ = [FAQ_H, ...rows]; };
 
-  it("🔴 FAQ answer + ปิดท้ายของ step ที่ AI เลือกเทิร์นนี้ (2 บอลลูน)", async () => {
+  it("🔴 FAQ answer + กลับบ้าน (D-45b: ครั้งแรก = เต็มก้อน step · เคยส่งแล้ว = ปิดท้าย)", async () => {
     seedFaq([["FAQ01", "ทั่วไป", "ส่วนประกอบ", "answer", "เนื้อปลาทูล้วนค่ะ", "ส่วนประกอบ,ส่วนผสม", "", "live", ""]]);
-    scriptGemini([turn({ reply: "AI", stage: "S_BOTH" })]); // S_BOTH ปิดท้าย = "ขอบคุณนะคะ 🙏"
+    scriptGemini([turn({ reply: "AI", stage: "S_BOTH" })]);
     await sendText(U, "ส่วนประกอบมีอะไรบ้าง");
-    expect(textBubbles()).toEqual(["เนื้อปลาทูล้วนค่ะ", "ขอบคุณนะคะ 🙏"]);
+    expect(textBubbles(), "ครั้งแรก = answer + เต็มก้อน S_BOTH").toEqual(["เนื้อปลาทูล้วนค่ะ", "รับทราบค่ะ", "ขอบคุณนะคะ 🙏"]);
   });
 
-  it("ปิดท้าย step ว่าง → ส่งแค่ FAQ answer (ไม่มีบอลลูนเปล่า)", async () => {
+  it("step เคยส่งแล้ว + ปิดท้ายว่าง → ส่งแค่ FAQ answer (ไม่มีบอลลูนเปล่า/[[แยก]] ค้าง)", async () => {
     seedFaq([["FAQ01", "ทั่วไป", "ส่งกี่วัน", "answer", "1-2 วันค่ะ", "ส่งกี่วัน,จัดส่ง", "", "live", ""]]);
-    scriptGemini([turn({ reply: "AI", stage: "S1" })]); // S1 ไม่มีปิดท้าย
+    await ensureCustomer(U);
+    await addDeliveredStep(U, "S1"); // เคยส่งเนื้อหา S1 แล้ว · S1 ไม่มีปิดท้าย
+    scriptGemini([turn({ reply: "AI", stage: "S1" })]);
     await sendText(U, "ของส่งกี่วัน");
     expect(textBubbles()).toEqual(["1-2 วันค่ะ"]);
   });
@@ -300,6 +303,50 @@ describe("FAQ verbatim (D-42) — precedence handoff > objection > FAQ > step", 
     const t = customerText();
     expect(t, "ห้ามส่งคำตอบ FAQ handoff").not.toContain("ควรปรึกษาแพทย์");
     expect(t, "ตกไป step S1 pattern").toContain("ตัวอย่างทักทายในชีต");
+  });
+});
+
+describe("D-45b ธงต่อ step — ส่งเนื้อหาครั้งเดียว · FAQ/OBJ กลับบ้าน · ล้างธงตอนออเดอร์ปิดจบ", () => {
+  const FAQ_H2 = ["faq_id", "หมวด", "คำถาม", "action", "คำตอบ (บอลลูน)", "keywords", "image_url", "status", "updated_at"];
+
+  it("🔴 step เดิม 2 เทิร์น: เทิร์นแรกเต็มก้อน+ตั้งธง · เทิร์นสองปิดท้ายอย่างเดียว (กันโชว์ซ้ำ)", async () => {
+    scriptGemini([turn({ reply: "AI1", stage: "S_BOTH" }), turn({ reply: "AI2", stage: "S_BOTH" })]);
+    await sendText(U, "สนใจค่ะ");
+    const b1 = textBubbles();
+    expect(b1, "เทิร์นแรก = เต็มก้อน").toEqual(["รับทราบค่ะ", "ขอบคุณนะคะ 🙏"]);
+    expect(((await readCustomer(U))?.delivered_steps as string[]) ?? [], "ธงตั้งหลัง deliver").toContain("S_BOTH");
+    await sendText(U, "โอเคค่ะ");
+    expect(textBubbles().slice(b1.length), "เทิร์นสอง = ปิดท้ายอย่างเดียว").toEqual(["ขอบคุณนะคะ 🙏"]);
+  });
+
+  it("🔴 FAQ กลับบ้าน: ครั้งแรก answer+เต็มก้อน step (ตั้งธง) · ครั้งสอง answer+ปิดท้าย (ไม่มีเนื้อหาซ้ำ = G27 scripted)", async () => {
+    sheetsCalls.botLibReturn.CSV_FAQ = [FAQ_H2, ["FAQ01", "ทั่วไป", "ส่งกี่วัน", "answer", "1-2 วันค่ะ", "ส่งกี่วัน", "", "live", ""]];
+    scriptGemini([turn({ reply: "AI1", stage: "S_BOTH" }), turn({ reply: "AI2", stage: "S_BOTH" })]);
+    await sendText(U, "ส่งกี่วันคะ");
+    const b1 = textBubbles();
+    expect(b1, "answer + เต็มก้อน S_BOTH").toEqual(["1-2 วันค่ะ", "รับทราบค่ะ", "ขอบคุณนะคะ 🙏"]);
+    await sendText(U, "แล้วส่งกี่วันนะ");
+    const b2 = textBubbles().slice(b1.length);
+    expect(b2, "ครั้งสอง = answer + ปิดท้าย (ไม่ resend เนื้อหา)").toEqual(["1-2 วันค่ะ", "ขอบคุณนะคะ 🙏"]);
+  });
+
+  it("เคยส่งแล้ว + ปิดท้ายว่าง → fallback AI (safety net เดิม มี guard ครบ)", async () => {
+    harnessOverrides.config = { raw: cfg([["เลขที่บัญชี", "1234567890"]]) };
+    scriptGemini([turn({ reply: "AI1", stage: "S_CLOSED" }), turn({ reply: "AI ตอบต่อเอง", stage: "S_CLOSED" })]);
+    await sendText(U, "สนใจค่ะ"); // S_CLOSED ไม่มีปิดท้าย → เต็มก้อน + ธง
+    await sendText(U, "แล้วไงต่อ");
+    expect(customerText(), "เทิร์นสอง ปิดท้ายว่าง → AI fallback").toContain("AI ตอบต่อเอง");
+  });
+
+  it("🔴 hook ออเดอร์ปิดจบ: clearDeliveredStepsExceptCurrent คงเฉพาะ step ปัจจุบัน · /reset ล้างหมด", async () => {
+    await ensureCustomer(U);
+    await addDeliveredStep(U, "S2");
+    await addDeliveredStep(U, "S_BOTH");
+    await updateCustomerAfterTurn(U, { stage: "S_BOTH", tagsAdd: [] });
+    await clearDeliveredStepsExceptCurrent(U);
+    expect(((await readCustomer(U))?.delivered_steps as string[]) ?? [], "คงเฉพาะ stage ปัจจุบัน").toEqual(["S_BOTH"]);
+    await resetCustomerMemory(U);
+    expect(((await readCustomer(U))?.delivered_steps as string[]) ?? [], "/reset ล้างหมด").toEqual([]);
   });
 });
 
