@@ -701,7 +701,9 @@ handoff ทุก path (edit/AI-semantic/keyword) ตั้งแค่ `human_m
 **D-45d — golden 25→29 (+G26-G29):**
 - CSV +4 แถว · **CSV describe** (runSalesTurn) assert การจำแนก AI — stateFor +2 สถานะ ("คุยอยู่ S2 (ส่งเนื้อหาแล้ว)" · "กำลังเลือกวิธีจ่าย") · FAQ fixture +แถว mirror ชีตล้างแล้ว (ชำระเงิน=วลี · สุขภาพ="กินยา,ทานยา" · เก็บรักษา)
 - **pipeline describe ใหม่** (sendText + real-Gemini bypass setup.ts:142 · gate เดียวกัน) assert "ข้อความที่ลูกค้าเห็นจริง": G26 FAQ answer+เต็มก้อน S2+ธงตั้ง · G27 ไม่ resend ตารางโปร (ธง D-45b) · G28 "โอนครับ" ไม่จุด FAQ ชำระเงิน+เข้า S3_TRANSFER · G29 "ยานนาวา" ไม่จุด FAQ สุขภาพ/ไม่ handoff
-- **scripts/sheet-lint.mjs** (ใหม่ · read-only): lint keyword ชีตจริง — คำโดดสามัญ/สั้น ≤2 ตัวอักษร ใน CSV_FAQ (แถว handoff อนุโลม+แจ้ง) + รายงานคำสั้นใน `คำ_handoff` · รัน `node scripts/sheet-lint.mjs` (ต้องมี creds จริง)
+- **scripts/sheet-lint.mjs** (ใหม่ · read-only): lint keyword ชีตจริง — คำโดดสามัญ/นับ "ตัวฐานไทย" ≤2 (baseLen ตัดสระ/วรรณยุกต์ · "ท้อง"→ทอง=3) ใน CSV_FAQ (แถว handoff อนุโลม+แจ้ง) + รายงานคำสั้นใน `คำ_handoff`
+  - 🔴 **แก้ env loading (บั๊กจริง):** เดิม parse `.env.local`/`.env` เอง แต่ GSA อยู่ `.env.test` → เปลี่ยนใช้ **Vite `loadEnv(mode, cwd, "")`** (ตัวเดียวกับ vitest.config · merge `.env`/`.env.local`/`.env.[mode]`/`.env.[mode].local` · จัดการ quote/multiline) · shell env ชนะไฟล์ · exit code แยก: 1=missing env · 2=private_key ยัง dummy
+  - รัน: `node scripts/sheet-lint.mjs` (creds จาก `.env.test`) หรือ `SHEET_BOTLIB_ID=<id> node scripts/sheet-lint.mjs` · 🔴 **.env.test ใน repo เป็น dummy** → เจ้าของใส่ GOOGLE_SERVICE_ACCOUNT จริงใน shell/.env.test ก่อนรัน
 - 🔴 **golden 33 จริง + sheet lint รันจากเครื่องนี้ไม่ได้:** `.env.test` เป็น dummy ทั้งคู่ (GEMINI_API_KEY → API_KEY_INVALID ทุก call · GOOGLE_SERVICE_ACCOUNT.private_key="dummy") — ของจริงอยู่ฝั่งเจ้าของ → **เจ้าของรัน 2 คำสั่ง:** `HARNESS_REAL_GEMINI=1 npx vitest run golden-routing` (เกณฑ์: ≥24/25 เดิม + 4 ใหม่) · `node scripts/sheet-lint.mjs`
 **harness (d):** scripted = 33 skipped ไม่ block npm test ✅ · **336 passed | 3 expected-fail | 34 skipped** · tsc+build เขียว
 
