@@ -640,6 +640,18 @@ export function resolvePaymentStep(rows: string[][], payment: "โอน" | "COD
   return parsed.steps.find((s) => gatePayment(s) === payment)?.stepId ?? null;
 }
 
+/** D-49: เทิร์น extraction-recovered → เลือกประตูปลายทาง deterministic จากผล gate (แทนตรึง stage=current)
+ *  · complete = ข้อมูลครบ (จะเขียนออเดอร์) → ประตู funnel_stage="won" (ปิดจบ/ทวน)
+ *  · ยังไม่ครบแต่เลือกวิธีจ่ายแล้ว → ประตูที่ผูกวิธีจ่าย (โอน=รอสลิป · COD=เก็บที่อยู่) ตามที่ flow ชีตกำหนด
+ *  · ยังไม่เลือกจ่าย/หาประตูไม่เจอ → null (route คง currentStage) */
+export function resolveRecoveredStage(rows: string[][], complete: boolean, payment: string): string | null {
+  const parsed = parseStepRows(rows);
+  if (!parsed) return null;
+  if (complete) return parsed.steps.find((s) => s.funnelStage === "won")?.stepId ?? null;
+  if (payment === "โอน" || payment === "COD") return parsed.steps.find((s) => gatePayment(s) === payment)?.stepId ?? null;
+  return null;
+}
+
 /** D-47/D-48: ปิดบังข้อมูลการเงินใน input โมเดล (history/state) — เลขบัญชี/เบอร์ (ค่าที่รู้จริง) → label · คืนจำนวนที่ redact (log)
  *  🔴 ใช้เฉพาะ input Gemini · ข้อความจริงถึงลูกค้า/DB ไม่แตะ · verbatim = AI ไม่ต้องพิมพ์เลขพวกนี้ (resolver ใส่) */
 export function redactFinancial(text: string, accounts: string[], phones: string[]): { text: string; count: number } {

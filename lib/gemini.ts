@@ -77,6 +77,9 @@ export interface GeminiTurnOutput {
   /** true = ผลนี้มาจาก fallback (timeout/MAX_TOKENS/parse fail/error) ไม่ใช่คำตอบจริงจาก AI
    *  ใช้ให้โค้ดรู้ว่า image_intent/order ไม่น่าเชื่อ ต้องปกป้องเรื่องเงินเอง (ถือรูปเป็นสลิปไว้ก่อน) */
   degraded: boolean;
+  /** D-48/D-49: true = ผลมาจาก extraction fallback (call หลัก blocked) — stage เป็น current ชั่วคราว
+   *  โค้ด route ต้องเลือกประตูปลายทางเอง (D-49 resolveRecoveredStage จากผล gate) แทนตรึง current */
+  recovered?: boolean;
 }
 
 const RESPONSE_SCHEMA = {
@@ -281,6 +284,7 @@ async function runExtraction(input: GeminiTurnInput): Promise<GeminiTurnOutput |
       imageNote: "",
       objectionDetected: "none",
       degraded: false, // flow ต่อเนื่อง (ลูกค้าไม่เห็นดราม่า) — ไม่ใช่ degraded reply
+      recovered: true, // D-49: route เลือกประตูปลายทางเองจากผล gate (stage=current เป็นค่าชั่วคราว)
     };
   } catch (error) {
     console.error(JSON.stringify({ scope: "extraction", warning: "extraction failed", error: String(error).slice(0, 80) }));

@@ -124,7 +124,9 @@ export function resolveOrderVars(text: string, order: LastOrder | null, itemsTex
     ["{ออเดอร์_เลขที่}", order.order_id],
   ];
   let out = text;
-  for (const [k, v] of map) out = out.split(k).join(v);
+  // D-49: ค่าว่าง = ไม่ replace (คง token ไว้) → var-guard ทิ้งบอลลูนนั้นตามกลไกเดิม · ห้ามโชว์ค่าว่าง/เลขปลอม
+  //   (เช่น snapshot ทวนสด order_id ว่าง เพราะ cron ยังไม่แจกเลข → {ออเดอร์_เลขที่} ตกบอลลูนไป)
+  for (const [k, v] of map) if (v !== "") out = out.split(k).join(v);
   return out;
 }
 

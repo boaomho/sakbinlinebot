@@ -9,7 +9,7 @@ import {
   FeatureSwitches,
 } from "@/lib/config";
 import { loadBotLibrary } from "@/lib/sheets/loader";
-import { buildStepInjection, buildFaqInjection, buildCatalogInjection, buildObjectionInjection, readConfigDescription, funnelStageOf, stepNameOf, stepVerbatim, stepClosing, joinVerbatimParts, detectPaymentChoice, isPaymentChoiceOnly, resolvePaymentStep, redactFinancial } from "@/lib/agent/inject";
+import { buildStepInjection, buildFaqInjection, buildCatalogInjection, buildObjectionInjection, readConfigDescription, funnelStageOf, stepNameOf, stepVerbatim, stepClosing, joinVerbatimParts, detectPaymentChoice, isPaymentChoiceOnly, resolvePaymentStep, resolveRecoveredStage, redactFinancial } from "@/lib/agent/inject";
 import {
   ensureCustomer,
   updateCustomerAfterTurn,
@@ -731,6 +731,35 @@ async function processMessage(
     postQuote = computeQuote(pending, lib, config, nowDate);
   }
 
+  // ---- D-49: ปิดช่องว่างปาก-มือไม่ตรงกัน (คำนวณ gate ก่อนเลือกข้อความ) ----
+  //   (1) #1 extraction-recovered → เลือกประตูปลายทาง deterministic (complete→won · เลือกจ่าย→ประตูวิธีจ่าย) แทนตรึง current
+  //   (2) #3 ออเดอร์ complete เทิร์นนี้ → บังคับ step path (ปิด/ทวน) ชนะ FAQ/OBJ interception (ปาก-มือตรงกัน)
+  //   (3) #2 บนเทิร์นเขียน lastOrder ยัง stale (setLastOrder อยู่ runOrderGate ท้ายเทิร์น) → สร้าง snapshot ทวนจาก pending+price ที่ "จะเขียนจริง"
+  let orderCompleteThisTurn = false;
+  let synthLastOrder: typeof lastOrder = null;
+  let synthItemsText = "";
+  if (runOrders && customer) {
+    const postGate = evaluateOrderGate({ pending, slipPresent: Boolean(customer.lastSlipPathname), priceOk: postQuote?.ok ?? false });
+    orderCompleteThisTurn = postGate.complete;
+    if (geminiOutput.recovered && lib) {
+      const dest = resolveRecoveredStage(lib.CSV_Step, postGate.complete, postGate.payment);
+      if (dest && dest !== geminiOutput.stage) {
+        console.log(JSON.stringify({ scope: "recovered-stage", from: geminiOutput.stage, to: dest, complete: postGate.complete, payment: postGate.payment }));
+        geminiOutput = { ...geminiOutput, stage: dest };
+      }
+    }
+    // snapshot เฉพาะเมื่อ "ยังไม่มี lastOrder จริง + ครบเทิร์นนี้" (purely additive · ไม่ทับ edit-flow) — ค่าจาก gate/pricing เท่านั้น
+    //   🔴 order_id = "" (cron ยังไม่แจกเลขจริง) → {ออเดอร์_เลขที่} resolve ไม่ได้ → var-guard ทิ้งบอลลูนนั้น (ห้าม mock เลขปลอม)
+    if (!lastOrder && orderCompleteThisTurn && postQuote?.price) {
+      const items = normalizeItems(pending.items);
+      synthItemsText = items.map((it) => `${lastOrderNameMap.get(it.sku) ?? it.sku} x${it.qty}`).join(" · ");
+      synthLastOrder = {
+        order_id: "", ชื่อ: pending["ชื่อ"], ที่อยู่: pending["ที่อยู่"], เบอร์: pending["เบอร์"],
+        items, total: postQuote.price.total, payment: postGate.payment,
+      };
+    }
+  }
+
   // ---- เลือกที่มาข้อความ (D-42 precedence): handoff > objection pattern > FAQ answer > step pattern ----
   // 🔴 AI ยังเลือก step + สกัด order_data + handoff เสมอ (ชั้น①) · โหมดปิด = ทิ้งแค่ reply ที่ AI แต่ง แทนด้วย pattern ชีต
   // 🔴 เทิร์น handoff (AI flag / ประตู funnel=handoff|intake) → ห้ามแทรก objection/FAQ answer (ปล่อย step pattern = ข้อความประตูส่งต่อ/intake)
@@ -746,6 +775,10 @@ async function processMessage(
   const homeIsFull = !stepAlreadySent && stepFull !== "";
   let deliverMarksStep = false; // ตั้งธงหลัง deliver สำเร็จเท่านั้น
   let verbatimMode = false;
+  // D-49 #3: ออเดอร์ครบเทิร์นนี้ (จริง ไม่ใช่แค่มี pending) → complete ชนะ FAQ/OBJ · log ตอนมีตัวจะแทรกจริง
+  if (orderCompleteThisTurn && !isHandoffTurn && (objection.verbatim || faqInj.verbatim)) {
+    console.log(JSON.stringify({ scope: "verbatim", event: "order-complete-overrides-faq-obj", stage: geminiOutput.stage, hadObjection: Boolean(objection.verbatim), hadFaq: Boolean(faqInj.verbatim) }));
+  }
   let baseReply: string;
   if (imageFallback) {
     baseReply = imageReceivedReply(config); // AI degraded อ่านรูปไม่ได้ → ไม่ verbatim (stage ไม่น่าเชื่อถือ)
@@ -755,12 +788,12 @@ async function processMessage(
     baseReply = DEGRADED_NO_INPUT_REPLY;
     deliverMarksStep = false; // เนื้อหา step ไม่ถึงลูกค้า → ไม่ตั้งธง
     console.warn(JSON.stringify({ scope: "degraded", reason: "gemini-no-output", stage: geminiOutput.stage }));
-  } else if (!isHandoffTurn && objection.verbatim) {
+  } else if (!isHandoffTurn && !orderCompleteThisTurn && objection.verbatim) {
     baseReply = joinVerbatimParts(objection.verbatim.pattern, homeSuffix);
     verbatimMode = true;
     deliverMarksStep = homeIsFull;
     console.log(JSON.stringify({ scope: "verbatim", source: "objection", id: objection.verbatim.id, homeFull: homeIsFull }));
-  } else if (!isHandoffTurn && faqInj.verbatim) {
+  } else if (!isHandoffTurn && !orderCompleteThisTurn && faqInj.verbatim) {
     // D-42/D-45b: FAQ answer + กลับบ้าน (เต็มก้อน step ครั้งแรก · ปิดท้ายเมื่อเคยส่งแล้ว)
     baseReply = joinVerbatimParts(faqInj.verbatim.answer, homeSuffix);
     verbatimMode = true;
@@ -789,7 +822,10 @@ async function processMessage(
   const outVars = postQuote?.ok ? postQuote.vars : preVars;
   // D-39: resolver รวม pass เดียว — AI reply(เปิด)+verbatim(ปิด) ตัวเดียวกัน · R1→R2→R3 คงลำดับ + Group X
   const varCtx: AllVarsContext = {
-    priceVars: outVars, config, lastOrder, lastOrderItemsText,
+    // D-49 #2: เทิร์นเขียนออเดอร์ใช้ snapshot (pending+price ที่จะเขียนจริง) แทน lastOrder ที่ยัง stale · เทิร์นอื่น/edit = lastOrder จริง
+    priceVars: outVars, config,
+    lastOrder: synthLastOrder ?? lastOrder,
+    lastOrderItemsText: synthLastOrder ? synthItemsText : lastOrderItemsText,
     pending, products: lib?.CSV_Products ?? [], promo: lib?.CSV_Promo ?? [], varsRows: lib?.CSV_Vars ?? [], now: nowDate,
   };
   let outReply = resolveAllVars(baseReply, varCtx);

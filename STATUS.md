@@ -4,6 +4,10 @@
 > รายละเอียด → [docs/DECISIONS.md](docs/DECISIONS.md) · แผนที่โค้ด → [REPO-MAP.md](REPO-MAP.md) · brief → [docs/P2-REBUILD-BRIEF.md](docs/P2-REBUILD-BRIEF.md)
 
 ## 🔴 อยู่ตรงไหนตอนนี้ (สำคัญสุด)
+- **D-49 (ปิดช่องปาก-มือไม่ตรงกัน — ออเดอร์เขียนแต่ลูกค้าไม่ได้ทวน) เสร็จ ✅** บน `main`
+  - #1 extraction-recovered → `resolveRecoveredStage` เลือกประตูปลายทาง deterministic (complete→won · เลือกจ่าย→ประตูวิธีจ่าย)
+  - #3 ออเดอร์ complete จริง → ชนะ FAQ/OBJ interception (ปาก-มือตรงกัน) · #2 snapshot ทวนสดจาก pending+price (order_id="" → บอลลูนเลขที่ตกตาม guard)
+  - 🔴 **รอเจ้าของ:** เช็ค pattern ประตู won (S4B) ในชีต — ถ้ามี `{ออเดอร์_เลขที่}` บอลลูนนั้นจะตกทุกครั้งบนเทิร์นเขียน (เลขมาตอน cron แจก) · เอาออกหรือแยกบอลลูน
 - **D-48 (extraction fallback — บันไดใหม่เมื่อ blocked) เสร็จ ✅** บน `main`
   - หลักฐาน: combo "เปลี่ยน COD + ที่อยู่" ถูกบล็อก 7/7 = deterministic · retry เดิมไร้ผล
   - งานหลัก: call หลัก blocked → **extraction call จิ๋ว** (ไม่มี prompt ขาย/ราคา/step/history = ตัดกลิ่นเงิน) → order_data เข้า gate · flow ต่อ · **แทน** retry เดิม
@@ -23,7 +27,7 @@
   1. `HARNESS_REAL_GEMINI=1 npx vitest run golden-routing` — เกณฑ์: ≥24/25 เดิม + G26-G29 · G12 ยัง known-tuning
   2. `node scripts/sheet-lint.mjs` — รายงาน keyword คำโดดสามัญที่หลงเหลือในชีตจริง
 - 🔴 **ยังไม่ deploy prod / ยังไม่สลับ ENV** — โค้ด v2.0 อ่านชีต v2.0 เท่านั้น (contract = [docs/BOTLIB-V2-HEADERS.txt](docs/BOTLIB-V2-HEADERS.txt)) · รอเทส LINE จริง (dev OA) ก่อนสลับ `SHEET_BOTLIB_ID` + redeploy
-- เทสล่าสุด: **349 passed | 3 expected-fail | 34 skipped** (scripted) · tsc + build เขียว
+- เทสล่าสุด: **350 passed | 3 expected-fail | 34 skipped** (scripted) · tsc + build เขียว
 
 ## สรุป P2-REBUILD ที่จบ: "AI ไม่เขียนข้อความถึงลูกค้าอีกต่อไป"
 AI เหลือ 4 งาน (เลือก step · จำแนก objection · สกัด order_data · ตัดสิน handoff) · ทุกคำจากชีต (pattern) + resolver

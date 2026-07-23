@@ -738,5 +738,18 @@ handoff ทุก path (edit/AI-semantic/keyword) ตั้งแค่ `human_m
 - **ข้อจำกัด:** extraction ตั้ง `orderEditRequest=false` — เคสแก้ออเดอร์ที่**เขียนชีตแล้ว** (last_order) จะไม่ทริก edit-path ผ่านบันไดนี้ (แต่เคส pending merge ทำงานปกติ) · เฝ้าดู log `scope:"extraction"` post-deploy
 **harness:** extraction (หลัก blocked→extraction ผ่าน order_data/payment เข้า gate · blocked ทั้งคู่→degraded) + fix(2) pipeline (มี payment=โอน + เปลี่ยน COD → lock ทับ) + redact count · **349 passed | 3 expected-fail** · tsc+build เขียว
 
+### D-49 · ปิดช่องว่างปาก-มือไม่ตรงกัน (ออเดอร์เขียนสำเร็จแต่ลูกค้าไม่ได้ทวน · 1 commit)
+**รากร่วม (ลำดับใน route เทิร์นเดียว):** merge pending (730) → เลือก baseReply จาก `geminiOutput.stage` + resolve `{ออเดอร์_*}` จาก `varCtx.lastOrder` (749-795) → **เขียนออเดอร์ + `setLastOrder` (946)** · เขียนเกิด**หลัง**เลือกข้อความ+resolve เสมอ = ต้นตอทั้ง 3 อาการ
+**ตอบ log 09:27-09:29:**
+- **(1) redactFinancial:** ทำงานถูก — เพิ่ม `scope:"redact"` count แล้ว (D-48) เห็นต่อเทิร์น
+- **(2) 🔴 บั๊ก payment lock:** เดิม `noPaymentYet` กันเคสเปลี่ยนวิธีจ่าย — **แก้แล้ว D-48** (ตัด noPaymentYet) · gate log ที่โชว์ "โอน" = ก่อน D-48
+- **(3) FAQ ชนะทั้งที่ข้อมูลครบ:** ใช่ — `buildFaqInjection(userMessage)` แมตช์ keyword ฝั่งโค้ด อิสระจาก AI → เด้ง FAQ แม้ gate complete → **แก้: gate-complete ชนะ FAQ/OBJ**
+**3 การแก้ (deterministic จากผล gate · ไม่เดา):**
+- **#1 stage override** (`resolveRecoveredStage` inject): เทิร์น `geminiOutput.recovered` (extraction · D-48 เพิ่มธง) → เลือกประตูปลายทางจาก post-merge gate — `complete → funnel_stage="won"` (ปิด/ทวน) · `เลือกจ่ายแล้วยังไม่ครบ → ประตูวิธีจ่าย (โอน=รอสลิป · COD)` · AI ปกติไม่แตะ (เลือกประตูเองอยู่แล้ว)
+- **#3 complete ชนะ FAQ/OBJ:** เพิ่ม `!orderCompleteThisTurn` ที่ guard objection/FAQ → เทิร์นที่ **complete จริง** (postGate.complete ไม่ใช่แค่มี pending) บังคับ step path (ประตูปิด) + log `order-complete-overrides-faq-obj`
+- **#2 snapshot ทวนสด (ทาง A · เคาะแล้ว):** บนเทิร์นเขียน `lastOrder` ยัง stale → สร้าง `synthLastOrder` จาก **pending + price ที่จะเขียนจริง** (ค่าจาก gate/pricing เท่านั้น · ไม่ประกอบเลขใหม่) ใส่ `varCtx` เฉพาะเมื่อ **`!lastOrder && complete`** (purely additive · ไม่ทับ edit-flow) · 🔴 `order_id=""` (cron ยังไม่แจกเลข) → `{ออเดอร์_เลขที่}` resolve ไม่ได้ → **var-guard ทิ้งบอลลูนนั้น** (ห้าม mock เลขปลอม) · `resolveOrderVars` แก้ให้ **ค่าว่าง = คง token** (เดิม replace เป็น "") เพื่อให้กลไก guard ทำงาน
+**🔴 เงื่อนไข 2 (รอเจ้าของ):** CC อ่านชีตจริงไม่ได้ (creds dummy) — **เจ้าของเช็ค pattern ประตู funnel_stage="won" (S4B):** ถ้ามี `{ออเดอร์_เลขที่}` ในบอลลูนทวนสด → บอลลูนนั้นจะ**ตกทุกครั้ง**บนเทิร์นเขียน (เลขจริงมาตอน cron แจก) · ถ้าอยากให้ทวนสดโชว์เลข ต้องแยกบอลลูน/ให้ cron ยิงเลขทีหลัง — หรือเอา `{ออเดอร์_เลขที่}` ออกจากประตูทวนสด
+**harness:** recovered+COD ครบ+lastOrder null → override→won · ทวน snapshot ครบ (ชื่อ/ที่อยู่/เบอร์/รายการ/ยอด) · บอลลูน `{ออเดอร์_เลขที่}` ตก · ออเดอร์เขียนจริง 1 แถว · **350 passed | 3 expected-fail** · tsc+build เขียว
+
 ### Phase C · ลบ ENV ค้างใน Vercel
 `SHEET_STEP_URL` `SHEET_FAQ_URL` `SHEET_CONFIG_URL` `SHEET_FOLLOW_URL` — โค้ดไม่อ่านแล้ว ลบทิ้งได้
