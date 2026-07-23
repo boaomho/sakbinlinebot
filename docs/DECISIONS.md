@@ -707,5 +707,15 @@ handoff ทุก path (edit/AI-semantic/keyword) ตั้งแค่ `human_m
 - 🔴 **golden 33 จริง + sheet lint รันจากเครื่องนี้ไม่ได้:** `.env.test` เป็น dummy ทั้งคู่ (GEMINI_API_KEY → API_KEY_INVALID ทุก call · GOOGLE_SERVICE_ACCOUNT.private_key="dummy") — ของจริงอยู่ฝั่งเจ้าของ → **เจ้าของรัน 2 คำสั่ง:** `HARNESS_REAL_GEMINI=1 npx vitest run golden-routing` (เกณฑ์: ≥24/25 เดิม + 4 ใหม่) · `node scripts/sheet-lint.mjs`
 **harness (d):** scripted = 33 skipped ไม่ block npm test ✅ · **336 passed | 3 expected-fail | 34 skipped** · tsc+build เขียว
 
+### D-46 · แก้ลูปวนขอที่อยู่ = Gemini บล็อก PROHIBITED_CONTENT ไม่เข้า degraded (2 ชั้น)
+**วินิจฉัย (จาก log จริง 06:44–06:45 UTC · blockReason PROHIBITED_CONTENT 3 เทิร์นติด · candidatesLen 0):**
+- ลูกค้ามี pending โอน (history มีเลขบัญชี/ธนาคาร) → พิมพ์ "เปลี่ยน COD + ชื่อ/ที่อยู่/เบอร์" ก้อนเดียว → prompt รวม **เลขบัญชี + PII ครบชุด** → classifier ตี false-positive ฉ้อโกง/เก็บข้อมูลการเงิน · ที่อยู่เดียวกัน 06:41 ไม่มี combo นี้ → ผ่าน (probabilistic ไม่ deterministic)
+- **ชั้น 1 root:** `gemini.ts` ไม่ตั้ง `safetySettings` เลย → ใช้ default (บล็อกกลางขึ้นไป)
+- **ชั้น 2 root (สำคัญกว่า):** gemini คืน `degraded:true` ถูกแล้ว แต่ **route จัดการ degraded เฉพาะเทิร์นมีรูป** (`imageFallback = imageContent && degraded`) · เทิร์นข้อความล้วน degraded → ไหลลง verbatim path ปกติ (stage=currentStage · orderData={}) → `resendClosingOnly` (D-45b) → resend "ขอที่อยู่" ซ้ำ = ลูป · ลูกค้าส่งข้อมูลมาแล้วโดนถามซ้ำ
+**ทำ (เคาะแล้ว):**
+- **ชั้น 1 — `SAFETY_SETTINGS` = `OFF` ทั้ง 5 หมวดปรับได้** (HARASSMENT/HATE_SPEECH/SEXUALLY_EXPLICIT/DANGEROUS_CONTENT/CIVIC_INTEGRITY · `HarmBlockThreshold.OFF`) — บอทรับออเดอร์ PII เป็นเนื้องาน · availability มาก่อน · หมวดพวกนี้มีตาข่ายเราเอง (H4 handoff + verbatim = AI ไม่มีปากแต่งคำเสี่ยง) · 🔴 **PROHIBITED_CONTENT เป็น core policy ปรับไม่ได้ → ยังบล็อกได้เสมอ = ชั้น 2 คือหลักประกันจริง**
+- **ชั้น 2 — route: branch `else if (geminiOutput.degraded)`** (หลัง imageFallback ก่อน objection) → `DEGRADED_NO_INPUT_REPLY` = "ขออภัยค่ะ ระบบสะดุด...ยังไม่ได้รับข้อความล่าสุด...รบกวนพิมพ์ส่งมาอีกครั้ง 🙏" (const · ไม่เพิ่ม config key · ต่างจาก DEFAULT_REPLY "รอสักครู่แล้วทักใหม่" ที่ทำให้ลูกค้านั่งรอเฉยๆ) · `deliverMarksStep=false` · ครอบ blocked/timeout/parse-fail/MAX_TOKENS · degraded+รูป = imageReceivedReply เดิม (ถือสลิป)
+**harness:** degraded+step เคยส่ง→ข้อความขัดข้อง ไม่ resend ปิดท้าย · degraded+step ยังไม่ส่ง→ข้อความขัดข้อง ไม่ใช่เต็มก้อน (กัน branch เสียบผิด) · degraded→gate ไม่เขียน (orderData ว่าง) · **339 passed | 3 expected-fail** · tsc+build เขียว
+
 ### Phase C · ลบ ENV ค้างใน Vercel
 `SHEET_STEP_URL` `SHEET_FAQ_URL` `SHEET_CONFIG_URL` `SHEET_FOLLOW_URL` — โค้ดไม่อ่านแล้ว ลบทิ้งได้

@@ -1,4 +1,4 @@
-import { GoogleGenAI, ThinkingLevel, Type } from "@google/genai";
+import { GoogleGenAI, ThinkingLevel, Type, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { buildStaticSystemInstruction, buildUserContent } from "@/prompt/system";
 import { AppConfig, DEFAULT_REPLY } from "./config";
 import { AiOrderItem } from "./core/pricing";
@@ -16,6 +16,20 @@ export interface OrderDataFromAI {
 }
 
 const MODEL = "gemini-3.5-flash";
+
+/**
+ * safetySettings = OFF ทั้ง 5 หมวดที่ปรับได้ (D-46) — บอทรับออเดอร์: ชื่อ/ที่อยู่/เบอร์/เลขบัญชี/สลิป
+ * คือเนื้องานหลัก · availability ต้องมาก่อน · หมวดพวกนี้เคยช่วยกัน (ลูกค้าด่า/เนื้อหาแรง) มีตาข่ายเราเองแล้ว
+ * (H4 handoff + verbatim = AI ไม่มีปากแต่งคำเสี่ยง)
+ * 🔴 PROHIBITED_CONTENT เป็น core policy ปรับไม่ได้ → ยังบล็อกได้เสมอ = ชั้น degraded (route) คือหลักประกันจริง
+ */
+const SAFETY_SETTINGS = [
+  HarmCategory.HARM_CATEGORY_HARASSMENT,
+  HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+  HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+  HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+  HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY,
+].map((category) => ({ category, threshold: HarmBlockThreshold.OFF }));
 
 export interface GeminiImageInput {
   mimeType: string;
@@ -285,6 +299,7 @@ export async function runSalesTurn(input: GeminiTurnInput): Promise<GeminiTurnOu
         thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
         responseMimeType: "application/json",
         responseSchema: RESPONSE_SCHEMA,
+        safetySettings: SAFETY_SETTINGS, // D-46: OFF 5 หมวด (บอทรับ PII เป็นเนื้องาน)
       },
     });
 

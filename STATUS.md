@@ -4,6 +4,9 @@
 > รายละเอียด → [docs/DECISIONS.md](docs/DECISIONS.md) · แผนที่โค้ด → [REPO-MAP.md](REPO-MAP.md) · brief → [docs/P2-REBUILD-BRIEF.md](docs/P2-REBUILD-BRIEF.md)
 
 ## 🔴 อยู่ตรงไหนตอนนี้ (สำคัญสุด)
+- **D-46 (แก้ลูปวนขอที่อยู่ = Gemini บล็อก PROHIBITED_CONTENT ไม่เข้า degraded) เสร็จ ✅** บน `main`
+  - ชั้น 1: `safetySettings` OFF ทั้ง 5 หมวด (บอทรับ PII เป็นเนื้องาน · 🔴 PROHIBITED_CONTENT ปรับไม่ได้ ยังบล็อกได้)
+  - ชั้น 2 (หลักประกัน): route เทิร์นข้อความล้วน degraded → ข้อความ "ยังไม่ได้รับ ขอส่งใหม่" · ไม่ resend step ค้าง
 - **D-45 (สมองยึด Step + ธงต่อ step + ชวนเลือกโปร) จบฝั่งโค้ดแล้ว ✅** บน `main` — 4 คอมมิต a/b/c/d ต่อจาก P2-REBUILD (D-40..44 merge แล้ว)
   - a: prompt +บล็อก "ลำดับความคิดประจำเทิร์น" (FAQ/OBJ = ผู้สมัคร · ~2,490 tokens < งบ 2,700)
   - b: ธง `delivered_steps` — step ส่งเนื้อหาครั้งเดียว · FAQ/OBJ กลับบ้าน (เต็มก้อนครั้งแรก/ปิดท้ายถัดไป) · ล้างธงตอน cron แจกเลข (v1 hook)

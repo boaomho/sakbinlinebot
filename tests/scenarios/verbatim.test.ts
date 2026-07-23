@@ -359,6 +359,37 @@ describe("D-45b ธงต่อ step — ส่งเนื้อหาครั
   });
 });
 
+describe("D-46 degraded — Gemini ไม่ตอบ (blocked/timeout) → ข้อความขัดข้อง ไม่ resend step", () => {
+  const DEGRADED = "ยังไม่ได้รับข้อความล่าสุด";
+
+  it("🔴 degraded + step เคยส่งแล้ว → ข้อความขัดข้อง (ไม่ resend ปิดท้าย = รากบั๊กลูปขอที่อยู่)", async () => {
+    await ensureCustomer(U);
+    await addDeliveredStep(U, "S_BOTH"); // เคยส่งเนื้อหา S_BOTH แล้ว
+    scriptGemini([turn({ reply: "AI", stage: "S_BOTH", degraded: true })]);
+    await sendText(U, "เปลี่ยนเป็น COD ชื่อสมชาย ที่อยู่ 1 ถ.สุข กทม เบอร์ 0811111111");
+    const t = customerText();
+    expect(t, "ได้ข้อความขัดข้อง+ขอส่งใหม่").toContain(DEGRADED);
+    expect(t, "🔴 ไม่ resend ปิดท้าย S_BOTH").not.toContain("ขอบคุณนะคะ");
+  });
+
+  it("🔴 degraded + step ยังไม่เคยส่ง → ข้อความขัดข้อง (ไม่ใช่เต็มก้อน step · กัน branch เสียบผิดจุด)", async () => {
+    scriptGemini([turn({ reply: "AI", stage: "S_BOTH", degraded: true })]);
+    await sendText(U, "สนใจค่ะ");
+    const t = customerText();
+    expect(t).toContain(DEGRADED);
+    expect(t, "ไม่ส่งเต็มก้อน S_BOTH").not.toContain("รับทราบค่ะ");
+    expect((await readCustomer(U))?.delivered_steps as string[] ?? [], "ธงไม่ตั้ง (เนื้อหาไม่ถึง)").not.toContain("S_BOTH");
+  });
+
+  it("degraded → order gate ไม่เขียน (orderData ว่างจาก fallback)", async () => {
+    scriptGemini([turn({ reply: "AI", stage: "S_BOTH", degraded: true, orderData: {} })]);
+    await sendText(U, "ชื่อสมชาย 1 ถ.สุข กทม 0811111111");
+    const c = await readCustomer(U);
+    const pending = c?.pending_order as { ชื่อ?: string } | null;
+    expect(pending?.ชื่อ, "degraded = ไม่ merge order (orderData ว่าง)").toBeUndefined();
+  });
+});
+
 describe("โหมดปิด — gate/handoff ยังทำงาน (คุมแค่ข้อความ)", () => {
   it("ปิด + orderData มี items → order logic ยังเก็บ pending (ไม่ถูกทิ้งพร้อม reply)", async () => {
     scriptGemini([turn({ reply: "AI", stage: "S_CLOSED", orderData: { items: [{ qty: 3 }] } })]);
