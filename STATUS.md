@@ -3,6 +3,12 @@
 > สแนปช็อตสำหรับคนรับช่วงต่อ (ไม่เห็นแชทก็ทำต่อได้) · อัปเดต 2026-07-23
 > รายละเอียด → [docs/DECISIONS.md](docs/DECISIONS.md) · แผนที่โค้ด → [REPO-MAP.md](REPO-MAP.md) · brief → [docs/P2-REBUILD-BRIEF.md](docs/P2-REBUILD-BRIEF.md)
 
+## 🔴 กำลังทำ: T-STUDIO ห้องซ้อมเทรน (/train) — เฟส ก เสร็จ ✅ บน `main`
+- **เฟส ก Simulator:** แชทจำลองรัน pipeline production จริงเต็มสาย (Gemini จริง) ใน sandbox — ALS guard ที่ leaf I/O · LINE/ชีต Orders/Blob → collector ("จะเขียนแถวนี้"/"จะยิงกลุ่มว่า") · Neon → branch `train` (`DATABASE_URL_TRAIN`) · X-ray + ปุ่ม "ติ๊ก M+cron แจกเลข" (เรียก cron จริง) / สลิปจำลอง / reset · spec = [docs/T1-PATTERN-STUDIO-SPEC.md](docs/T1-PATTERN-STUDIO-SPEC.md)
+- **โครงสร้างขยับ 1 จุด:** `line-webhook/route.ts` → เนื้อย้าย `handler.ts` เชิงกลไก (Next ห้าม route.ts export เกิน HTTP handler) — โค้ดข้างในไม่แตะ เทสเดิมผ่านครบ
+- 🔴 **รอเจ้าของ:** (1) ENV `DATABASE_URL_TRAIN` (Neon branch `train`) + `TRAIN_PASSWORD` เข้า Vercel แล้ว redeploy → เปิด /train บนมือถือ (2) อยากให้ปุ่ม "สลิปตัวอย่าง" ทำงาน → วางรูปสลิปจริงชื่อ `public/train-slip-sample.jpg` (ไม่มี = ใช้ปุ่มแนบรูปแทน) (3) 🔴 **ยืนยัน gap `line_user_id`**: ชีต Orders คอลัมน์ R ถูกเติมด้วยอะไร (สูตร/มือ)? — โค้ด append ไม่เขียน R แต่ cron ใช้ R ล้างธง (ดู DECISIONS · T-STUDIO ก)
+- **ต่อไป:** เฟส ข (แตะบอลลูนเพื่อแก้ + draft overlay + lint สด) → ค (เขียนกลับชีต + TRAIN_LOG + copy) → ง (mobile polish) — เจ้าของจะสลับ Opus ทำ
+
 ## 🟢 ระบบพร้อมรับลูกค้าจริง
 
 - **โค้ด v2.0 + ซีรีส์ D-45→D-49 อยู่บน `main`** — เทสรับบน LINE จริงผ่านครบ (2026-07-23):
@@ -10,7 +16,7 @@
   - ✅ cron ฟื้น — แจกเลขออเดอร์ (atomic) + แจ้งกลุ่ม format ถูก
   - ✅ ซื้อซ้ำได้ — ประตู S2 ส่งเต็มก้อนใหม่ (ธง `delivered_steps` ล้างหลังปิดออเดอร์ · KI-06)
 - **cron-job.org: enabled** ทุก 5 นาที (endpoint ออเดอร์ · เช็ค `Authorization: Bearer <CRON_SECRET>`)
-- เทสล่าสุด: **350 passed | 3 expected-fail | 34 skipped** (scripted) · tsc + build เขียว
+- เทสล่าสุด: **356 passed | 3 expected-fail | 34 skipped** (scripted) · tsc + build เขียว
 - known-tuning (ยอมรับแล้ว · ปิดได้ทีหลังด้วยการจูนชีต): **G12** (S2 vs S2_DIRECT · "ขอลองถ้วยเดียว") · **G29** stage (S4A/S4B)
 
 ## ซีรีส์ D-45→D-49 (เส้นทางเงิน + สมองยึด Step) — ปิดครบ ✅ บน `main`

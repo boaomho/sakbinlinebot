@@ -1,4 +1,5 @@
 import { google, sheets_v4 } from "googleapis";
+import { getTrainSandbox, wrapSheetsForSandbox } from "@/lib/train/sandbox";
 
 /**
  * lib/sheets/client.ts — Google Sheets API client (service account JWT)
@@ -22,6 +23,14 @@ function getCredentials(): { client_email: string; private_key: string } | null 
 let sheetsClient: sheets_v4.Sheets | null = null;
 
 export function getSheets(): sheets_v4.Sheets {
+  // T-STUDIO guard (ALS เท่านั้น — เงื่อนไข ก): sandbox → ครอบ client จริงด้วย proxy
+  // เบี่ยงเฉพาะชีต Orders เข้า fake grid (BotLibrary + header Orders แถว 1 อ่านของจริง read-only)
+  const train = getTrainSandbox();
+  if (train) return wrapSheetsForSandbox(getRealSheets(), train) as sheets_v4.Sheets;
+  return getRealSheets();
+}
+
+function getRealSheets(): sheets_v4.Sheets {
   if (sheetsClient) return sheetsClient;
   const creds = getCredentials();
   if (!creds) throw new Error("GOOGLE_SERVICE_ACCOUNT missing or invalid");

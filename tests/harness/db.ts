@@ -11,6 +11,7 @@ const TABLES = [
   "pending_messages",
   "admin_pending_choices",
   "orders_written",
+  "train_sessions", // T-STUDIO: fake grid ห้องซ้อม — ไม่ล้าง = ค้างข้ามเทส/ข้ามรอบ
 ];
 
 /**

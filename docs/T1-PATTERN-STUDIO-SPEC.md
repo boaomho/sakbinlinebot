@@ -1,80 +1,77 @@
-# T1-PATTERN-STUDIO-SPEC — หน้าเว็บเทรนบอท `[UNBUILT]`
+# T-STUDIO SPEC — ห้องซ้อมเทรนปลาทู `[เฟส ก ✅ · ข-ง UNBUILT]`
 
-> วางที่ `docs/` ของ repo · build หลัง v2.0 (D-40–44) deploy เสถียร · พอ build เสร็จ ดูดสรุปเข้า REPO-MAP แล้วลบไฟล์นี้
-> จากแชทภาพรวม 2026-07-22 · contract คือชีต BotLibrary v2.0 — **ห้ามหน้าเว็บเปลี่ยน schema เอง**
+> (ชื่อไฟล์คง T1- เดิมกันลิงก์เสีย · ซีรีส์เปลี่ยนชื่อเป็น **T-STUDIO** ตามบรีฟ 2026-07-23)
+> พอ build ครบทุกเฟส ดูดสรุปเข้า REPO-MAP แล้วลบไฟล์นี้ · contract คือชีต BotLibrary v2.0 — **ห้ามหน้าเว็บเปลี่ยน schema เอง**
 
-## เป้าหมาย
+## เป้าหมาย (requirement ใหม่ทับของเดิม)
 
-เจ้าของเขียน/แก้ pattern ทุกช่องของ BotLibrary ได้จากหน้าเว็บเดียว โดย **เห็นก่อนเซฟ** ว่า
-ลูกค้าจะเห็นบอลลูนอะไรจริงๆ (ตัวแปร resolve แล้ว แยกบอลลูนแล้ว) และมี lint บอกทันทีว่า
-อะไรจะพัง — จบปัญหา "แก้ชีตแล้วต้องไปเทสบน LINE ถึงรู้ว่าพิมพ์ตัวแปรผิด"
+เจ้าของ **ซ้อมสนทนากับปลาทูจำลอง แล้วแก้ pattern ณ จุดที่เห็นปัญหา** ได้จากหน้าเว็บเดียว:
+1. **ใช้ได้ทั้งคอม + มือถือ** ตั้งแต่แรก (มือถือ = อุปกรณ์หลักของเจ้าของ)
+2. **โหมดหลัก = สนทนาจำลองแล้วแก้ ณ จุด** (ไม่ใช่ editor ต่อแถวแบบ spec เก่า — อันนั้นกลายเป็นมุมมองรอง)
+3. **เขียนกลับชีต + copy ได้ทั้งคู่ตั้งแต่แรก** (ของเดิม T3 แยกเฟส → รวมเข้าซีรีส์นี้เป็นเฟส ค)
 
-## หลักการเหล็ก
+## สถาปัตยกรรม
 
-1. **ชีต Google = source of truth เดียว** — หน้าเว็บไม่มี DB ของตัวเอง ไม่ cache ข้าม session
-2. **ห้าม duplicate logic** — preview/lint ต้อง import ฟังก์ชัน production ตรงๆ:
-   `loadBotLibrary` (อ่านชีต) · `resolveAllVars` · `joinVerbatimParts` · `parseReplyIntoMessages`
-   · `dropUnresolvedVarBubbles` + `KNOWN_RUNTIME_VARS` · `findBannedClaims` · `findBadPrices`
-   + `buildAllowedPriceStrings` · `buildPriceTable` · `formatOrderSummary`
-   ถ้าหน้าเว็บโชว์ไม่ตรงกับที่บอทส่งจริง = บั๊กร้ายแรงของฟีเจอร์นี้
-3. **อยู่ใน repo เดิม** — route `/admin/train` (Next.js เดิม) · ไม่แตะ webhook/Neon prod
-4. อ้างอิงแถวด้วย key column เท่านั้น (step_id / objection_id / faq_id / ตัวแปร / ชื่อกฎ) ห้ามใช้เลขแถว
+- **route `/train`** ใน repo เดิม (Next.js เดิม) · auth ด้วย ENV `TRAIN_PASSWORD` + cookie session ง่ายๆ (HMAC) · ไม่มี ENV = ปิดทั้งฟีเจอร์ 404 + log (All-or-nothing)
+- 🔴 **import engine production ตรงๆ ทุกตัว** — pipeline (processMessage) / resolveAllVars / verbatim / gate / payment pre-check / extraction / lint · **ห้าม duplicate logic** — ถ้าห้องซ้อมตอบไม่ตรงบอทจริง = บั๊กร้ายแรงสุดของฟีเจอร์นี้
+- **Sandbox = AsyncLocalStorage context + guard ที่ฟังก์ชัน I/O ปลายทาง** (leaf) — pipeline วิ่งโค้ด production เส้นเดิมทุกบรรทัด · เฉพาะจุดที่ "ยิงออกนอก" ถูกเบี่ยงเข้า collector ใน context
+- **state ลูกค้าจำลอง = Neon branch แยก** (`DATABASE_URL_TRAIN`) — SQL semantics ตรง prod 100% (delivered_steps array / jsonb merge / counters) โดยไม่แตะ DB จริง · userId จำลองใช้ prefix `TRAIN:` (กันชนกับ LINE id จริง + ระบุ/ล้างได้ถ้ารั่ว)
+- 🔴 ห้ามยิง LINE จริง · ห้ามเขียนชีต Orders (โชว์แทนว่า "จะเขียนแถวนี้") · ห้ามแตะ Neon prod · Gemini = ของจริง (ตั้งใจ — เทสความฉลาดจริง)
 
-## หน้าจอ (จอเดียว 3 ส่วน)
+## เฟส ก — Simulator (แกนหลัก · ทำก่อน) ✅ build แล้ว
 
-**ซ้าย — เลือกแถว:** แท็บ (Step / Objections / FAQ / Vars / Follow) → ลิสต์แถวจากชีตจริง
-(โหลดผ่าน loader เดิม + ปุ่ม refresh ล้าง cache 60 วิ) · แถวที่ lint ไม่ผ่านมี badge แดง
-· โชว์ "โน้ตเจ้าของ" ของแถวนั้นข้างๆ (อ่านอย่างเดียว — คือกติกาที่ตัวเองเคยตั้งไว้)
+> ⚠️ **ข้อจำกัดที่เคาะแล้ว:** simulator เรียก `processMessage` ตรง = **ไม่จำลอง debounce/การรวบข้อความ**
+> (`handleTextMessage` ของ webhook จริงรวบข้อความที่พิมพ์ติดกันเป็นเทิร์นเดียว) — debounce มีผลแค่การรวบ
+> ไม่มีผลต่อผลลัพธ์ต่อเทิร์น (เทส fidelity พิสูจน์) · อยากเทสการรวบ ต้องเทสบน LINE จริง
 
-**กลาง — editor:** ช่องแก้ตามแท็บ — Step: `ตัวอย่างคำตอบ (บอลลูน)` + `ตัวอย่างประโยคปิดท้าย`
-· Objections/FAQ: ช่องคำตอบเดียว · Vars: ค่า · Follow: ข้อความ
-· toolbar แทรก: `[[แยก]]` `[[รูป:…]]` `\n` + เมนูตัวแปร (ลิสต์จาก KNOWN_RUNTIME_VARS + CSV_Vars live
-  — คลิกแทรก ไม่ต้องพิมพ์เอง = ฆ่า typo ที่ต้นทาง)
+- ช่องแชทจำลอง รัน pipeline จริงเต็มสาย: Gemini จริง + payment pre-check + gate + verbatim + ธง delivered_steps + extraction fallback
+- **แผง X-ray** ข้างแชท (มือถือ = ปุ่มพับ): stage ปัจจุบัน · funnel · pending order · ธงที่ตั้งแล้ว · ผล gate · FAQ/OBJ ที่ถูก inject เทิร์นนั้น · blocked/extraction ถ้าเกิด — อ่านจาก (1) state หลังเทิร์นใน train DB (2) log JSON ที่ pipeline พ่นอยู่แล้ว (scope: gate/verbatim/extraction/payment-precheck/degraded) tee เข้า context
+- **ปุ่มจำลองเหตุการณ์ระบบ:** "ติ๊ก M + cron แจกเลข" (เรียก handler cron จริงใน sandbox — เทสล้างธง/ทวนหลังเขียนโดยไม่รอจริง) · "ส่งรูปสลิปจำลอง" (รูปตัวอย่างใน repo + อัปโหลดรูปเองได้) · /reset
+- **เทสบังคับ:** simulator ให้ผลตรง pipeline จริง (เทิร์นเดียวกันผ่าน webhook vs simulator → บอลลูน+state เหมือนกัน) + เทสรั่ว (LINE/ชีต/Blob ต้องเป็นศูนย์)
 
-**ขวา — preview + lint:** บอลลูนหน้าตาแบบ LINE เรนเดอร์จาก pipeline จริง
-(joinVerbatimParts → resolveAllVars → var-guard → parseReplyIntoMessages → enforce text-last)
-· บอลลูนที่จะโดน var-guard ทิ้ง = โชว์ขีดฆ่าสีแดงพร้อมเหตุผล ไม่ใช่หายเงียบ
+## เฟส ข — แตะบอลลูนเพื่อแก้
 
-**Mock context (dropdown เหนือ preview):** ตัวแปรกลุ่มเงิน/pending/snapshot ต้องมีสถานะลูกค้าจำลอง —
-พรีเซ็ตขั้นต่ำ: ① ลูกค้าใหม่ ยังไม่มีออเดอร์ ② pending 3 ถ้วย โอน ③ pending 1 ถ้วย COD (มีค่าส่ง)
-④ มี last_order บันทึกแล้ว (สำหรับ S_EDIT/X2) · ราคาในพรีเซ็ตคำนวณผ่าน `calculatePrice` จากชีตจริง ห้าม mock เลข
+- ทุกบอลลูนบอทกดได้ → panel/bottom-sheet: มาจากแท็บ/แถว/คอลัมน์ไหน (step_id/faq_id/objection_id + ชื่อคอลัมน์) · ข้อความดิบก่อน resolve · ตัวแปรแต่ละตัว resolve เป็นอะไร
+- บอลลูนที่โดน var-guard ทิ้ง = โชว์เป็นบอลลูนขีดฆ่า + เหตุผล (**ห้ามหายเงียบ**)
+- แก้ในช่อง → เซฟเป็น **draft overlay** (ทับค่าชีตเฉพาะใน simulator) → ปุ่ม "เล่นเทิร์นนี้ใหม่" เห็นผลทันที
+- lint รันสดทุกครั้งที่พิมพ์ (ตารางเช็คด้านล่าง)
 
-## Lint (เรียงตามอันตราย)
+## เฟส ค — เขียนกลับ + copy
+
+- ต่อเซลล์: ปุ่ม **Copy** (พร้อมวาง) + ปุ่ม **"เขียนลงชีต"** → target ด้วย key column + header (**ห้ามใช้ A1 ตายตัว**) → โชว์ diff เก่า/ใหม่ → ยืนยัน → เขียนผ่าน Sheets API
+- เขียนสำเร็จ → จดลงแท็บใหม่ **TRAIN_LOG** (เวลา/แท็บ/แถว/คอลัมน์/ค่าเก่าย่อ/ค่าใหม่ย่อ) → เคลียร์ draft overlay ของเซลล์นั้น
+- **lint แดง = ปุ่มเขียนถูกปิด** (copy ยังได้ พร้อมคำเตือน)
+- ต้องการสิทธิ์ service account = **Editor** บนชีต BotLibrary (✅ เจ้าของตั้งแล้ว)
+
+## เฟส ง — mobile polish
+
+- จอแคบ = แชทเต็มจอ · แตะบอลลูน → bottom sheet editor · ปุ่ม/ฟอนต์ขนาดนิ้วโป้ง · เทสบน viewport แคบจริง
+
+## Lint (คงจาก spec เดิม · เรียงตามอันตราย)
 
 | เช็ค | ใช้ของ | ผล |
 |---|---|---|
-| ตัวแปร "ไม่รู้จัก" (typo/ยังไม่มี resolver) | KNOWN_RUNTIME_VARS + CSV_Vars | 🔴 บล็อก copy — ของแบบนี้จะหลุดดิบหรือโดนทิ้งบอลลูน |
+| ตัวแปร "ไม่รู้จัก" (typo/ยังไม่มี resolver) | KNOWN_RUNTIME_VARS + CSV_Vars | 🔴 บล็อกเขียน/copy เตือนแรง |
 | ตัวแปรรู้จักแต่ resolve ไม่ได้ใน context นี้ | dropUnresolvedVarBubbles | เตือน: บอลลูนนี้จะถูกทิ้งเมื่อสถานะลูกค้า = X |
-| claims พ.ร.บ.อาหาร | findBannedClaims (คำจาก Config จริง) | 🔴 บล็อก copy |
-| ตัวเลขราคานอกระบบ | findBadPrices + buildAllowedPriceStrings | 🔴 บล็อก copy (ราคาอยู่ใน Products/Promo/Config เท่านั้น) |
+| claims พ.ร.บ.อาหาร | findBannedClaims (คำจาก Config จริง) | 🔴 บล็อกเขียน |
+| ตัวเลขราคานอกระบบ | findBadPrices + buildAllowedPriceStrings | 🔴 บล็อกเขียน (ราคาอยู่ใน Products/Promo/Config เท่านั้น) |
 | เกิน cap 5 บอลลูน / บอลลูนสุดท้ายเป็นรูป | parseReplyIntoMessages | เตือน + โชว์ผลหลังโค้ดจัดการ |
 | ช่องว่างทั้งคู่ (step) | stepVerbatim | เตือน: แถวนี้จะ fallback AI |
 | ชื่อตัวแปรใน Vars ชนตัวแปรระบบ | KNOWN_RUNTIME_VARS | 🔴 บล็อก |
 
-## Output ของ T1
+## Setup ฝั่งเจ้าของ
 
-ปุ่ม **Copy ต่อช่อง** — ได้ข้อความพร้อมวางลง cell ชีตตรงช่องนั้น (บอกชื่อแท็บ+คอลัมน์+key ให้ชัด)
-T1 ไม่เขียนชีตเอง · แก้เสร็จเจ้าของวางเอง 1 ครั้ง = จุดตรวจสุดท้ายโดยมนุษย์
+- ✅ ENV `TRAIN_PASSWORD` ใน Vercel (ตั้งแล้ว)
+- ✅ service account เป็น Editor ของชีต BotLibrary (ตั้งแล้ว — ใช้เฟส ค)
+- ⏳ ENV `DATABASE_URL_TRAIN` = Neon branch ใหม่ชื่อ `train` (สำหรับ state ลูกค้าจำลอง — รอเคาะแผนเฟส ก)
 
-## Auth + ความปลอดภัย
+## กติกา build
 
-- route ต้องมีรหัส (ENV ใหม่ `TRAIN_PASSWORD` · cookie session ง่ายๆ) — ห้ามเปิด public
-- read-only ทั้งหน้า: อ่านชีตผ่าน loader เดิม (สิทธิ์ service account เดิม) · ไม่แตะ Neon · ไม่ยิง LINE
-- ห้าม log เนื้อหา pattern ยาวๆ ลง Vercel log (กันรก ไม่ใช่ PII แต่ไม่จำเป็น)
+report แผน+จุดแตะไฟล์ก่อนเริ่มทุกเฟส · 1 เฟส 1 commit · npm test เขียวทุก commit · จบเฟสอัปเดต STATUS ในคอมมิตเดียวกัน · ห้ามแตะ invariants/H1/gate/pricing · เฟส ก ต้องมีเทส fidelity + เทสรั่ว
 
-## เฟสถัดไป (ไม่ทำใน T1 — กันบานปลาย)
+## Definition of done (ต่อเฟส)
 
-- **T2 Simulator:** แชทจำลองในหน้าเดียวกัน รัน pipeline จริง (Gemini จริง โหมด harness · state ใน memory
-  ไม่แตะ Neon prod) เทสบทกับ pattern ฉบับร่างก่อนลงชีต · ปุ่ม "รัน golden 25 เคส" จาก
-  `golden-routing-cases` โชว์ผ่าน/ตกเป็นตาราง — นี่จะกลายเป็นหน้าปัดสุขภาพบอทประจำ
-- **T3 เขียนกลับชีต:** Sheets API update รายเซลล์ target จาก key column + ชื่อ header (header-driven
-  ไม่ใช้ A1 ตายตัว) + จอ confirm diff ก่อนเขียน + บันทึกประวัติแก้ (แท็บ log หรือ Neon) ·
-  ทำเมื่อใช้ T1 จนไว้ใจ lint แล้วเท่านั้น
-- **T4 คิวเคสนอกตาราง:** ดึงแชทที่เข้า S_UNKNOWN / handoff มาเรียงเป็นคิว "รอเทรน" —
-  คลิกเคส → ระบบเดาว่าควรเป็นแถวใหม่ใน Step/Objections/FAQ → เจ้าของเขียน pattern ใน editor เดิม
-  → ปิดลูปเทรนครบวงจร (เคสจริง → ตาราง → บอทฉลาดขึ้น โดยทุกคำยังเป็นของเจ้าของ)
-
-## Definition of done (T1)
-
-แก้ pattern S2 ใส่ตัวแปรผิด 1 ตัว → lint จับ+บล็อกได้ · แก้ถูก → preview ตรงกับที่บอทส่งจริงบน LINE
-คำต่อคำ (เทสเทียบ 3 step กับ production) · เจ้าของเขียน pattern ครบทุก step ได้โดยไม่เปิด log Vercel เลย
+- **ก:** คุยกับปลาทูจำลองบนมือถือได้จริง (Gemini จริง) · สั่งของจนออเดอร์ "จะถูกเขียน" + จำลอง cron แจกเลข + ซื้อซ้ำเห็นธงล้าง — โดย LINE จริง/ชีตจริง/Neon prod ไม่ขยับแม้แต่แถวเดียว (มีเทสพิสูจน์)
+- **ข:** แตะบอลลูน เห็นที่มา+ตัวแปร แก้ draft แล้วเล่นซ้ำเห็นผลใหม่ทันที · บอลลูนโดนทิ้งไม่หายเงียบ
+- **ค:** แก้ในห้องซ้อม → เขียนลงชีตจริงได้ปลอดภัย (diff+ยืนยัน+TRAIN_LOG) · lint แดงเขียนไม่ได้
+- **ง:** ใช้ครบ flow บนจอมือถือแคบจริงโดยไม่ต้อง pinch-zoom

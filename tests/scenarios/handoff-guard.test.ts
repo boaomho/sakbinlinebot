@@ -7,7 +7,7 @@ import { resolve } from "path";
  * ถ้าใครเขียน handoff ใหม่แล้ว push/setHumanMode เองนอกประตู (แบบ X2/damage เดิม) → เทสนี้แดง
  * (setHumanMode(false)=auto-return · setHumanMode(userId,close)=คำสั่งแอดมิน — คนละเรื่อง ไม่นับ)
  */
-const src = readFileSync(resolve(process.cwd(), "app/api/line-webhook/route.ts"), "utf8");
+const src = readFileSync(resolve(process.cwd(), "app/api/line-webhook/handler.ts"), "utf8");
 
 describe("handoff guard — ปิดบอทผ่านประตูรวมที่เดียว (D-33)", () => {
   it("มี call จริง 'await setHumanMode(userId, true)' จุดเดียวในไฟล์", () => {

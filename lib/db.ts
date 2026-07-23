@@ -1,10 +1,27 @@
 import { neon, NeonQueryFunction } from "@neondatabase/serverless";
 import { PendingOrder, LastOrder } from "./core/orders";
+import { getTrainSandbox } from "./train/sandbox";
 
 let sqlClient: NeonQueryFunction<false, false> | null = null;
+let trainSqlClient: NeonQueryFunction<false, false> | null = null;
 let schemaReady = false;
+let trainSchemaReady = false;
 
+/**
+ * T-STUDIO: อยู่ใน sandbox (/train) → ใช้ DATABASE_URL_TRAIN (Neon branch แยก) — จุดเดียวจบ
+ * ทุกฟังก์ชัน db ได้ SQL semantics จริงครบโดย prod ไม่ขยับ · เลขออเดอร์/ธง/counter แยก branch
+ * 🔴 guard ตัดสินจาก ALS context เท่านั้น (เงื่อนไข ก) — ไม่มี context = production เดิมทุกบรรทัด
+ */
 function getSql(): NeonQueryFunction<false, false> {
+  if (getTrainSandbox()) {
+    if (!trainSqlClient) {
+      if (!process.env.DATABASE_URL_TRAIN) {
+        throw new Error("DATABASE_URL_TRAIN is not set (ห้องซ้อม /train ต้องมี Neon branch แยก)");
+      }
+      trainSqlClient = neon(process.env.DATABASE_URL_TRAIN);
+    }
+    return trainSqlClient;
+  }
   if (!sqlClient) {
     if (!process.env.DATABASE_URL) {
       throw new Error("DATABASE_URL is not set");
@@ -15,7 +32,10 @@ function getSql(): NeonQueryFunction<false, false> {
 }
 
 export async function ensureSchema(): Promise<void> {
-  if (schemaReady) return;
+  // ธง ready แยกต่อ connection (T-STUDIO) — migrate (ADD COLUMN IF NOT EXISTS ฯลฯ) รันอัตโนมัติ
+  // กับ DB ที่กำลังต่อ ครั้งแรกที่แตะ → train branch ไม่ drift เอง ไม่ต้องรัน manual
+  const inTrain = Boolean(getTrainSandbox());
+  if (inTrain ? trainSchemaReady : schemaReady) return;
   const sql = getSql();
 
   await sql`
@@ -115,7 +135,18 @@ export async function ensureSchema(): Promise<void> {
     )
   `;
 
-  schemaReady = true;
+  // T-STUDIO: state ของ session ห้องซ้อม (fake grid ออเดอร์ ฯลฯ) — ใช้จริงเฉพาะ train branch
+  // สร้างทั้ง 2 DB (schema เหมือนกัน 100% กัน drift) · บน prod = ตารางว่างเฉยๆ ไม่มีใครเขียน
+  await sql`
+    CREATE TABLE IF NOT EXISTS train_sessions (
+      session_id TEXT PRIMARY KEY,
+      data JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+
+  if (inTrain) trainSchemaReady = true;
+  else schemaReady = true;
 }
 
 export interface CustomerState {
@@ -672,4 +703,34 @@ export async function nextOrderNumber(day: string): Promise<number> {
     RETURNING last_no
   `;
   return Number((rows[0] as Record<string, unknown>).last_no);
+}
+
+// ---- T-STUDIO: state ของ session ห้องซ้อม (เรียกจากใน sandbox เท่านั้น → เขียนลง train branch) ----
+
+export interface TrainSessionData {
+  orderRows: string[][];
+  slipCounter: number;
+}
+
+export async function loadTrainSession(sessionId: string): Promise<TrainSessionData | null> {
+  await ensureSchema();
+  const sql = getSql();
+  const rows = await sql`SELECT data FROM train_sessions WHERE session_id = ${sessionId}`;
+  if (rows.length === 0) return null;
+  return (rows[0] as Record<string, unknown>).data as TrainSessionData;
+}
+
+export async function saveTrainSession(sessionId: string, data: TrainSessionData): Promise<void> {
+  await ensureSchema();
+  const sql = getSql();
+  await sql`
+    INSERT INTO train_sessions (session_id, data, updated_at) VALUES (${sessionId}, ${JSON.stringify(data)}::jsonb, now())
+    ON CONFLICT (session_id) DO UPDATE SET data = EXCLUDED.data, updated_at = now()
+  `;
+}
+
+export async function deleteTrainSession(sessionId: string): Promise<void> {
+  await ensureSchema();
+  const sql = getSql();
+  await sql`DELETE FROM train_sessions WHERE session_id = ${sessionId}`;
 }

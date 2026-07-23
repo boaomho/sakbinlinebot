@@ -1,6 +1,10 @@
 import { messagingApi } from "@line/bot-sdk";
+import { getTrainSandbox } from "./train/sandbox";
 
 type Message = messagingApi.Message;
+
+// T-STUDIO guard: อยู่ใน sandbox (/train) → เก็บเข้า collector แทนยิง LINE จริง
+// 🔴 ตัดสินจาก ALS context เท่านั้น (เงื่อนไข ก) — ไม่มี context = production เดิมทุกบรรทัด
 
 const MAX_MESSAGES_PER_SEND = 5;
 const IMAGE_TOKEN = /\[\[รูป:([^\]]+)\]\]/g;
@@ -118,6 +122,11 @@ export function parseReplyIntoMessages(reply: string, collapseBubbles = false): 
 export async function replyMessages(replyToken: string, reply: string, collapseBubbles = false): Promise<boolean> {
   const messages = parseReplyIntoMessages(reply, collapseBubbles);
   if (messages.length === 0) return false;
+  const train = getTrainSandbox();
+  if (train) {
+    train.replies.push({ via: "reply", messages });
+    return true;
+  }
   const result = await withRetry(
     () => getClient().replyMessage({ replyToken, messages }),
     "replyMessage",
@@ -128,11 +137,21 @@ export async function replyMessages(replyToken: string, reply: string, collapseB
 export async function pushMessages(to: string, reply: string, collapseBubbles = false): Promise<boolean> {
   const messages = parseReplyIntoMessages(reply, collapseBubbles);
   if (messages.length === 0) return false;
+  const train = getTrainSandbox();
+  if (train) {
+    train.replies.push({ via: "push", messages });
+    return true;
+  }
   const result = await withRetry(() => getClient().pushMessage({ to, messages }), "pushMessage");
   return result !== null;
 }
 
 export async function pushRawText(to: string, text: string): Promise<boolean> {
+  const train = getTrainSandbox();
+  if (train) {
+    train.adminPushes.push({ to, text });
+    return true;
+  }
   const result = await withRetry(
     () => getClient().pushMessage({ to, messages: [{ type: "text", text } as Message] }),
     "pushMessage-raw",
@@ -142,6 +161,11 @@ export async function pushRawText(to: string, text: string): Promise<boolean> {
 
 export async function pushRawMessages(to: string, messages: Message[]): Promise<boolean> {
   if (messages.length === 0) return false;
+  const train = getTrainSandbox();
+  if (train) {
+    train.adminPushes.push({ to, messages: messages.slice(0, MAX_MESSAGES_PER_SEND) });
+    return true;
+  }
   const result = await withRetry(
     () => getClient().pushMessage({ to, messages: messages.slice(0, MAX_MESSAGES_PER_SEND) }),
     "pushMessage-raw-multi",
@@ -150,6 +174,11 @@ export async function pushRawMessages(to: string, messages: Message[]): Promise<
 }
 
 export async function startLoadingIndicator(chatId: string, seconds = 20): Promise<void> {
+  const train = getTrainSandbox();
+  if (train) {
+    train.loadingCalls++;
+    return;
+  }
   const clamped = Math.max(5, Math.min(60, Math.round(seconds / 5) * 5));
   await withRetry(
     () => getClient().showLoadingAnimation({ chatId, loadingSeconds: clamped }),
@@ -159,6 +188,7 @@ export async function startLoadingIndicator(chatId: string, seconds = 20): Promi
 }
 
 export async function getProfileName(userId: string): Promise<string> {
+  if (getTrainSandbox()) return "ลูกค้าเทรน"; // LINE profile API จะ error กับ TRAIN: id ปลอม
   const result = await withRetry(() => getClient().getProfile(userId), "getProfile", 2);
   return result?.displayName || userId;
 }
@@ -169,6 +199,8 @@ export interface DownloadedContent {
 }
 
 export async function downloadMessageContent(messageId: string): Promise<DownloadedContent | null> {
+  // sandbox ส่งรูปเข้า processMessage ตรง — ปกติไม่ถึงตัวนี้ · guard กันเผื่อ (ห้ามยิง LINE content API)
+  if (getTrainSandbox()) return null;
   try {
     const stream = await getBlobClient().getMessageContent(messageId);
     const chunks: Buffer[] = [];

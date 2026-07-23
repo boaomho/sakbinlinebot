@@ -26,10 +26,16 @@ lib/
   blob.ts         Vercel Blob — สลิป (private) + สินค้า (public)
   admin-commands.ts  parse คำสั่งในกลุ่มแอดมิน (ปิด/เปิดบอท)
   flex-cards.ts   Flex Cards (ปิดอยู่)
+  train/          # T-STUDIO ห้องซ้อมเทรน (/train · เฟส ก)
+    sandbox.ts      ALS context + collectors + console tee + fake grid Orders (wrapSheetsForSandbox)
+    turn.ts         runTrainTurn/runTrainCron/runTrainReset — orchestration ใน sandbox
+    auth.ts         TRAIN_PASSWORD + cookie HMAC · guardTrainRequest (All-or-nothing → 404)
 app/api/
-  line-webhook/route.ts   webhook หลัก (POST) — เครื่องยนต์ทั้งหมด
+  line-webhook/route.ts   webhook (POST บาง — Next ห้าม route.ts export อื่น)
+  line-webhook/handler.ts เครื่องยนต์ทั้งหมด (ย้ายเชิงกลไกจาก route.ts ตอน T-STUDIO ก · export handleEvent+processMessage)
   cron/orders/route.ts    cron แจกเลขออเดอร์ + ยิงกลุ่มแพ็ค
   cron/follow/route.ts    cron ตามลูกค้า (Follow — dormant)
+app/train/        # T-STUDIO UI (page+TrainStudio client) + api/{login,turn,reset,cron}
 tests/
   harness/        replay(webhook+HMAC จริง) · setup(mock) · state · db · sheet · assert · fixtures
   scenarios/      *.test.ts (golden/order-core/inject/sheet-*/config-parse/gemini-guard/prompt-lint/image-url/expect-fail)
@@ -62,11 +68,13 @@ scripts/sheet-lint.mjs  D-45 · lint keyword ชีตจริง (คำโด
 > 🔴 **D-47/D-48:** payment pre-check (มี items → คำจ่ายล้วน ข้าม AI · พ่วงอื่น ล็อก payment ทับ · **D-48 ตัด noPaymentYet → ครอบเคสเปลี่ยนวิธีจ่าย**) ก่อนเรียก Gemini · redact เลขบัญชี/เบอร์ ใน history/state input (log `scope:"redact"` count)
 > 🔴 **D-48 extraction fallback (`gemini.ts` `runExtraction`):** call หลัก blocked → ยิง extraction call จิ๋ว (system สั้น "สกัด order_data" · ไม่มี prompt ขาย/ราคา/step/history = ตัดกลิ่นเงิน) → order_data/payment เข้า gate · stage=current · degraded=false · `recovered=true` · extraction ก็ blocked → fallback degraded (ตาข่าย D-46) · **แทน** retry เดิม · ในงบ 8s
 > 🔴 **D-49 ปิดช่องปาก-มือ (route หลัง merge · ก่อนเลือกข้อความ):** คำนวณ post-merge gate → **#1** `recovered` → `resolveRecoveredStage` เลือกประตูปลายทาง (complete→won · เลือกจ่าย→ประตูวิธีจ่าย) แทนตรึง current · **#3** `orderCompleteThisTurn` → complete ชนะ FAQ/OBJ (guard `!orderCompleteThisTurn`) · **#2** `!lastOrder && complete` → `synthLastOrder` จาก pending+price (order_id="" → guard ทิ้งบอลลูน `{ออเดอร์_เลขที่}`) เข้า `varCtx.lastOrder` · `resolveOrderVars` ค่าว่าง = คง token (ให้ guard ทิ้งบอลลูน)
+> 🔴 **T-STUDIO sandbox (เฟส ก):** `lib/train/sandbox.ts` `getTrainSandbox()`/`runInSandbox()`/`createSandbox()`/`trainUserId()`/`wrapSheetsForSandbox()` — guard ใน **line.ts (reply/push/pushRaw*/loading/getProfile/download) · blob.ts (uploadSlip/getSlipSignedUrl) · sheets/client.ts (proxy ชีต Orders → fake grid · header+BotLibrary ผ่านจริง) · db.ts getSql() (→DATABASE_URL_TRAIN)** · 🔴 guard เช็ค ALS เท่านั้น — ไม่มี context = production เดิมทุกบรรทัด · `lib/train/turn.ts` `runTrainTurn`/`runTrainCron`(เรียก cron GET จริง)/`runTrainReset` · `lib/train/auth.ts` `guardTrainRequest` · db: +ตาราง `train_sessions` (grid ต่อ session · schema เหมือนกัน 2 DB กัน drift) + `loadTrainSession`/`saveTrainSession`/`deleteTrainSession` · `ensureSchema` ธง ready แยกต่อ connection = **migrate อัตโนมัติต่อ DB**
+
 **lib/config.ts** — `getConfig()` · `resolveFeatureSwitches(config) → FeatureSwitches` · `formatConfigForPrompt`
 **lib/db.ts** — `ensureCustomer`/`mergePendingOrder`(items+order_id)/`reconcileWaitTags`(ลบเฉพาะ รอโอน/รอที่อยู่)/`resetCustomerMemory`(ล้าง human_mode+last_order · D-25/D-32)/`nextOrderNumber`(atomic · ลำดับ col A)/**D-29** `isOrderWritten`/`markOrderWritten`(ตาราง `orders_written` · idempotency source of truth)/**D-32** `setLastOrder`(customers.last_order JSONB snapshot)/`setLastOrderLocked`(M=TRUE)/**D-45b** `addDeliveredStep`+`clearDeliveredStepsExceptCurrent`(`delivered_steps TEXT[]` · ธง "ส่งเนื้อหา step แล้ว" → เคยส่ง=ปิดท้ายอย่างเดียว · cron แจกเลข=ล้างธงคง stage ปัจจุบัน · /reset ล้างหมด) ฯลฯ · CustomerState +`lastOrder`/`lastOrderLocked`/`deliveredSteps` · `CustomerState.tags` inject เข้า `<สถานะลูกค้า>` ทุกเทิร์น (คุมเงื่อนไขขายด้วยแท็กได้)
 
 ## 3. จุดประกอบ prompt (ตามลำดับ)
-1. `route.ts processMessage` → `loadBotLibrary()` ได้ CSV_Step/FAQ/Products/Promo/Config
+1. `line-webhook/handler.ts processMessage` (เดิมอยู่ route.ts · ย้ายตอน T-STUDIO ก) → `loadBotLibrary()` ได้ CSV_Step/FAQ/Products/Promo/Config
 2. `buildStepInjection` + `buildFaqInjection` + `buildCatalogInjection` + `buildObjectionInjection` + `buildExampleInjection` → stepText/faqText/catalogText/objectionText/exampleText
 3. `formatConfigForPrompt` → configText · `buildStateText` → stateText · `getRecentHistory`+`formatHistoryForPrompt` → historyText
    - 🔴 D-15 **pre-resolve**: ถ้า pending มี items → `computeQuote` → `resolveRuntimeVars(stepText, vars)` (บอทพูดยอดได้ในเทิร์นเดียว)
@@ -92,8 +100,10 @@ scripts/sheet-lint.mjs  D-45 · lint keyword ชีตจริง (คำโด
 | `GOOGLE_SERVICE_ACCOUNT` | sheets/client.ts (JWT) |
 | `ADMIN_GROUP_ID` · `ORDER_GROUP_ID` | route.ts/cron (push แอดมิน/แพ็ค) |
 | `BLOB_SLIPS_TOKEN` · `BLOB_PRODUCTS_TOKEN` | blob.ts |
-| `CRON_SECRET` | cron/* (Bearer auth) |
+| `CRON_SECRET` | cron/* (Bearer auth) · train/turn.ts (cron จำลองเรียก handler จริง) |
 | `DIAG_PROMPT_TOKENS` | gemini.ts (=1 → log token จริงต่อ segment) |
+| `TRAIN_PASSWORD` | train/auth.ts — คุมฟีเจอร์ /train (ไม่มี = 404 ทั้งก้อน) |
+| `DATABASE_URL_TRAIN` | db.ts getSql() — Neon branch `train` (state ลูกค้าจำลอง · ใน sandbox เท่านั้น) |
 > ⚠️ `SHEET_STEP/FAQ/CONFIG/FOLLOW_URL` **โค้ดไม่อ่านแล้ว** (Step 1 ย้ายไป BOTLIB) — ลบได้ (Phase C ยังไม่ทำ)
 
 ## 6. CSV_Config keys ที่โค้ดอ่าน (ชื่อตรงตัว · มี alias)

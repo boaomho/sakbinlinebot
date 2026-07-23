@@ -1,4 +1,5 @@
 import { put, issueSignedToken, presignUrl } from "@vercel/blob";
+import { getTrainSandbox } from "./train/sandbox";
 
 function pad2(n: number): string {
   return String(n).padStart(2, "0");
@@ -15,6 +16,13 @@ export interface UploadResult {
  * สร้าง signed GET URL ใหม่ทุกครั้งที่ต้องใช้จริง (เช่น ตอน push เข้ากลุ่มแอดมิน)
  */
 export async function uploadSlip(userId: string, buffer: Buffer, contentType: string): Promise<UploadResult | null> {
+  // T-STUDIO guard: sandbox → ไม่อัปโหลด Blob จริง คืน pathname จำลอง (ALS เท่านั้น — เงื่อนไข ก)
+  const train = getTrainSandbox();
+  if (train) {
+    const pathname = `train/slip-${++train.slipCounter}.jpg`;
+    train.slipUploads.push(pathname);
+    return { pathname, url: `train://${pathname}` };
+  }
   const token = process.env.BLOB_SLIPS_TOKEN;
   if (!token) return null;
 
@@ -37,6 +45,7 @@ export async function uploadSlip(userId: string, buffer: Buffer, contentType: st
 
 /** สร้าง signed GET URL ของสลิป อายุ validDays วัน (default ใช้ค่าจาก Config `อายุลิงก์สลิป_วัน`) */
 export async function getSlipSignedUrl(pathname: string, validDays: number): Promise<string | null> {
+  if (getTrainSandbox()) return `train://signed/${pathname}`; // path จำลอง sign จริงไม่ได้
   const token = process.env.BLOB_SLIPS_TOKEN;
   if (!token) return null;
 
