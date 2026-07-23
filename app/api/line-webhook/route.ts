@@ -9,7 +9,7 @@ import {
   FeatureSwitches,
 } from "@/lib/config";
 import { loadBotLibrary } from "@/lib/sheets/loader";
-import { buildStepInjection, buildFaqInjection, buildCatalogInjection, buildObjectionInjection, readConfigDescription, funnelStageOf, stepNameOf, stepVerbatim, stepClosing, joinVerbatimParts } from "@/lib/agent/inject";
+import { buildStepInjection, buildFaqInjection, buildCatalogInjection, buildObjectionInjection, readConfigDescription, funnelStageOf, stepNameOf, stepVerbatim, stepClosing, joinVerbatimParts, detectPaymentChoice, isPaymentChoiceOnly, resolvePaymentStep, redactFinancial } from "@/lib/agent/inject";
 import {
   ensureCustomer,
   updateCustomerAfterTurn,
@@ -46,7 +46,7 @@ import {
   CustomerBrief,
   PendingChoice,
 } from "@/lib/db";
-import { runSalesTurn, ImageIntent } from "@/lib/gemini";
+import { runSalesTurn, ImageIntent, GeminiTurnOutput } from "@/lib/gemini";
 import {
   replyMessages,
   pushMessages,
@@ -544,7 +544,7 @@ async function processMessage(
   const objCap = numFromRaw(config, "จำนวนข้อโต้แย้งที่ยัดเข้า prompt", 2);
   const objection = lib ? buildObjectionInjection(lib.CSV_Objections, userMessage, objCap) : { text: "", matchedIds: [] as string[], verbatim: null };
   const configText = formatConfigForPrompt(config);
-  const stateText = buildStateText(customer, orderWarning, preOrderPriceStuck, lastOrderLine);
+  let stateText = buildStateText(customer, orderWarning, preOrderPriceStuck, lastOrderLine);
 
   let historyText = "(ระบบความจำปิดอยู่)";
   if (switches.memory) {
@@ -552,36 +552,66 @@ async function processMessage(
     historyText = formatHistoryForPrompt(history);
   }
 
-  const geminiOutput = await withTimeout(
-    runSalesTurn({
-      config,
-      configText,
-      stepText,
-      faqText,
-      catalogText,
-      objectionText: objection.text,
-      stateText,
-      historyText,
-      userMessage,
-      currentStage: previousStage ?? "1",
-      image: imageForGemini,
-    }),
-    GEMINI_TIMEOUT_MS,
-    {
-      reply: DEFAULT_REPLY,
-      stage: previousStage ?? "1",
-      tagsAdd: [] as string[],
-      handoff: false,
-      handoffReason: "",
-      orderData: {},
-      paymentMethod: "" as const,
-      orderEditRequest: false,
-      imageIntent: "other" as ImageIntent,
-      imageNote: "",
-      objectionDetected: "none",
-      degraded: true, // withTimeout กินเวลาเกิน 8s = Gemini ล้ม
-    },
-  );
+  // 🔴 D-47 ชิ้น 2: redact เลขบัญชี/เบอร์ (ค่าที่รู้จริง) ใน input โมเดล — ลดชนวน money-fraud classifier
+  //    เฉพาะ history (เทิร์นเก่า) + state · ข้อความสด userMessage ไม่แตะ (AI ต้องสกัดเบอร์/ที่อยู่จากเทิร์นนี้) · DB/ลูกค้า ไม่แตะ
+  const redactAccounts = [config.raw.get("เลขที่บัญชี") ?? "", config.raw.get("เลขพร้อมเพย์") ?? ""];
+  const redactPhones = [customer?.pendingOrder["เบอร์"] ?? "", lastOrder?.["เบอร์"] ?? ""];
+  historyText = redactFinancial(historyText, redactAccounts, redactPhones);
+  stateText = redactFinancial(stateText, redactAccounts, []); // state คง เบอร์ ไว้ให้ AI รู้ว่าเก็บแล้ว (redact แค่บัญชี)
+
+  // 🔴 D-47 ชิ้น 1: payment pre-check — เทิร์นเลือกวิธีจ่าย (เสี่ยงบล็อกสูงสุด) โค้ดตัดสิน ไม่พึ่ง AI
+  //    เงื่อนไข: มี items ใน pending + ยังไม่มีวิธีจ่าย + ไม่มีรูป → จับ โอน/COD จากข้อความ
+  const noPaymentYet = !(customer?.pendingOrder["การชำระเงิน"]);
+  const prePayment = ordersActive && customer && preItems.length > 0 && noPaymentYet && !imageContent
+    ? detectPaymentChoice(userMessage) : "";
+  // ข้อความ = คำเลือกวิธีจ่ายล้วน + resolve ประตูได้ → ข้าม AI ทั้งเทิร์น (deterministic)
+  const preCheckStep = prePayment && isPaymentChoiceOnly(userMessage) && lib ? resolvePaymentStep(lib.CSV_Step, prePayment) : null;
+
+  let geminiOutput: GeminiTurnOutput;
+  if (preCheckStep) {
+    geminiOutput = {
+      reply: "", stage: preCheckStep, tagsAdd: [], handoff: false, handoffReason: "",
+      orderData: {}, paymentMethod: prePayment, orderEditRequest: false,
+      imageIntent: "other", imageNote: "", objectionDetected: "none", degraded: false,
+    };
+    console.log(JSON.stringify({ scope: "payment-precheck", payment: prePayment, stage: preCheckStep, skippedAI: true }));
+  } else {
+    geminiOutput = await withTimeout(
+      runSalesTurn({
+        config,
+        configText,
+        stepText,
+        faqText,
+        catalogText,
+        objectionText: objection.text,
+        stateText,
+        historyText,
+        userMessage,
+        currentStage: previousStage ?? "1",
+        image: imageForGemini,
+      }),
+      GEMINI_TIMEOUT_MS,
+      {
+        reply: DEFAULT_REPLY,
+        stage: previousStage ?? "1",
+        tagsAdd: [] as string[],
+        handoff: false,
+        handoffReason: "",
+        orderData: {},
+        paymentMethod: "" as const,
+        orderEditRequest: false,
+        imageIntent: "other" as ImageIntent,
+        imageNote: "",
+        objectionDetected: "none",
+        degraded: true, // withTimeout กินเวลาเกิน 8s = Gemini ล้ม
+      },
+    );
+    // 🔴 เส้นทางเงิน deterministic: pre-check จับวิธีจ่ายได้ (ข้อความพ่วงอื่น/AI degraded ไม่ตั้ง) → ล็อกทับผล AI
+    if (prePayment && !geminiOutput.paymentMethod) {
+      geminiOutput = { ...geminiOutput, paymentMethod: prePayment };
+      console.log(JSON.stringify({ scope: "payment-precheck", payment: prePayment, lockedOverAI: true }));
+    }
+  }
 
   // D-27 log: objection ที่ AI ตรวจพบ vs code keyword-match → หาสำนวนที่ยังไม่อยู่ในชีต (เจ้าของเติมช่อง "ลูกค้าพูดแบบไหนบ้าง")
   if (geminiOutput.objectionDetected && geminiOutput.objectionDetected !== "none") {

@@ -610,3 +610,41 @@ export function stepClosing(rows: string[][], stepId: string): string {
   const parsed = parseStepRows(rows);
   return parsed?.steps.find((s) => s.stepId === stepId)?.closing ?? "";
 }
+
+// ---- D-47: payment pre-check (เส้นทางเงิน deterministic · ไม่พึ่ง AI เทิร์นเลือกวิธีจ่าย) ----
+/** จับวิธีจ่ายจากข้อความ (โอน↔COD) · ก้ำกึ่ง (มีทั้งคู่/ไม่มี) = "" ให้ AI ตัดสิน */
+export function detectPaymentChoice(message: string): "โอน" | "COD" | "" {
+  const m = message.toLowerCase();
+  const cod = /เก็บเงินปลายทาง|เก็บปลายทาง|ปลายทาง|\bcod\b/.test(m);
+  const transfer = /โอน/.test(message);
+  if (cod && !transfer) return "COD";
+  if (transfer && !cod) return "โอน";
+  return "";
+}
+
+/** ข้อความ = "คำเลือกวิธีจ่ายล้วน" มั้ย (สั้น ไม่มีตัวเลข · ตัดคำจ่าย+คำสุภาพเหลือ ≤2) → ข้าม AI ได้
+ *  🔴 มีตัวเลข (พ่วงที่อยู่/เบอร์) หรือเนื้อเหลือเยอะ = ยังต้องเรียก AI */
+export function isPaymentChoiceOnly(message: string): boolean {
+  if (/\d/.test(message)) return false;
+  const rest = message
+    .replace(/โอนเงิน|โอน|เก็บเงินปลายทาง|เก็บปลายทาง|ปลายทาง|cod/gi, "")
+    .replace(/ค่ะ|ครับ|คะ|นะ|ค่า|เอา|ขอ|รับ|เป็น|ดี|ด้วย|จ่าย|ชำระ|แล้ว/g, "")
+    .replace(/[\s.!?]/g, "");
+  return [...rest].length <= 2;
+}
+
+/** หา step_id ประตูที่ผูกวิธีจ่าย (data-driven จาก "เข้าเมื่อ" · gatePayment) — ประตูแรกในลำดับชีตที่ตรง · null=ไม่พบ */
+export function resolvePaymentStep(rows: string[][], payment: "โอน" | "COD"): string | null {
+  const parsed = parseStepRows(rows);
+  if (!parsed) return null;
+  return parsed.steps.find((s) => gatePayment(s) === payment)?.stepId ?? null;
+}
+
+/** D-47: ปิดบังข้อมูลการเงินใน input โมเดล (history/state) — เลขบัญชี/เบอร์ (ค่าที่รู้จริง) → label
+ *  🔴 ใช้เฉพาะ input Gemini · ข้อความจริงถึงลูกค้า/DB ไม่แตะ · verbatim = AI ไม่ต้องพิมพ์เลขพวกนี้ (resolver ใส่) */
+export function redactFinancial(text: string, accounts: string[], phones: string[]): string {
+  let out = text;
+  for (const a of accounts) if (a && a.replace(/\D/g, "").length >= 6) out = out.split(a).join("[เลขบัญชี]");
+  for (const p of phones) if (p && p.replace(/\D/g, "").length >= 9) out = out.split(p).join("[เบอร์]");
+  return out;
+}

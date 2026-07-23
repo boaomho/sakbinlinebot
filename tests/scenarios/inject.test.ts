@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { buildStepInjection, buildFaqInjection, buildCatalogInjection, buildObjectionInjection, readConfigDescription, resolveDestinations, validateStepFunnelStages, VALID_FUNNEL_STAGES } from "@/lib/agent/inject";
+import { buildStepInjection, buildFaqInjection, buildCatalogInjection, buildObjectionInjection, readConfigDescription, resolveDestinations, validateStepFunnelStages, VALID_FUNNEL_STAGES, detectPaymentChoice, isPaymentChoiceOnly, resolvePaymentStep, redactFinancial } from "@/lib/agent/inject";
 import { tabToText } from "@/lib/sheets/columns";
 import { cleanHeader } from "@/lib/sheets/clean";
 import { productsRows, promoRows, PRICING_CONFIG } from "../harness/botlib-fixture";
@@ -405,5 +405,43 @@ describe("buildFaqInjection — สารบัญทุกข้อ + เต็
     const r = buildFaqInjection(faqSheet(), "เรื่องที่ไม่มีในชีตเลย");
     expect(r.text).toContain("ส่งต่อแอดมิน");
     expect(r.verbatim).toBeNull();
+  });
+});
+
+describe("D-47 payment pre-check + redact (pure)", () => {
+  const PAY_STEPS = [
+    ["step_id", "funnel_stage", "ชื่อประตู", "เข้าเมื่อ", "ไปประตูถัดไปเมื่อ", "ต้องเก็บข้อมูล", "ตัวอย่างคำตอบ", "ตัวอย่างประโยคปิดท้าย", "สถานะ"],
+    ["S3_TRANSFER", "quoted", "โอน", "เลือกโอนแล้ว", "รอสลิป → S4C", "", "โอนได้ที่...", "", "live"],
+    ["S3_COD", "quoted", "ปลายทาง", "เลือกเก็บปลายทาง COD", "ที่อยู่ครบ → S4A", "", "รับ COD ได้ค่ะ", "", "live"],
+    ["S4C", "awaiting_payment", "รอสลิป", "โอนแล้วรอสลิป", "ได้สลิป → S4A", "", "", "", "live"],
+  ];
+
+  it("detectPaymentChoice: โอน↔COD · ก้ำกึ่ง='' ", () => {
+    expect(detectPaymentChoice("โอนค่ะ")).toBe("โอน");
+    expect(detectPaymentChoice("เอาเก็บปลายทาง")).toBe("COD");
+    expect(detectPaymentChoice("cod ครับ")).toBe("COD");
+    expect(detectPaymentChoice("โอนหรือปลายทางดี"), "มีทั้งคู่ = ให้ AI").toBe("");
+    expect(detectPaymentChoice("สนใจค่ะ")).toBe("");
+  });
+
+  it("isPaymentChoiceOnly: คำจ่ายล้วน=true · พ่วงเลข/เนื้อเยอะ=false", () => {
+    expect(isPaymentChoiceOnly("โอนค่ะ")).toBe(true);
+    expect(isPaymentChoiceOnly("เก็บปลายทางครับ")).toBe(true);
+    expect(isPaymentChoiceOnly("โอนแล้วส่งที่ 123 ถนน..."), "มีตัวเลข").toBe(false);
+    expect(isPaymentChoiceOnly("ขอโอนนะ แต่อยากได้เร็วๆ ทำไงดี"), "เนื้อเยอะ").toBe(false);
+  });
+
+  it("resolvePaymentStep: หาประตูจาก 'เข้าเมื่อ' (โอน→S3_TRANSFER · COD→S3_COD)", () => {
+    expect(resolvePaymentStep(PAY_STEPS, "โอน")).toBe("S3_TRANSFER");
+    expect(resolvePaymentStep(PAY_STEPS, "COD")).toBe("S3_COD");
+    expect(resolvePaymentStep([["step_id"]], "โอน")).toBeNull();
+  });
+
+  it("🔴 redactFinancial: เลขบัญชี/เบอร์ → label · ค่าอื่นไม่แตะ", () => {
+    const txt = "โอนมาที่ 1234567890 นะคะ เบอร์ลูกค้า 0811111111 ยอด 275 บาท";
+    expect(redactFinancial(txt, ["1234567890"], ["0811111111"]))
+      .toBe("โอนมาที่ [เลขบัญชี] นะคะ เบอร์ลูกค้า [เบอร์] ยอด 275 บาท");
+    expect(redactFinancial(txt, [""], []), "ค่าว่าง = ไม่แตะ").toBe(txt);
+    expect(redactFinancial("ยอด 275 บาท", ["1234567890"], []), "ไม่มีเลขบัญชีในข้อความ = คงเดิม").toBe("ยอด 275 บาท");
   });
 });

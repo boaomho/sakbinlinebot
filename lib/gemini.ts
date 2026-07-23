@@ -289,45 +289,50 @@ export async function runSalesTurn(input: GeminiTurnInput): Promise<GeminiTurnOu
   }
 
   try {
-    const response = await getClient().models.generateContent({
-      model: MODEL,
-      contents: parts,
-      config: {
-        systemInstruction,
-        temperature: input.config.temperature,
+    // D-47 ชิ้น 3: no-text (blocked) = probabilistic → retry 1 ครั้งก่อนตก fallback · MAX_TOKENS/parse-fail ไม่ retry
+    let parsed: Record<string, unknown> | null = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const response = await getClient().models.generateContent({
+        model: MODEL,
+        contents: parts,
+        config: {
+          systemInstruction,
+          temperature: input.config.temperature,
+          maxOutputTokens: input.config.maxOutputTokens,
+          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+          responseMimeType: "application/json",
+          responseSchema: RESPONSE_SCHEMA,
+          safetySettings: SAFETY_SETTINGS, // D-46: OFF 5 หมวด (บอทรับ PII เป็นเนื้องาน)
+        },
+      });
+
+      const finishReason = response.candidates?.[0]?.finishReason;
+      const usage = response.usageMetadata;
+      // thinking+output ใช้เพดานร่วมกัน → ต้องเห็นสัดส่วนถึงจะรู้ว่าใครกิน budget
+      const budget = {
+        finishReason,
         maxOutputTokens: input.config.maxOutputTokens,
-        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-        responseMimeType: "application/json",
-        responseSchema: RESPONSE_SCHEMA,
-        safetySettings: SAFETY_SETTINGS, // D-46: OFF 5 หมวด (บอทรับ PII เป็นเนื้องาน)
-      },
-    });
+        thoughtsTokenCount: usage?.thoughtsTokenCount, // thinking กินเท่าไหร่
+        candidatesTokenCount: usage?.candidatesTokenCount, // คำตอบจริงกินเท่าไหร่
+        totalTokenCount: usage?.totalTokenCount,
+        promptTokenCount: usage?.promptTokenCount, // prompt บวมมั้ย (Step/FAQ/ประวัติ)
+      };
 
-    const finishReason = response.candidates?.[0]?.finishReason;
-    const usage = response.usageMetadata;
-    // thinking+output ใช้เพดานร่วมกัน → ต้องเห็นสัดส่วนถึงจะรู้ว่าใครกิน budget
-    const budget = {
-      finishReason,
-      maxOutputTokens: input.config.maxOutputTokens,
-      thoughtsTokenCount: usage?.thoughtsTokenCount, // thinking กินเท่าไหร่
-      candidatesTokenCount: usage?.candidatesTokenCount, // คำตอบจริงกินเท่าไหร่
-      totalTokenCount: usage?.totalTokenCount,
-      promptTokenCount: usage?.promptTokenCount, // prompt บวมมั้ย (Step/FAQ/ประวัติ)
-    };
+      if (finishReason === "MAX_TOKENS") {
+        // ชนเพดาน = JSON ขาดกลางคัน → ห้าม parse เด็ดขาด (จะได้ค่าครึ่ง ๆ / throw) · retry ไม่ช่วย
+        console.error(JSON.stringify({ scope: "gemini", warning: "MAX_TOKENS — ตอบไม่จบ ใช้ fallback", ...budget }));
+        return fallback(input.currentStage);
+      }
 
-    if (finishReason === "MAX_TOKENS") {
-      // ชนเพดาน = JSON ขาดกลางคัน → ห้าม parse เด็ดขาด (จะได้ค่าครึ่ง ๆ / throw)
-      // ลูกค้าจะเห็น DEFAULT_REPLY ("ขัดข้อง") ซึ่งมักเกิดตอนเทิร์นสรุปออเดอร์ = เทิร์นปิดการขาย
-      console.error(JSON.stringify({ scope: "gemini", warning: "MAX_TOKENS — ตอบไม่จบ ใช้ fallback", ...budget }));
-      return fallback(input.currentStage);
-    }
+      console.log(JSON.stringify({ scope: "gemini", attempt, ...budget }));
 
-    console.log(JSON.stringify({ scope: "gemini", ...budget }));
+      const text = response.text;
+      if (text) {
+        parsed = JSON.parse(text);
+        break;
+      }
 
-    const text = response.text;
-    if (!text) {
       // 🔬 candidates ว่าง/ไม่มี text = Gemini ไม่ผลิต output (prompt ถูกบล็อก / safety / อื่นๆ)
-      //    ก่อนหน้านี้ตกลง fallback เงียบ ไม่รู้สาเหตุ — log ตัวชี้ขาด (ไม่มี PII: enum + คะแนน category)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const r = response as any;
       const raw = {
@@ -338,15 +343,19 @@ export async function runSalesTurn(input: GeminiTurnInput): Promise<GeminiTurnOu
         candSafety: response.candidates?.[0]?.safetyRatings,
         candFinishMessage: r.candidates?.[0]?.finishMessage,
       };
-      console.error(JSON.stringify({ scope: "gemini", warning: "no text — candidates ว่าง/ถูกบล็อก", ...raw, ...budget }));
+      // D-47 ชิ้น 4: log pattern เทิร์นที่โดนบล็อก (สะสมหลักฐานว่าเทิร์นแบบไหนโดนบ่อย · ตัดทอน กัน PII)
+      console.error(JSON.stringify({
+        scope: "gemini", warning: "no text — candidates ว่าง/ถูกบล็อก", attempt, ...raw, ...budget,
+        historyLen: input.historyText.length, msgLen: input.userMessage.length,
+        msgHead: input.userMessage.slice(0, 16), msgHasDigit: /\d/.test(input.userMessage), hasImage: Boolean(input.image),
+      }));
       if (process.env.DIAG_PROMPT_TOKENS === "1") {
-        // dump ทั้ง promptFeedback + candidate[0] (ไม่รวม content ที่อาจมี echo ข้อความลูกค้า)
         console.log(JSON.stringify({ scope: "gemini", event: "raw-empty", promptFeedback: r.promptFeedback ?? null, candidate0: r.candidates?.[0] ? { ...r.candidates[0], content: undefined } : null }));
       }
-      return fallback(input.currentStage);
+      if (attempt === 0) continue; // retry 1 ครั้ง (งบรวมคุมด้วย withTimeout 8s ที่ route · เกิน → degraded path D-46)
+      return fallback(input.currentStage); // บล็อกซ้ำครั้งที่ 2 → ยอมแพ้ (degraded)
     }
-
-    const parsed = JSON.parse(text);
+    if (!parsed) return fallback(input.currentStage); // safety (ไม่ควรถึง — loop คืน/break เสมอ)
 
     return {
       reply: typeof parsed.reply === "string" && parsed.reply.trim() ? parsed.reply.trim() : DEFAULT_REPLY,

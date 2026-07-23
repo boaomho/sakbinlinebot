@@ -4,6 +4,9 @@
 > รายละเอียด → [docs/DECISIONS.md](docs/DECISIONS.md) · แผนที่โค้ด → [REPO-MAP.md](REPO-MAP.md) · brief → [docs/P2-REBUILD-BRIEF.md](docs/P2-REBUILD-BRIEF.md)
 
 ## 🔴 อยู่ตรงไหนตอนนี้ (สำคัญสุด)
+- **D-47 (ถอดชนวน PROHIBITED_CONTENT เส้นทางเงิน) เสร็จ ✅** บน `main`
+  - ชิ้น 1 (พระเอก): payment pre-check ฝั่งโค้ด — เทิร์นเลือกจ่าย ("โอน"/"COD") ข้าม AI · deterministic
+  - ชิ้น 3: auto-retry 1 ครั้งเมื่อ blocked (probabilistic) · ชิ้น 2: redact เลขบัญชี/เบอร์ ใน input โมเดล · ชิ้น 4: log pattern blocked
 - **D-46 (แก้ลูปวนขอที่อยู่ = Gemini บล็อก PROHIBITED_CONTENT ไม่เข้า degraded) เสร็จ ✅** บน `main`
   - ชั้น 1: `safetySettings` OFF ทั้ง 5 หมวด (บอทรับ PII เป็นเนื้องาน · 🔴 PROHIBITED_CONTENT ปรับไม่ได้ ยังบล็อกได้)
   - ชั้น 2 (หลักประกัน): route เทิร์นข้อความล้วน degraded → ข้อความ "ยังไม่ได้รับ ขอส่งใหม่" · ไม่ resend step ค้าง

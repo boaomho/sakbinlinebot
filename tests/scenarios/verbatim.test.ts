@@ -35,6 +35,7 @@ function stepSheet(): string[][] {
     r("S_DELIV", "won", { ตัวอย่างคำตอบ: "รับของ{วันจัดส่ง}ค่ะ · จ่าย{การชำระเงินใหม่}", คิดเอง: "ปิด" }),
     r("S_VAR", "quoted", { ตัวอย่างคำตอบ: "ส่วนผสม {สัดส่วนปลาทู} ค่ะ · {นโยบายค่าส่ง}", คิดเอง: "ปิด" }),
     r("S_INVITE", "qualified", { ตัวอย่างคำตอบ: "{ชวนเลือกโปร}", คิดเอง: "ปิด" }),
+    r("S3_TRANSFER", "awaiting_payment", { เข้าเมื่อ: "เลือกโอนแล้ว", ตัวอย่างคำตอบ: "โอนได้ที่ {ธนาคาร} {เลขที่บัญชี} นะคะ", ตัวอย่างประโยคปิดท้าย: "โอนแล้วส่งสลิปได้เลยค่ะ", คิดเอง: "ปิด" }),
     r("S_BOTH", "quoted", { ตัวอย่างคำตอบ: "รับทราบค่ะ", ตัวอย่างประโยคปิดท้าย: "ขอบคุณนะคะ 🙏", คิดเอง: "ปิด" }),
     r("S_CLOSEONLY", "quoted", { ตัวอย่างคำตอบ: "", ตัวอย่างประโยคปิดท้าย: "แล้วเจอกันค่ะ", คิดเอง: "ปิด" }),
     r("S_MULTI", "quoted", { ตัวอย่างคำตอบ: "บรรทัดแรกค่ะ[[แยก]]บรรทัดสองค่ะ", ตัวอย่างประโยคปิดท้าย: "ปิดท้ายค่ะ", คิดเอง: "ปิด" }),
@@ -356,6 +357,39 @@ describe("D-45b ธงต่อ step — ส่งเนื้อหาครั
     expect(((await readCustomer(U))?.delivered_steps as string[]) ?? [], "คงเฉพาะ stage ปัจจุบัน").toEqual(["S_BOTH"]);
     await resetCustomerMemory(U);
     expect(((await readCustomer(U))?.delivered_steps as string[]) ?? [], "/reset ล้างหมด").toEqual([]);
+  });
+});
+
+describe("D-47 payment pre-check — เทิร์นเลือกวิธีจ่าย ไม่พึ่ง AI (deterministic)", () => {
+  it("🔴 มี items + 'โอนค่ะ' → ข้าม AI ส่ง S3_TRANSFER pattern (แม้ AI จะ degraded ก็ผ่าน)", async () => {
+    harnessOverrides.config = { raw: cfg([["เลขที่บัญชี", "1234567890"], ["ธนาคาร", "กสิกร"]]) };
+    scriptGemini([
+      turn({ reply: "รับ 3 ถ้วยค่ะ", stage: "S_OPEN", orderData: { items: [{ qty: 3 }] } }), // เทิร์น 1: pending มี items
+      turn({ reply: "AI degraded", stage: "S1", degraded: true }), // เทิร์น 2: ถ้า pre-check พลาด จะเห็นตัวนี้
+    ]);
+    await sendText(U, "เอา 3 ถ้วย");
+    await sendText(U, "โอนค่ะ");
+    const t = customerText();
+    expect(t, "ส่ง S3_TRANSFER pattern (pre-check ข้าม AI)").toContain("โอนได้ที่ กสิกร 1234567890");
+    expect(t, "ไม่ใช่ข้อความ degraded ของ AI").not.toContain("ระบบสะดุด");
+    expect((await readCustomer(U))?.pending_order as { การชำระเงิน?: string }, "payment ถูกเซ็ต").toMatchObject({ การชำระเงิน: "โอน" });
+  });
+
+  it("'โอน' + พ่วงที่อยู่ (มีตัวเลข) → ไม่ข้าม AI แต่ payment ถูกล็อกทับ (deterministic)", async () => {
+    harnessOverrides.config = { raw: cfg() };
+    scriptGemini([
+      turn({ reply: "รับค่ะ", stage: "S_OPEN", orderData: { items: [{ qty: 3 }] } }),
+      turn({ reply: "AI", stage: "S_CLOSED", paymentMethod: "" }), // AI ไม่ตั้ง payment
+    ]);
+    await sendText(U, "เอา 3 ถ้วย");
+    await sendText(U, "โอนนะคะ ส่งที่ 99 ถนนสุข กทม 10110");
+    expect((await readCustomer(U))?.pending_order as { การชำระเงิน?: string }, "pre-check ล็อก payment ทับ AI").toMatchObject({ การชำระเงิน: "โอน" });
+  });
+
+  it("ยังไม่มี items + 'โอน' → ไม่ pre-check (ไม่มีออเดอร์ให้เลือกจ่าย)", async () => {
+    scriptGemini([turn({ reply: "AI ตอบเอง", stage: "S_OPEN" })]);
+    await sendText(U, "โอนค่ะ");
+    expect(customerText(), "ไม่มี items → เรียก AI ปกติ").toContain("AI ตอบเอง");
   });
 });
 

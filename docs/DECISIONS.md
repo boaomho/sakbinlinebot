@@ -717,5 +717,14 @@ handoff ทุก path (edit/AI-semantic/keyword) ตั้งแค่ `human_m
 - **ชั้น 2 — route: branch `else if (geminiOutput.degraded)`** (หลัง imageFallback ก่อน objection) → `DEGRADED_NO_INPUT_REPLY` = "ขออภัยค่ะ ระบบสะดุด...ยังไม่ได้รับข้อความล่าสุด...รบกวนพิมพ์ส่งมาอีกครั้ง 🙏" (const · ไม่เพิ่ม config key · ต่างจาก DEFAULT_REPLY "รอสักครู่แล้วทักใหม่" ที่ทำให้ลูกค้านั่งรอเฉยๆ) · `deliverMarksStep=false` · ครอบ blocked/timeout/parse-fail/MAX_TOKENS · degraded+รูป = imageReceivedReply เดิม (ถือสลิป)
 **harness:** degraded+step เคยส่ง→ข้อความขัดข้อง ไม่ resend ปิดท้าย · degraded+step ยังไม่ส่ง→ข้อความขัดข้อง ไม่ใช่เต็มก้อน (กัน branch เสียบผิด) · degraded→gate ไม่เขียน (orderData ว่าง) · **339 passed | 3 expected-fail** · tsc+build เขียว
 
+### D-47 · ถอดชนวน PROHIBITED_CONTENT บนเส้นทางเงิน (4 ชิ้น · 1 commit)
+**แก้ข้อเท็จจริงจาก D-46:** log จริง 07:49 เคส "โอนเงิน" ถูกบล็อก 2 ครั้ง **โดย history ไม่มีเลขบัญชีเลย** (หลัง /reset · 156 chars) → ตัวกระตุ้นคือ **static prompt (system/ตารางราคา/step ที่มีคำการเงิน) + ข้อความสั้น "โอนเงิน"** ก็พอ · degraded path (D-46) ทำงานถูก แต่ยัง loop เพราะเทิร์นเลือกจ่ายเสี่ยงบล็อกสูงโดยธรรมชาติ
+**ทำ (เรียงตามผลกระทบ):**
+- **ชิ้น 1 (พระเอก) — payment pre-check ฝั่งโค้ด** (`inject.ts`: `detectPaymentChoice`/`isPaymentChoiceOnly`/`resolvePaymentStep` · หลักเดียวกับ keyword handoff pre-check): มี items ใน pending + ยังไม่มีวิธีจ่าย + ไม่มีรูป → จับ โอน/COD · **คำจ่ายล้วน → ข้าม AI ทั้งเทิร์น** (สร้าง synthetic output · stage = ประตูจาก "เข้าเมื่อ" data-driven) · **พ่วงอื่น/AI degraded → ล็อก payment ทับผล AI** (deterministic เส้นทางเงิน) · ก้ำกึ่ง/ไม่มี items → AI ปกติ
+- **ชิ้น 3 (สำคัญ) — auto-retry 1 ครั้ง** (`gemini.ts`): no-text (blocked) ครั้งแรก → retry 1 (บล็อก probabilistic) · MAX_TOKENS/parse-fail ไม่ retry · งบรวมคุมด้วย withTimeout 8s ที่ route (เกิน → degraded D-46)
+- **ชิ้น 2 (ลดความเสี่ยงสะสม · ไม่ใช่ตัวแก้เคสนี้) — redact** (`redactFinancial`): เลขบัญชี/พร้อมเพย์ (config) + เบอร์ (pending/last_order · ค่าที่รู้จริง) → `[เลขบัญชี]`/`[เบอร์]` ใน **history + state ที่ส่งเข้าโมเดลเท่านั้น** · 🔴 ข้อความสด `userMessage` ไม่แตะ (AI ต้องสกัดเบอร์/ที่อยู่เทิร์นนี้) · DB/ลูกค้า ไม่แตะ · state คงเบอร์ (redact แค่บัญชี) ให้ AI รู้ว่าเก็บแล้ว
+- **ชิ้น 4 (วัดก่อนแก้) — log pattern**: ทุกครั้ง blocked → log `historyLen` + `msgLen` + `msgHead(16)` + `msgHasDigit` + `hasImage` (ตัดทอน กัน PII) — สะสมหลักฐานว่าเทิร์นแบบไหนโดนบ่อย · ถ้า post-deploy ยังโดนถี่นอก pre-check ค่อยพิจารณาท่าใหญ่ (แยก call จำแนก/สกัด) — ยังไม่ทำ
+**harness:** unit (detect/only/resolvePaymentStep/redact) + retry (blocked→retry ผ่าน · blocked×2→degraded ไม่วนเกิน) + pipeline (โอนค่ะ+มี items→S3_TRANSFER ข้าม AI แม้ degraded · พ่วงที่อยู่→ล็อก payment ทับ · ไม่มี items→AI ปกติ) · **348 passed | 3 expected-fail** · tsc+build เขียว
+
 ### Phase C · ลบ ENV ค้างใน Vercel
 `SHEET_STEP_URL` `SHEET_FAQ_URL` `SHEET_CONFIG_URL` `SHEET_FOLLOW_URL` — โค้ดไม่อ่านแล้ว ลบทิ้งได้
