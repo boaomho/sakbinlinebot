@@ -669,5 +669,11 @@ handoff ทุก path (edit/AI-semantic/keyword) ตั้งแค่ `human_m
 - `stateFor()` map "สถานะก่อนหน้า" 9 แบบ → stateText/history/signals (order_editable/order_confirmed_locked ครบ)
 **harness (c):** **325 passed | 3 expected-fail | 26 skipped (golden 25 + real-gemini 1)** · tsc+build เขียว → **จบ P2-REBUILD ฝั่งโค้ด (D-40..D-44)** · เหลือ: เจ้าของสลับชีต v2.0 + รัน golden ด้วย real Gemini + merge main
 
+**D-44d — จูน golden จากรอบรัน real Gemini แรก (G06/G12/G23 แดง):**
+- **golden objection assert เฉพาะเทิร์นไม่ handoff** — เทิร์น handoff โค้ด `isHandoffTurn` ตัด objection pattern ทิ้งอยู่แล้ว → objection_detected ที่ AI ตั้งบนเทิร์นนั้นไม่มีผลกับ output → assert = เปราะ (แก้ G06: H2 + AI แท็ก OBJ_PRICE ไปด้วย) · stage/handoff ยัง assert เข้มเดิม
+- 🔴 **temperature 1.0 → 0.2** (default) — บทบาทใหม่ "จำแนกและสกัด" ต้องนิ่ง (เดิม 1.0 = นักขายสร้างสรรค์ · G23 ผ่านรอบแรกตกรอบสอง ข้อความเดิม = variance โมเดล) · key `temperature` มีอยู่แล้วใน CSV_Config (ไม่เพิ่ม key ใหม่) → **ชีตตั้งทับได้** · `config.ts` (prod) + `fixtures.ts` (golden real-Gemini ใช้) เป็น 0.2
+- ⚠️ **ถ้าชีต v2.0 CSV_Config มี key `temperature`=1.0 (ค่าเก่า) จะชนะ default** — เจ้าของเช็ค/แก้ค่าในชีตเป็น ≤0.2 ด้วย
+**harness (d):** 325 passed | 3 expected-fail · tsc+build เขียว (temperature ไม่กระทบ scripted · มีผลตอน golden real-Gemini)
+
 ### Phase C · ลบ ENV ค้างใน Vercel
 `SHEET_STEP_URL` `SHEET_FAQ_URL` `SHEET_CONFIG_URL` `SHEET_FOLLOW_URL` — โค้ดไม่อ่านแล้ว ลบทิ้งได้

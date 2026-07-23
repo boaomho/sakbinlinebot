@@ -23,7 +23,7 @@ AI เหลือ 4 งาน (เลือก step · จำแนก objectio
 
 ## เหลือทำ (มือเจ้าของ — โค้ดพร้อมแล้ว)
 1. **สลับชีต:** อัป `03_BotLibrary_สากบิน_v2.0.xlsx` เป็น Google Sheet + เปลี่ยน ENV `SHEET_BOTLIB_ID` → redeploy (ลำดับใน brief §deploy)
-2. **รัน golden จริง:** `HARNESS_REAL_GEMINI=1 GEMINI_API_KEY=... npx vitest run golden-routing` — 25 เคสต้องเขียว · แดง = จูน "เข้าเมื่อ/กรณี" ในชีต (+sync fixture ในเทส)
+2. **รัน golden จริง:** `HARNESS_REAL_GEMINI=1 GEMINI_API_KEY=... npx vitest run golden-routing` — 25 เคสต้องเขียว · แดง = จูน "เข้าเมื่อ/กรณี" ในชีต (+sync fixture ในเทส) · 🔴 **เช็ค `temperature` ในชีต v2.0 CSV_Config ให้ ≤0.2** (ถ้าชีตตั้ง 1.0 เดิม จะชนะ default 0.2 → variance กลับมา)
 3. เทสจริงบน LINE (dev OA) → **merge `phase2-v2` → main** เมื่อเจ้าของสั่ง
 4. หลัง merge: ลบ `handoff-decision` log (ใกล้ go-live) · ล้างแถวเทสในชีต Orders
 
