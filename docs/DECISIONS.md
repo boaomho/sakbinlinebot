@@ -604,5 +604,76 @@ handoff ทุก path (edit/AI-semantic/keyword) ตั้งแค่ `human_m
 - **CSV_Objections ไม่มีช่องปิดท้าย** → objection verbatim ใช้ช่องเดียว (`ตัวอย่างคำตอบ`) ตามเดิม
 **harness:** stepVerbatim join (2 ช่อง/ปิดท้ายว่าง/คำตอบว่าง) + pipeline (2 ช่อง→2 บอลลูน · ปิดท้ายว่าง→แค่คำตอบ · คำตอบว่าง→แค่ปิดท้าย · คำตอบมี [[แยก]] เอง+ปิดท้าย→3 บอลลูน) · โหมดเปิดไม่ regression · tsc+build เขียว
 
+## P2-REBUILD v2.0 (branch `phase2-v2` · brief `docs/P2-REBUILD-BRIEF.md`)
+> เจตนา: AI ไม่เขียนข้อความถึงลูกค้าอีกต่อไป (สถาปัตยกรรม) — เหลือ 4 งาน: เลือก step · จับ objection/FAQ · สกัด order_data · ตัดสิน handoff · ทุกคำจากชีต (pattern) + resolver · engine เดิม (gate/pricing/resolver/harness) ห้ามรื้อ
+
+### D-40 · verbatim = default ของทั้งระบบ (flip `parseThinkMode`)
+**ก่อน (D-39):** ไม่มีคอลัมน์ `คิดเอง`/ค่าว่าง = **เปิด** (AI เรียบเรียง) · **v2.0:** ชีตตัดคอลัมน์ `คิดเอง` ทิ้ง → ต้อง flip
+**ทำ:** `parseThinkMode` (inject.ts) — ว่าง/ไม่มีคอลัมน์/ไม่รู้จัก = **ปิด (verbatim)** · เฉพาะ `เปิด/true/on/1/ใช่/yes` = เปิด (override รายแถวถ้าคอลัมน์กลับมา)
+- `stepVerbatim`/`joinVerbatimParts`/`resolveAllVars`/var-guard/objection precedence/safety-net (2 ช่องว่าง→fallback AI) — **คงเดิมทั้งหมด**
+**blast radius:** วัดแล้ว = **verbatim.test เท่านั้น** (5 เคส · blank เดิมคาด เปิด → ปิด) · อีก 25 ไฟล์เขียว (default seedBotLib header ไม่ valid→stepVerbatim null→AI · fixture อื่น example ว่าง→fallback AI · ไม่ regression)
+**harness:** verbatim.test 29 passed · (full suite + build ดูคอมมิต)
+
+### D-41 · schema v2.0 (breaking · contract = `docs/BOTLIB-V2-HEADERS.txt`)
+**verify #1 (สเตปแรก):** ✅ `resolveColumns` เรียก `headerRow.map(cleanHeader)` → header มีวงเล็บ ("เข้าเมื่อ (สัญญาณจากลูกค้า)"/"ตัวอย่างคำตอบ (บอลลูน)") `stripKeyAnnotation` ตัดให้ตรง required — **ไม่พังเงียบ**
+**ทำ:**
+- **loader:** `BOTLIB_TABS` ตัด `CSV_Examples` เพิ่ม `CSV_Vars` (คง 8) · `BotLibrary` type ตาม
+- **CSV_Step:** `STEP_COLS` required = เฉพาะโค้ดอ่าน (step_id/funnel_stage/ชื่อประตู/เข้าเมื่อ/ไปประตูถัดไปเมื่อ/ต้องเก็บข้อมูล/ตัวอย่างคำตอบ/ปิดท้าย) · ตัด brain (ความรู้สึก/ทำไมสำคัญ/หลักการนำพา/ห้ามทำ/คิดเอง) · เพิ่มอ่าน `กรณี` optional · **`fullSalesBlock`/`leanHandoffBlock` = routing เท่านั้น** (ตัด example/brain ออกจาก prompt → ประหยัด token)
+- **CSV_Objections:** ตัด หลักการตอบ/ห้ามทำ · full-block = concern เท่านั้น (AI ใช้จำแนก objection_detected) · pattern verbatim = "ตัวอย่างคำตอบ (บอลลูน)"
+- **CSV_FAQ:** status filter (คอลัมน์ `status`) · (faq_id key เตรียม T1)
+- **CSV_Promo:** สลับลำดับ (ค่าส่ง/ยอดจ่าย/ประหยัด) — pricing header-driven จึงทน (verify: calculatePrice/buildAllowedPriceStrings อ่านชื่อ ไม่ใช่ index)
+- **status filter ทุกแท็บ** (`isActiveStatus`): live/เปิด/ว่าง = ใช้ · draft/ปิด = ทิ้ง (Vars strict live = D-43)
+- **ลบ Examples ทั้งระบบ** (answer B): `buildExampleInjection`/`EXAMPLE_ANSWER_COL`/config key `จำนวนตัวอย่างที่ยัดเข้า prompt` · param `exampleText` + `<ตัวอย่างน้ำเสียง>` จาก gemini.ts/prompt/system.ts/route.ts
+**gotcha ที่เจอ:** test helper `step()` เติม สถานะ placeholder "S1-สถานะ" → status filter ตัดทุกแถว → parse null → fallback · แก้ helper default สถานะ="live"
+**harness:** fixtures v2.0 (Promo reorder + CSV_Vars +draft row) · inject.test/gemini-guard/resolver/real-gemini อัปเดต · **310 passed | 4 expected-fail** · tsc+build เขียว
+
+### D-42 · FAQ เข้า verbatim path เดียวกัน
+**ทำ:** `buildFaqInjection` คืน `{text, verbatim}` · verbatim = FAQ แรก `action=answer`+มีคำตอบ · **`action=handoff` → verbatim=null เสมอ** (ห้ามส่งช่องคำตอบ · v1.5) · `stepClosing(rows, stepId)` helper
+- **precedence (route baseReply):** 🔴 **handoff > objection pattern > FAQ answer > step pattern** · `isHandoffTurn` = AI handoff / funnel=handoff / handoff_after_intake → **ตัด objection+FAQ ออก** (ปล่อย step pattern = ข้อความประตูส่งต่อ/intake)
+- FAQ answer = `joinVerbatimParts(คำตอบ, stepClosing(stage ที่ AI เลือกเทิร์นนี้))` — ปิดท้าย step ปัจจุบัน (วกกลับ funnel) · ข้ามช่องว่าง
+- ผ่าน resolveAllVars + var-guard + deliver เดิม (FAQ answer มี {var} = D-43 resolve)
+**harness:** buildFaqInjection.verbatim (answer/handoff→null) + pipeline (FAQ answer+ปิดท้าย 2 บอลลูน · ปิดท้ายว่าง→1 บอลลูน · handoff turn→ไม่แทรก FAQ · action=handoff→ตกไป step) · **314 passed** · tsc+build เขียว
+
+### D-43 · ขยาย resolver (catalog/config/composed/CSV_Vars)
+**ทำ (เพิ่มใน `resolveAllVars` ที่เดียว + `KNOWN_RUNTIME_VARS`):**
+- **catalog** (pricing.ts · สินค้า live ตัวแรก): `{เลข อย.}{ส่วนประกอบตามฉลาก}{ราคาต่อหน่วย}` · `{รูปสินค้า}`=**URL ดิบ** (ชีตใส่ `[[รูป:{รูปสินค้า}]]` เอง · รูปว่าง→ตัด wrapper ทิ้ง+log · บอลลูนข้อความยังส่ง) · `{โปรแนะนำ}`=ข้อความโชว์โปร live ประหยัดสูงสุด (เสมอ→จำนวนน้อย) · 🔴 **ไม่ทำ `{สารก่อภูมิแพ้}`** (ช่องแอดมิน · H1)
+- **config** (quote.ts): `{ค่าส่ง_มาตรฐาน}{ยอดขั้นต่ำส่งฟรี_บาท}` (ตรง) · `{นโยบายค่าส่ง}`=ประกอบ "ค่าส่ง {X} บาทค่ะ สั่งครบ {Y} บาท ส่งฟรีเลยค่ะ" (🔴 ไม่รองรับ COD เพิ่ม)
+- **CSV_Vars** (แท็บใหม่): `loadLiveVars` โหลดเฉพาะ สถานะ=live + ชื่อมีปีกกา (กรอง draft/แถวกติกา) · `resolveCsvVars` — 🔴 **ชื่อชนตัวแปรระบบ (KNOWN) → ข้าม+log (ระบบชนะ)** · resolve ท้ายสุด
+- 🔴 **`buildAllowedPriceStrings` เพิ่มเลข config** (ค่าส่ง/ยอดขั้นต่ำ/COD) → `{นโยบายค่าส่ง}` (30/275) ไม่โดน price-guard ทิ้ง · CSV_Vars ยังผ่าน claims+price guard ปกติ
+- `AllVarsContext` +`varsRows` · route ส่ง `lib.CSV_Vars`
+**harness:** allvars D-43 (catalog ใหม่/รูปว่าง→ตัด/โปรแนะนำ/config/นโยบายค่าส่ง+price-guard/loadLiveVars draft/collision ระบบชนะ) + pipeline verbatim (CSV_Var+นโยบายค่าส่ง ไหลผ่าน) · **323 passed** · tsc+build เขียว
+**+ กติกาถาวรใหม่:** จบ D-xx/phase → อัปเดต `STATUS.md` ในคอมมิตเดียวกัน (เพิ่มใน CLAUDE.md "เวลาแก้โค้ด")
+
+### D-44 · routing S_UNKNOWN + หด คำ_handoff + systemInstruction v2.0 + golden tests (3 คอมมิตย่อย a/b/c)
+**D-44a — หด `DEFAULT_HANDOFF_KEYWORDS` + S_UNKNOWN routing:**
+- `DEFAULT_HANDOFF_KEYWORDS` (handoff.ts) หดเหลือ **19 คำ ตรงชีต v2.0 คำต่อคำ**: ขอแอดมิน/คุยกับคน/คุยกับแอดมิน/เจ้าของ/ฟ้อง + H1 สุขภาพ (แพ้/ภูมิแพ้/แพ้กุ้ง/แพ้อาหารทะเล/แพ้ปลา/กลูเตน/ท้อง/ตั้งครรภ์/ให้นม/เบาหวาน/ความดัน/โรคไต/ผู้ป่วย/กินยา) · **ตัด** ร้องเรียน/ของเสีย/ของไม่ตรงปก/ขายส่ง/แฟรนไชส์/สื่อ/PR/wholesale → เข้า H2-H4 (intake · บอทถามก่อนส่งคน) · ตรรกะ match คงเดิม (KI-01 word-boundary สำหรับ ASCII · ไทย substring)
+- **S_UNKNOWN** = แถวชีต funnel=handoff — โค้ดรองรับผ่าน D-33 อยู่แล้ว (การันตี handoff แม้ AI ไม่ตั้ง flag) + D-40 ส่ง pattern verbatim · เทส scripted พิสูจน์ code-path (กฎให้ AI เลือก = D-44b prompt)
+- ปลด `.fails` บท 2 (แพ้กุ้ง → keyword handoff) — เขียวจริงแล้วตามที่ไฟล์ออกแบบไว้
+- ⚠️ **สังเกต (แจ้งเจ้าของ · ไม่แก้เอง):** "ท้อง" substring ชนคำประสม เช่น "ท้องฟ้า"/"ท้องเสีย" → pre-check handoff ทันที · ทิศ false-positive = ส่งหาคน (ปลอดภัย) แต่ "ท้องเสีย" (เคส H3 เคลม) จะถูกดักก่อนเข้า intake — ถ้าไม่ต้องการ ให้แก้คำในชีต (`คำ_handoff`) ไม่ใช่โค้ด
+**harness (a):** handoff.test rewrite (H1 8 สำนวน · คำที่ตัด 5 คำไม่ดัก · KI-01 ผ่าน configured · default 19 คำ) + S_UNKNOWN pipeline (pattern 2 บอลลูน + footer + human_mode) · **325 passed | 3 expected-fail** · tsc+build เขียว
+
+**D-44b — systemInstruction v2.0 ("จำแนกและสกัด" ไม่ใช่ "นักขาย"):**
+- rewrite `buildStaticSystemInstruction` ทั้งก้อน (Edit เท่านั้น · KI-03): บทบาท = ระบบจำแนก+สกัด · ประกาศชัด "ไม่ได้เขียนข้อความถึงลูกค้า" · งาน 4 อย่าง (stage/objection/order_data/handoff)
+- **ขนาด: 12,529 → 4,898 chars ≈ 5,507 → ~2,153 tokens (est ratio จากที่วัดจริง) = ลด 61% · ต่ำกว่าเป้า <2,500** ✅
+- **คงห้ามตีความใหม่ (ครบ):** order_data 6 ช่อง (bug A: ใส่ทันที/qty≠เบอร์/ที่อยู่ก้อนดิบ/ห้าม placeholder/แก้=เต็มก้อน) · C6 ห้ามคำนวณราคา (prompt-lint คุม — จับได้จริงตอน rewrite แล้วเติมกลับ) · กัน injection ทั้งบล็อก · H1=handoff เสมอ · สลิปอ่านไม่ชัด=slip · JSON ทุก field เดิม (reply=fallback)
+- **เพิ่ม:** กฎเลือก S_UNKNOWN (ไม่ match/นอกเรื่อง/ไม่มีข้อมูล + handoff=true · กฎ 10) · FAQ → คง stage ประตูขาย (ให้ stepClosing วกกลับถูกประตู D-42) · intake → เลือกประตูโดยไม่ตั้ง flag (ระบบคุมจังหวะ D-34)
+- **ตัด:** ทุกบล็อกสอนแต่งคำ/โทน/สำนวน/จังหวะ (บับเบิลสุดท้าย=ข้อความ → `enforceTextLast` โค้ดคุมอยู่แล้ว · วันจัดส่ง → resolver D-43 · วกกลับ funnel → stepClosing D-42)
+- rewrite `SYSTEM-PROMPT-BREAKDOWN.md` ทั้งไฟล์ตรง v2.0
+**harness (b):** prompt-lint + gemini-guard เขียว (lint จับ order_data example + C6 ตอน rewrite — ตาข่ายทำงานจริง) · **325 passed | 3 expected-fail** · tsc+build เขียว
+
+**D-44c — golden routing tests (จบ phase โค้ด):**
+- `tests/scenarios/golden-routing.test.ts` — table-driven จาก `docs/golden-routing-cases.csv` **25 เคส** (parse CSV ตอนรัน · แก้ CSV = แก้เทส) · assert เฉพาะ **stage / objection_detected / handoff** — 🔴 ไม่ assert ข้อความ (คำพูด = ชีต)
+- gate `HARNESS_REAL_GEMINI=1` + `GEMINI_API_KEY` (pattern เดียวกับ real-gemini.test) · scripted mode = **skip 25 เคสอัตโนมัติ ไม่ block npm test** ✅
+- fixture จำลองชีต v2.0 (step routing cols 15 ประตู + objections 7 id + FAQ) — 🔴 ชีตจริงแก้ "เข้าเมื่อ/กรณี" → sync fixture เมื่อเทสแดง
+- เกณฑ์ handoff: AI flag **หรือ** ประตู funnel=handoff/handoff_after_intake (CSV หมายถึง "เคสจบที่คน" — intake ถึงมือคนผ่านจังหวะ D-34 ไม่ใช่ flag เทิร์นแรก)
+- `stateFor()` map "สถานะก่อนหน้า" 9 แบบ → stateText/history/signals (order_editable/order_confirmed_locked ครบ)
+**harness (c):** **325 passed | 3 expected-fail | 26 skipped (golden 25 + real-gemini 1)** · tsc+build เขียว → **จบ P2-REBUILD ฝั่งโค้ด (D-40..D-44)** · เหลือ: เจ้าของสลับชีต v2.0 + รัน golden ด้วย real Gemini + merge main
+
+**D-44d — จูน golden จากรอบรัน real Gemini แรก (G06/G12/G23 แดง):**
+- **golden objection assert เฉพาะเทิร์นไม่ handoff** — เทิร์น handoff โค้ด `isHandoffTurn` ตัด objection pattern ทิ้งอยู่แล้ว → objection_detected ที่ AI ตั้งบนเทิร์นนั้นไม่มีผลกับ output → assert = เปราะ (แก้ G06: H2 + AI แท็ก OBJ_PRICE ไปด้วย) · stage/handoff ยัง assert เข้มเดิม
+- 🔴 **temperature 1.0 → 0.2** (default) — บทบาทใหม่ "จำแนกและสกัด" ต้องนิ่ง (เดิม 1.0 = นักขายสร้างสรรค์ · G23 ผ่านรอบแรกตกรอบสอง ข้อความเดิม = variance โมเดล) · key `temperature` มีอยู่แล้วใน CSV_Config (ไม่เพิ่ม key ใหม่) → **ชีตตั้งทับได้** · `config.ts` (prod) + `fixtures.ts` (golden real-Gemini ใช้) เป็น 0.2
+- ⚠️ **ถ้าชีต v2.0 CSV_Config มี key `temperature`=1.0 (ค่าเก่า) จะชนะ default** — เจ้าของเช็ค/แก้ค่าในชีตเป็น ≤0.2 ด้วย
+**harness (d):** 325 passed | 3 expected-fail · tsc+build เขียว (temperature ไม่กระทบ scripted · มีผลตอน golden real-Gemini)
+
 ### Phase C · ลบ ENV ค้างใน Vercel
 `SHEET_STEP_URL` `SHEET_FAQ_URL` `SHEET_CONFIG_URL` `SHEET_FOLLOW_URL` — โค้ดไม่อ่านแล้ว ลบทิ้งได้

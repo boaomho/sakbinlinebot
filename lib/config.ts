@@ -209,7 +209,7 @@ export async function getConfig(): Promise<AppConfig> {
     shopName: strOf("สากบิน", "ชื่อร้าน/แบรนด์", "ชื่อร้าน"),
     personaGender: strOf("หญิง", "เพศบอท"),
     useEmoji: boolOf(false, "ใช้ emoji", "ใช้_emoji", "emoji"),
-    temperature: numOf(1.0, "temperature"),
+    temperature: numOf(0.2, "temperature"), // 🔴 D-44: บทบาท "จำแนกและสกัด" ต้องนิ่ง (เดิม 1.0 = นักขายสร้างสรรค์) · ชีต CSV_Config ตั้งทับได้
     // 🔴 พื้น 4096 — gemini-3.x นับ thinking+output รวมกันในเพดานนี้
     // ของจริงเคยชน 2032/2048 ตอนเทิร์นสรุปออเดอร์ (เทิร์นปิดการขาย = เทิร์นที่แพงที่สุด)
     // → finishReason=MAX_TOKENS → fallback → ลูกค้าเห็น "ปลาทูขัดข้อง" ตอนกำลังจะจ่ายเงิน

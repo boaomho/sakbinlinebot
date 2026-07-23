@@ -23,7 +23,6 @@ describe.skipIf(!RUN)("real Gemini — AI ต้องส่ง items[{qty}] เ
       faqText: "",
       catalogText: catalog,
       objectionText: "",
-      exampleText: "",
       stateText: "ประตูปัจจุบัน: 2 · ยังไม่มีออเดอร์",
       historyText: "(เริ่มบทสนทนา)",
       userMessage: "เอา 3 ถ้วยครับ",

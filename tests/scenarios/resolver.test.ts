@@ -21,9 +21,10 @@ import type { BotLibrary } from "@/lib/sheets/loader";
 
 const NOW = new Date("2026-07-18T03:00:00Z"); // ไทย 2026-07-18
 const lib = (promoOverride: Record<string, string> = {}): BotLibrary => ({
-  CSV_Step: [], CSV_Objections: [], CSV_Examples: [], CSV_FAQ: [], CSV_Follow: [], CSV_Config: [],
+  CSV_Step: [], CSV_Objections: [], CSV_FAQ: [], CSV_Follow: [], CSV_Config: [],
   CSV_Products: productsRows(),
   CSV_Promo: promoRows(promoOverride),
+  CSV_Vars: [],
 });
 
 describe("resolveRuntimeVars — แทนเฉพาะ 3 ตัวแปรเงิน · ตัวอื่นปล่อยผ่าน", () => {

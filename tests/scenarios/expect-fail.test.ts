@@ -17,8 +17,8 @@ import { readCustomer } from "../harness/db";
 const U = "Uharnesstestcustomer0000000000002";
 
 describe("บท 2 — 'แพ้กุ้งกินได้มั้ยคะ' → ต้อง handoff ทันที บอทไม่ตอบเอง", () => {
-  // v1.2: `คำ_handoff` ยังไม่มีคำกลุ่มสุขภาพ/แพ้อาหาร → keyword pre-check ไม่จับ (Step 4 เพิ่ม)
-  it.fails("keyword pre-check ต้องจับคำแพ้อาหาร → handoff", async () => {
+  // ✅ D-44: DEFAULT_HANDOFF_KEYWORDS มีคำกลุ่มสุขภาพ/แพ้แล้ว (ตรงชีต v2.0) → ปลด .fails เป็นเทสเขียวจริง
+  it("keyword pre-check จับคำแพ้อาหาร → handoff (H1 เส้นตาย)", async () => {
     scriptGemini([turn({ reply: "กินได้ค่ะ ไม่มีปัญหา", stage: "2" })]);
 
     await sendText(U, "แพ้กุ้งกินได้มั้ยคะ");

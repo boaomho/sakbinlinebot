@@ -14,21 +14,26 @@ import { cleanCell, cleanHeader } from "@/lib/sheets/clean";
  * header ไม่ครบ → fallback ยัดทั้งก้อน (tabToText) — ยอม token เยอะ ดีกว่าบอทตาบอด
  */
 
-// ---- ชื่อคอลัมน์ (สะอาดแล้ว · "ตัวอย่างคำตอบ (บอลลูน)" → cleanHeader → "ตัวอย่างคำตอบ") ----
+// ---- ชื่อคอลัมน์ (v2.0 · D-41 · required = เฉพาะที่โค้ดอ่านจริง) ----
+// 🔴 resolveColumns เรียก cleanHeader → header มีวงเล็บ ("เข้าเมื่อ (สัญญาณจากลูกค้า)"/"ตัวอย่างคำตอบ (บอลลูน)") ตัดวงเล็บให้ตรงชุดนี้
+// ตัด brain cols (ความรู้สึก/ทำไมสำคัญ/หลักการนำพา/ห้ามทำ/คิดเอง) — v2.0 AI ไม่แต่งคำ · optional: กรณี/สถานะ
 const STEP_COLS = [
   "step_id",
   "funnel_stage",
   "ชื่อประตู",
   "เข้าเมื่อ",
   "ไปประตูถัดไปเมื่อ",
-  "ความรู้สึกลูกค้าตอนนี้",
-  "ทำไมประตูนี้สำคัญ",
-  "หลักการนำพา",
-  "ห้ามทำ",
   "ต้องเก็บข้อมูล",
   "ตัวอย่างคำตอบ",
   "ตัวอย่างประโยคปิดท้าย",
 ];
+
+/** แถว active มั้ย — คอลัมน์ สถานะ/status (v2.0): live/เปิด = ใช้ · draft/ปิด/inactive = ทิ้ง · ว่าง = ใช้ (key-column-empty กรอง junk แล้ว) */
+function isActiveStatus(raw: string | undefined): boolean {
+  const v = cleanCell(raw).toLowerCase();
+  if (v === "") return true;
+  return ["live", "เปิด", "active", "true", "on", "1", "ใช่"].includes(v);
+}
 
 /** ลำดับ funnel (ไม่รวม handoff) — ใช้หา "ประตูถัดไป" ตอน parse ปลายทางพลาด + กำกวม */
 const FUNNEL_ORDER = ["lead", "qualified", "quoted", "awaiting_payment", "awaiting_address", "won", "post_sale"];
@@ -42,25 +47,27 @@ interface StepRow {
   stepId: string;
   funnelStage: string;
   name: string;
+  /** "กรณี" (v2.0) — คำอธิบายเคสย่อยของประตู · optional · inject เป็น routing hint */
+  caseText: string;
   entryWhen: string;
   nextWhen: string;
-  feeling: string;
-  why: string;
-  principle: string;
-  dont: string;
   collect: string;
   example: string;
   closing: string;
-  /** โหมด "คิดเอง" (Phase2 · optional col) — "ปิด" = ส่ง example เป๊ะ (verbatim) · default "เปิด" (AI เรียบเรียง) */
+  /** โหมด "คิดเอง" — 🔴 D-40: default = "ปิด" (verbatim) · "เปิด" = override รายแถว · v2.0 ตัดคอลัมน์นี้ = ทุกประตูปิด */
   think: ThinkMode;
 }
 
 export type ThinkMode = "เปิด" | "ปิด";
 
-/** แปลงค่าช่อง "คิดเอง" → โหมด · ว่าง/ไม่รู้จัก = เปิด (default AI) · reuse ตรรกะสวิตช์ (ปิด/false/off/0/ไม่) */
+/**
+ * แปลงค่าช่อง "คิดเอง" → โหมด · 🔴 D-40: verbatim = default ของทั้งระบบ
+ * ว่าง/ไม่มีคอลัมน์/ไม่รู้จัก = **ปิด (verbatim)** · เฉพาะ "เปิด/true/on/1/ใช่/yes" = เปิด (AI · override รายแถว)
+ * (ชีต v2.0 ไม่มีคอลัมน์ `คิดเอง` แล้ว → ทุกประตูปิด · ถ้าคอลัมน์กลับมาโผล่ ยังอ่านเป็น override ได้)
+ */
 export function parseThinkMode(raw: string): ThinkMode {
   const v = (raw ?? "").trim().toLowerCase();
-  return ["ปิด", "false", "off", "0", "no", "ไม่", "ไม่คิด"].includes(v) ? "ปิด" : "เปิด";
+  return ["เปิด", "true", "on", "1", "ใช่", "yes"].includes(v) ? "เปิด" : "ปิด";
 }
 
 interface ParsedSteps {
@@ -73,24 +80,25 @@ function parseStepRows(rows: string[][]): ParsedSteps | null {
   const cols = resolveColumns(rows[0], STEP_COLS, "CSV_Step");
   if (!cols) return null;
 
-  // "คิดเอง" = คอลัมน์ optional (ไม่อยู่ใน STEP_COLS required) → ชีตเดิมไม่มี = ทุกประตูเปิด (ไม่ regression)
-  const thinkIdx = rows[0].map(cleanHeader).indexOf("คิดเอง");
+  // optional cols (ไม่อยู่ใน required) — v2.0 ตัด คิดเอง (thinkIdx -1 → parseThinkMode("") → ปิด · D-40)
+  const header = rows[0].map(cleanHeader);
+  const thinkIdx = header.indexOf("คิดเอง");
+  const caseIdx = header.indexOf("กรณี");
+  const statusIdx = header.indexOf("สถานะ");
 
   const steps: StepRow[] = [];
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i];
     const stepId = cleanCell(cell(r, cols, "step_id"));
     if (!stepId) continue;
+    if (statusIdx >= 0 && !isActiveStatus(r[statusIdx])) continue; // v2.0: กรองแถว draft/ปิด (คงว่าง = active)
     steps.push({
       stepId,
       funnelStage: cleanCell(cell(r, cols, "funnel_stage")).toLowerCase(),
       name: cell(r, cols, "ชื่อประตู").trim(),
+      caseText: caseIdx >= 0 ? (r[caseIdx] ?? "").trim() : "",
       entryWhen: cell(r, cols, "เข้าเมื่อ").trim(),
       nextWhen: cell(r, cols, "ไปประตูถัดไปเมื่อ").trim(),
-      feeling: cell(r, cols, "ความรู้สึกลูกค้าตอนนี้").trim(),
-      why: cell(r, cols, "ทำไมประตูนี้สำคัญ").trim(),
-      principle: cell(r, cols, "หลักการนำพา").trim(),
-      dont: cell(r, cols, "ห้ามทำ").trim(),
       collect: cell(r, cols, "ต้องเก็บข้อมูล").trim(),
       example: cell(r, cols, "ตัวอย่างคำตอบ").trim(),
       closing: cell(r, cols, "ตัวอย่างประโยคปิดท้าย").trim(),
@@ -205,34 +213,28 @@ function indexLine(s: StepRow): string {
   return `${s.stepId} | ${s.name} | ${s.funnelStage} | เข้าเมื่อ: ${s.entryWhen} | ไปต่อ: ${s.nextWhen}`;
 }
 
-/** เอาบอลลูนแรกของ "ตัวอย่างคำตอบ" (คั่นด้วย [[เว้น]]/[[แยก]]) — ลด token คงตัวอย่าง 1 ชุด */
-function firstBubble(example: string): string {
-  return example.split(/\[\[เว้น\]\]|\[\[แยก\]\]/)[0].trim();
-}
-
+/**
+ * เนื้อประตู (v2.0 · D-41) = **routing เท่านั้น** — AI ใช้จำแนกประตู ไม่ใช้เขียนคำตอบ
+ * 🔴 ตัด example/closing/brain ออกจาก prompt (pattern ส่ง verbatim ที่ route · ประหยัด token มหาศาล)
+ */
 function fullSalesBlock(s: StepRow): string {
-  // 🔴 ตัด "ทำไมสำคัญ" (meta สำหรับคนเทรน) · คง ความรู้สึก/หลักการ/ห้ามทำ (สมองการขาย) · ตัวอย่างชุดแรก
   const parts = [
     `[${s.stepId}] ${s.name} (funnel: ${s.funnelStage})`,
+    s.caseText && `กรณี: ${s.caseText}`,
     `เข้าเมื่อ: ${s.entryWhen}`,
-    s.feeling && `ความรู้สึกลูกค้า: ${s.feeling}`,
-    s.principle && `หลักการนำพา: ${s.principle}`,
-    s.dont && `ห้ามทำ: ${s.dont}`,
     s.collect && `ต้องเก็บข้อมูล: ${s.collect}`,
-    s.example && `ตัวอย่างคำตอบ: ${firstBubble(s.example)}`,
-    s.closing && `ประโยคปิดท้าย: ${s.closing}`,
     `ไปต่อ: ${s.nextWhen}`,
   ];
   return parts.filter(Boolean).join("\n");
 }
 
-/** handoff = "หยุดแล้วส่งต่อ" ไม่ใช่ "เข้าใจเพื่อขาย" → ตัด ความรู้สึก/ทำไมสำคัญ (สมองการขาย) ออก */
+/** handoff = "หยุดแล้วส่งต่อ" — routing lean (id/ชื่อ/กรณี/เข้าเมื่อ/เก็บข้อมูล) · ไม่มี example ใน prompt */
 function leanHandoffBlock(s: StepRow): string {
   const parts = [
     `[${s.stepId}] ${s.name} (handoff)`,
+    s.caseText && `กรณี: ${s.caseText}`,
     `เข้าเมื่อ: ${s.entryWhen}`,
-    s.dont && `ห้ามทำ: ${s.dont}`, // 🔴 รั้ว ห้ามตัด
-    s.example && `ตัวอย่างคำตอบ: ${s.example}`,
+    s.collect && `ต้องเก็บข้อมูล: ${s.collect}`,
   ];
   return parts.filter(Boolean).join("\n");
 }
@@ -457,7 +459,8 @@ export function buildCatalogInjection(productsRows: string[][], promoRows: strin
 
 // ---- Objections (D-27) — เข้าใจ "ความกังวลจริง+หลักการตอบ" ประกอบคำตอบเอง ----
 
-const OBJECTION_COLS = ["objection_id", "ลูกค้าพูดแบบไหนบ้าง", "ความกังวลที่แท้จริง", "หลักการตอบ"];
+// v2.0 (D-41): ตัด หลักการตอบ/ห้ามทำ/คิดเอง · pattern = "ตัวอย่างคำตอบ (บอลลูน)" · status filter
+const OBJECTION_COLS = ["objection_id", "ลูกค้าพูดแบบไหนบ้าง", "ความกังวลที่แท้จริง"];
 
 export interface ObjectionInjection {
   text: string;
@@ -482,23 +485,22 @@ export function buildObjectionInjection(rows: string[][], userMessage: string, c
     return { text: "", matchedIds: [], verbatim: null };
   }
   const header = rows[0].map(cleanHeader);
-  const nameIdx = header.findIndex((h) => h.startsWith("ชื่อ")); // "ชื่อข้อโต้แย้ง" (ชีตจริง)
-  const dontIdx = header.indexOf("ห้ามทำ");
-  const thinkIdx = header.indexOf("คิดเอง"); // Phase2 optional
-  const exampleIdx = header.indexOf("ตัวอย่างคำตอบ"); // Phase2 optional — pattern verbatim ของข้อโต้แย้ง
+  const nameIdx = header.findIndex((h) => h.startsWith("ชื่อ")); // "ชื่อข้อโต้แย้ง"
+  const thinkIdx = header.indexOf("คิดเอง"); // v2.0 ไม่มี → -1 → parseThinkMode("") → ปิด (verbatim ชนะ · D-40)
+  const exampleIdx = header.indexOf("ตัวอย่างคำตอบ"); // "ตัวอย่างคำตอบ (บอลลูน)" — pattern verbatim
+  const statusIdx = header.indexOf("สถานะ");
 
-  interface Obj { id: string; name: string; says: string; concern: string; principle: string; dont: string; think: ThinkMode; pattern: string; }
+  interface Obj { id: string; name: string; says: string; concern: string; think: ThinkMode; pattern: string; }
   const objs: Obj[] = [];
   for (let i = 1; i < rows.length; i++) {
     const id = cleanCell(cell(rows[i], cols, "objection_id"));
     if (!id) continue;
+    if (statusIdx >= 0 && !isActiveStatus(rows[i][statusIdx])) continue; // v2.0: กรอง draft/ปิด
     objs.push({
       id,
       name: nameIdx >= 0 ? cleanCell(rows[i][nameIdx]) : "",
       says: cell(rows[i], cols, "ลูกค้าพูดแบบไหนบ้าง").trim(),
       concern: cell(rows[i], cols, "ความกังวลที่แท้จริง").trim(),
-      principle: cell(rows[i], cols, "หลักการตอบ").trim(),
-      dont: dontIdx >= 0 ? cleanCell(rows[i][dontIdx]) : "",
       think: parseThinkMode(thinkIdx >= 0 ? (rows[i][thinkIdx] ?? "") : ""),
       pattern: exampleIdx >= 0 ? (rows[i][exampleIdx] ?? "").trim() : "",
     });
@@ -510,19 +512,15 @@ export function buildObjectionInjection(rows: string[][], userMessage: string, c
     .filter((o) => o.says.split(",").map((s) => cleanCell(s)).some((p) => p.length > 0 && userMessage.includes(p)))
     .slice(0, Math.max(0, cap));
 
+  // v2.0 (D-41): full-block = concern เท่านั้น (ตัด หลักการตอบ/ห้ามทำ) — AI ใช้ "จำแนก" objection ไม่ใช่แต่งคำตอบ
   const fullBlocks = matched.map((o) =>
-    [
-      `[${o.id}] ${o.name}`,
-      o.concern && `ความกังวลที่แท้จริง: ${o.concern}`,
-      o.principle && `หลักการตอบ: ${o.principle}`,
-      o.dont && `ห้ามทำ: ${o.dont}`,
-    ].filter(Boolean).join("\n"),
+    [`[${o.id}] ${o.name}`, o.concern && `ความกังวลที่แท้จริง: ${o.concern}`].filter(Boolean).join("\n"),
   );
 
   const text = [
     "=== สารบัญข้อโต้แย้ง (id + ชื่อ) ===",
     ...objs.map((o) => `${o.id} | ${o.name}`),
-    ...(fullBlocks.length > 0 ? ["", "=== ข้อโต้แย้งที่ตรวจพบ (ใช้ประกอบคำตอบเอง ห้ามลอกคำ) ===", ...fullBlocks] : []),
+    ...(fullBlocks.length > 0 ? ["", "=== ข้อโต้แย้งที่ตรวจพบ (ใช้จำแนก objection_detected) ===", ...fullBlocks] : []),
   ].join("\n");
 
   // Phase2 ชั้น③: objection ชนะ step เฉพาะเมื่อ คิดเอง=ปิด + มี pattern (เปิด/ไม่มี pattern = ไม่บังคับชนะ)
@@ -532,42 +530,7 @@ export function buildObjectionInjection(rows: string[][], userMessage: string, c
   return { text, matchedIds: matched.map((o) => o.id), verbatim };
 }
 
-// ---- Examples (D-27) — น้ำเสียง เลียนสไตล์ ห้ามลอกคำต่อคำ ----
-
-const EXAMPLE_ANSWER_COL = "คำตอบที่ดี"; // ชีต CSV_Examples จริง (v1.5) ใช้ชื่อนี้ ไม่ใช่ "ตัวอย่างคำตอบที่ดี"
-
-/**
- * ยัดตัวอย่างน้ำเสียง: match จาก step_id ปัจจุบัน และ/หรือ objection_id ที่เจอ (สูงสุด cap)
- * 🔴 เจ้าของยังไม่เติม → คืน "" · ตัวอย่าง = แนวน้ำเสียง ไม่ใช่บทท่อง (apply-not-parrot)
- */
-export function buildExampleInjection(rows: string[][], stepId: string, objectionIds: string[], cap: number): string {
-  if (!rows || rows.length < 2 || cap <= 0) return "";
-  const cols = resolveColumns(rows[0], [EXAMPLE_ANSWER_COL], "CSV_Examples");
-  if (!cols) {
-    console.warn(JSON.stringify({ scope: "inject", tab: "CSV_Examples", warning: "header ไม่ครบ — ข้าม" }));
-    return "";
-  }
-  const header = rows[0].map(cleanHeader);
-  const stepIdx = header.indexOf("step_id");
-  const objIdx = header.indexOf("objection_id");
-  const objSet = new Set(objectionIds);
-
-  const matches: string[] = [];
-  for (let i = 1; i < rows.length && matches.length < cap; i++) {
-    const answer = cell(rows[i], cols, EXAMPLE_ANSWER_COL).trim();
-    if (!answer) continue;
-    const rowStep = stepIdx >= 0 ? cleanCell(rows[i][stepIdx]) : "";
-    const rowObj = objIdx >= 0 ? cleanCell(rows[i][objIdx]) : "";
-    const hit = (stepId && rowStep === stepId) || (rowObj && objSet.has(rowObj));
-    if (hit) matches.push(answer);
-  }
-  if (matches.length === 0) return "";
-
-  return [
-    "=== ตัวอย่างน้ำเสียง (เลียนสไตล์/โทน ห้ามลอกคำต่อคำ · ตัวเลข/ข้อเท็จจริงยึดของจริง) ===",
-    ...matches.map((a) => `- ${a}`),
-  ].join("\n");
-}
+// ---- Examples: ลบทั้งบล็อก (v2.0 · D-41) — เลิกใช้ "เลียนโทน" · verbatim ไม่ต้องมีตัวอย่างน้ำเสียง ----
 
 // ---- FAQ ----
 
@@ -585,11 +548,14 @@ function parseFaqRows(rows: string[][]): FaqRow[] | null {
   if (rows.length < 2) return null;
   const cols = resolveColumns(rows[0], FAQ_COLS, "CSV_FAQ");
   if (!cols) return null;
+  const header = rows[0].map(cleanHeader);
+  const statusIdx = header.indexOf("status") >= 0 ? header.indexOf("status") : header.indexOf("สถานะ"); // v2.0: status filter
   const faqs: FaqRow[] = [];
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i];
     const question = cell(r, cols, "คำถาม").trim();
     if (!question) continue;
+    if (statusIdx >= 0 && !isActiveStatus(r[statusIdx])) continue; // v2.0: กรอง draft/ปิด
     faqs.push({
       question,
       keywords: cell(r, cols, "keywords")
@@ -603,26 +569,44 @@ function parseFaqRows(rows: string[][]): FaqRow[] | null {
   return faqs.length > 0 ? faqs : null;
 }
 
-export function buildFaqInjection(rows: string[][], userMessage: string): string {
+export interface FaqInjection {
+  text: string;
+  /** D-42: FAQ ที่ match + action=answer + มีคำตอบ (ตัวแรก) → route ส่ง verbatim (คำตอบ + ปิดท้าย step)
+   *  🔴 action=handoff → verbatim=null เสมอ (ห้ามส่งช่องคำตอบ · พฤติกรรม v1.5) */
+  verbatim: { answer: string } | null;
+}
+
+export function buildFaqInjection(rows: string[][], userMessage: string): FaqInjection {
   const faqs = parseFaqRows(rows);
   if (!faqs) {
     console.warn(JSON.stringify({ scope: "inject", warning: "CSV_FAQ header ไม่ครบ fallback ยัดทั้งก้อน" }));
-    return tabToText(rows);
+    return { text: tabToText(rows), verbatim: null };
   }
 
   const matched = faqs.filter((f) => f.keywords.some((k) => userMessage.includes(k))).slice(0, FAQ_MAX_FULL);
 
   const fullBlocks = matched.map((f) => {
-    // action=handoff → ไม่ยัดคำตอบ (กันบอท parrot) แค่บอกให้ส่งต่อ · การบังคับจริงฝั่งโค้ด = Step 4
+    // action=handoff → ไม่ยัดคำตอบ (กันบอท parrot) แค่บอกให้ส่งต่อ · การบังคับจริงฝั่งโค้ด = handoff flow
     if (f.action === "handoff") return `${f.question}\n[action=handoff — ให้ส่งต่อแอดมิน ห้ามตอบเอง]`;
     return `${f.question}\n→ ${f.answer}`;
   });
 
-  return [
+  const text = [
     "=== สารบัญคำถามที่ตอบได้ (ถ้าไม่มีคำตอบเต็ม = ไม่มีข้อมูล ให้ส่งต่อแอดมิน ห้ามเดา) ===",
     ...faqs.map((f) => f.question),
     "",
     "=== คำตอบที่เกี่ยวกับข้อความลูกค้า ===",
     ...(fullBlocks.length > 0 ? fullBlocks : ["(ไม่มีคำถามที่ตรง — ถ้าลูกค้าถามเรื่องที่ไม่มีในสารบัญ ให้ส่งต่อแอดมิน)"]),
   ].join("\n");
+
+  // D-42: verbatim = FAQ แรกที่ action=answer + มีคำตอบ (route ต่อ ปิดท้าย step แล้วส่ง)
+  const vFaq = matched.find((f) => f.action === "answer" && f.answer.length > 0);
+  return { text, verbatim: vFaq ? { answer: vFaq.answer } : null };
+}
+
+/** D-42: ปิดท้ายของ step_id ที่ระบุ (AI เลือกเทิร์นนี้) — route ต่อท้าย FAQ answer เพื่อวกกลับ funnel */
+export function stepClosing(rows: string[][], stepId: string): string {
+  if (!stepId) return "";
+  const parsed = parseStepRows(rows);
+  return parsed?.steps.find((s) => s.stepId === stepId)?.closing ?? "";
 }

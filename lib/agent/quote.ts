@@ -21,6 +21,7 @@ import {
 import { PendingOrder, LastOrder } from "@/lib/core/orders";
 import { AppConfig } from "@/lib/config";
 import { BotLibrary } from "@/lib/sheets/loader";
+import { cleanHeader } from "@/lib/sheets/clean";
 
 export interface Quote {
   price: PriceResult;
@@ -158,13 +159,62 @@ export function resolvePendingVars(text: string, pending: PendingOrder): string 
   return out;
 }
 
+// ---- ตัวแปร config (D-43) — ค่าส่ง/ยอดขั้นต่ำ อ่านตรงจาก config + ประโยคประกอบ ----
+export const CONFIG_TEXT_VARS = ["{ค่าส่ง_มาตรฐาน}", "{ยอดขั้นต่ำส่งฟรี_บาท}", "{นโยบายค่าส่ง}"] as const;
+
+/** แทนตัวแปร config (D-43): ค่าส่ง/ยอดขั้นต่ำ (ตรง) + {นโยบายค่าส่ง} (ประกอบ · 🔴 ไม่รองรับ COD เพิ่ม) */
+export function resolveConfigVars(text: string, config: AppConfig): string {
+  if (!CONFIG_TEXT_VARS.some((v) => text.includes(v))) return text;
+  const ship = (config.raw.get("ค่าส่ง_มาตรฐาน") ?? "").trim();
+  const freeMin = (config.raw.get("ยอดขั้นต่ำส่งฟรี_บาท") ?? "").trim();
+  let out = text;
+  if (ship) out = out.split("{ค่าส่ง_มาตรฐาน}").join(ship);
+  if (freeMin) out = out.split("{ยอดขั้นต่ำส่งฟรี_บาท}").join(freeMin);
+  if (out.includes("{นโยบายค่าส่ง}") && ship && freeMin) {
+    out = out.split("{นโยบายค่าส่ง}").join(`ค่าส่ง ${ship} บาทค่ะ สั่งครบ ${freeMin} บาท ส่งฟรีเลยค่ะ`);
+  }
+  return out;
+}
+
+// ---- CSV_Vars (D-43) — ตัวแปรข้อความเจ้าของนิยามเอง · โหลดเฉพาะ live · ตัวแปรระบบชนะ ----
+/** โหลด CSV_Vars เฉพาะ สถานะ=live + ชื่อมีปีกกา (กรอง draft/แถวกติกา) — pure */
+export function loadLiveVars(varsRows: string[][]): { name: string; value: string }[] {
+  if (!varsRows || varsRows.length < 2) return [];
+  const header = varsRows[0].map(cleanHeader);
+  const nameI = header.indexOf("ตัวแปร"), valI = header.indexOf("ค่า"), statI = header.indexOf("สถานะ");
+  if (nameI === -1 || valI === -1) return [];
+  const out: { name: string; value: string }[] = [];
+  for (let i = 1; i < varsRows.length; i++) {
+    const name = (varsRows[i][nameI] ?? "").trim();
+    if (!name.startsWith("{")) continue; // แถวกติกา/ว่าง (ชื่อไม่มีปีกกา)
+    if (statI >= 0 && (varsRows[i][statI] ?? "").trim().toLowerCase() !== "live") continue; // 🔴 strict live (draft ทิ้ง)
+    out.push({ name, value: (varsRows[i][valI] ?? "").trim() });
+  }
+  return out;
+}
+
+/** แทนตัวแปร CSV_Vars (D-43) — 🔴 ชื่อชนตัวแปรระบบ (knownVars) → ข้าม+log (ระบบชนะ) */
+export function resolveCsvVars(text: string, varsRows: string[][], knownVars: readonly string[]): string {
+  const live = loadLiveVars(varsRows);
+  if (live.length === 0) return text;
+  let out = text;
+  for (const { name, value } of live) {
+    if (knownVars.includes(name)) {
+      console.warn(JSON.stringify({ scope: "vars", event: "csv-var-collision-system-wins", name }));
+      continue;
+    }
+    if (value && out.includes(name)) out = out.split(name).join(value);
+  }
+  return out;
+}
+
 /**
- * D-39 var-guard — ตัวแปร "ที่ resolver รู้จัก" ทั้งหมด (pricing + transfer + order + catalog + pending + delivery)
- * 🔴 กันเฉพาะชุดนี้ ไม่ใช่ `{...}` ทุกตัว (AI/เจ้าของอาจพิมพ์วงเล็บปีกกาในบริบทอื่น)
+ * D-39/D-43 var-guard — ตัวแปร "ที่ resolver ระบบรู้จัก" (pricing+transfer+order+catalog+pending+delivery+config)
+ * 🔴 กันเฉพาะชุดนี้ ไม่ใช่ `{...}` ทุกตัว · CSV_Vars (dynamic) ไม่อยู่ในนี้ (resolve หมดก่อน · draft กรองตอนโหลด)
  */
 export const KNOWN_RUNTIME_VARS = [
   ...PRICING_RUNTIME_VARS, ...TRANSFER_VARS, ...ORDER_VARS,
-  ...CATALOG_TEXT_VARS, ...PENDING_VARS, ...DELIVERY_VARS,
+  ...CATALOG_TEXT_VARS, ...PENDING_VARS, ...DELIVERY_VARS, ...CONFIG_TEXT_VARS,
 ] as const;
 
 /**
@@ -180,6 +230,8 @@ export interface AllVarsContext {
   pending: PendingOrder;
   products: string[][];
   promo: string[][];
+  /** D-43: CSV_Vars ดิบ (ตัวแปรข้อความเจ้าของ) */
+  varsRows: string[][];
   now: Date;
 }
 export function resolveAllVars(text: string, ctx: AllVarsContext): string {
@@ -187,9 +239,11 @@ export function resolveAllVars(text: string, ctx: AllVarsContext): string {
   out = resolveRuntimeVars(out, ctx.priceVars); // R1 เงิน/รายการ
   out = resolveTransferVars(out, ctx.config); // R2 บัญชี
   out = resolveOrderVars(out, ctx.lastOrder, ctx.lastOrderItemsText); // R3 ออเดอร์ snapshot
-  out = resolveCatalogVars(out, ctx.products, ctx.promo, ctx.now); // catalog
+  out = resolveCatalogVars(out, ctx.products, ctx.promo, ctx.now); // catalog (D-43 ขยาย)
   out = resolvePendingVars(out, ctx.pending); // pending ปัจจุบัน
   out = resolveDeliveryVar(out, ctx.config.raw.get("เวลาตัดรอบออเดอร์") ?? ctx.config.raw.get("เวลารอบตัดออเดอร์") ?? "", ctx.now); // วันจัดส่ง
+  out = resolveConfigVars(out, ctx.config); // D-43 config/นโยบายค่าส่ง
+  out = resolveCsvVars(out, ctx.varsRows, KNOWN_RUNTIME_VARS); // D-43 CSV_Vars (ระบบชนะ) · ท้ายสุด
   return out;
 }
 

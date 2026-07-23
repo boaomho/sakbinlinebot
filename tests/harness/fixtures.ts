@@ -38,7 +38,7 @@ export function testConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     shopName: "สากบิน",
     personaGender: "หญิง",
     useEmoji: false,
-    temperature: 1.0,
+    temperature: 0.2, // D-44: เครื่องจำแนกต้องนิ่ง (golden real-Gemini ใช้ค่านี้ · ลด variance)
     maxOutputTokens: 4096,
     showTyping: false,
     debounceWaitMs: 80,

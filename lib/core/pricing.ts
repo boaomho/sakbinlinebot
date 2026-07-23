@@ -419,6 +419,10 @@ export function buildAllowedPriceStrings(
   const addCell = (v: string | undefined) => {
     for (const m of String(v ?? "").match(/\d{2,5}/g) ?? []) addNum(Number(m));
   };
+  // D-43: เลขค่าส่ง/ยอดขั้นต่ำจาก config — {นโยบายค่าส่ง}/{ค่าส่ง_มาตรฐาน}/{ยอดขั้นต่ำส่งฟรี_บาท} ต้องไม่โดน price-guard
+  addNum(toNum(config[CONFIG_KEYS.standardShipping]));
+  addNum(toNum(config[CONFIG_KEYS.freeShipMin]));
+  addNum(toNum(config[CONFIG_KEYS.codSurcharge]));
   // 1. เลขดิบ "เฉพาะคอลัมน์ราคา" (ไม่กวาดทั้งแถว — กัน sku/ขนาด/อย./วันที่ เช่น "200 มล." ปลอมเป็น allowed)
   const prodCols = resolveCols(productRows, [PRODUCT_COLS.normalPrice]);
   if (prodCols) {
@@ -516,9 +520,13 @@ export function resolveRuntimeVars(text: string, ctx: RuntimeVarContext): string
   return out;
 }
 
-// ── Group X resolvers (D-39) — ตัวแปรที่ AI เคยเติมเอง · verbatim ต้องให้โค้ด resolve ──
-/** token catalog ที่ resolveCatalogVars จัดการ (var-guard อ้างชุดนี้) */
-export const CATALOG_TEXT_VARS = ["{ชื่อสินค้า}", "{วิธีเก็บรักษา}", "{โปรโมชั่นทั้งหมด}"] as const;
+// ── Group X resolvers (D-39/D-43) — ตัวแปรที่ AI เคยเติมเอง · verbatim ต้องให้โค้ด resolve ──
+/** token catalog ที่ resolveCatalogVars จัดการ (var-guard อ้างชุดนี้) · D-43 ขยาย */
+export const CATALOG_TEXT_VARS = [
+  "{ชื่อสินค้า}", "{วิธีเก็บรักษา}", "{โปรโมชั่นทั้งหมด}",
+  "{เลข อย.}", "{ส่วนประกอบตามฉลาก}", "{รูปสินค้า}", "{ราคาต่อหน่วย}", "{โปรแนะนำ}",
+  // 🔴 ไม่มี {สารก่อภูมิแพ้} — ช่องนั้นให้แอดมิน ไม่ใช่บอท (H1 · D-43)
+] as const;
 /** token time ที่ resolveDeliveryVar จัดการ */
 export const DELIVERY_VARS = ["{วันจัดส่ง}"] as const;
 
@@ -544,32 +552,85 @@ function livePromoShowTexts(promoRows: string[][], now: Date): string[] {
   return out;
 }
 
+/** {โปรแนะนำ} (D-43) = ข้อความโชว์ของโปร live ที่ "ประหยัด" สูงสุด (เสมอ → จำนวนน้อยกว่า) · ไม่มี = "" */
+function recommendedPromoShow(promoRows: string[][], now: Date): string {
+  const prCols = resolveCols(promoRows, [PROMO_COLS.sku, PROMO_COLS.status, PROMO_COLS.start, PROMO_COLS.end, PROMO_COLS.qty]);
+  if (!prCols) return "";
+  const header = promoRows[prCols.headerRow].map(normHeader);
+  const showIdx = header.indexOf(PROMO_COLS.showText);
+  const saveIdx = header.indexOf("ประหยัด");
+  if (showIdx === -1 || saveIdx === -1) return "";
+  const today = bangkokYMD(now);
+  let best: { save: number; qty: number; show: string } | null = null;
+  for (let i = prCols.headerRow + 1; i < promoRows.length; i++) {
+    const row = promoRows[i];
+    if (!cleanCell(row[prCols.cols[PROMO_COLS.sku]])) continue;
+    if (cleanCell(row[prCols.cols[PROMO_COLS.status]]) !== STATUS_LIVE) continue;
+    const start = cleanCell(row[prCols.cols[PROMO_COLS.start]]);
+    const end = cleanCell(row[prCols.cols[PROMO_COLS.end]]);
+    if (start && today < start) continue;
+    if (end && today > end) continue;
+    const show = cleanCell(row[showIdx]);
+    if (!show) continue;
+    const save = toNum(row[saveIdx]);
+    const qty = toNum(row[prCols.cols[PROMO_COLS.qty]]);
+    const s = Number.isFinite(save) ? save : 0;
+    const q = Number.isFinite(qty) ? qty : Infinity;
+    if (!best || s > best.save || (s === best.save && q < best.qty)) best = { save: s, qty: q, show };
+  }
+  return best?.show ?? "";
+}
+
+/** สินค้า live ตัวแรก (อ่านคอลัมน์ที่ resolveCatalogVars ต้องใช้) — โดเมนตอนนี้ live 1 ตัว */
+function firstLiveProductVars(productRows: string[][]): Record<string, string> | null {
+  const pCols = resolveCols(productRows, [PRODUCT_COLS.sku, PRODUCT_COLS.status]);
+  if (!pCols) return null;
+  const header = productRows[pCols.headerRow].map(normHeader);
+  const gi = (h: string) => header.indexOf(h);
+  const nameI = gi(PRODUCT_COLS.name), storI = gi("วิธีเก็บรักษา"), fdaI = gi("เลข อย."),
+    ingI = gi("ส่วนประกอบตามฉลาก"), imgI = gi("รูปสินค้า"), priceI = gi(PRODUCT_COLS.normalPrice);
+  for (let i = pCols.headerRow + 1; i < productRows.length; i++) {
+    const row = productRows[i];
+    const sku = cleanCell(row[pCols.cols[PRODUCT_COLS.sku]]);
+    if (!sku || cleanCell(row[pCols.cols[PRODUCT_COLS.status]]) !== STATUS_LIVE) continue;
+    const get = (j: number) => (j >= 0 ? cleanCell(row[j]) : "");
+    return { name: get(nameI), storage: get(storI), fda: get(fdaI), ingredients: get(ingI), imageUrl: get(imgI), unitPrice: get(priceI) };
+  }
+  return null;
+}
+
 /**
- * แทนตัวแปร catalog (D-39): {ชื่อสินค้า}/{วิธีเก็บรักษา} = สินค้า live ตัวแรก · {โปรโมชั่นทั้งหมด} = ข้อความโชว์ promo live (\n คั่น)
- * 🔴 แทนเฉพาะเมื่อมีค่า (ว่าง/ไม่มี live = คงวงเล็บ → var-guard จับ) · โดเมนตอนนี้ live 1 ตัว (ตัวแรกพอ)
+ * แทนตัวแปร catalog (D-39/D-43): {ชื่อสินค้า}/{วิธีเก็บรักษา}/{เลข อย.}/{ส่วนประกอบตามฉลาก}/{ราคาต่อหน่วย} = สินค้า live ตัวแรก ·
+ * {รูปสินค้า} = URL ดิบ (ชีตใส่ [[รูป:{รูปสินค้า}]] เอง) · {โปรโมชั่นทั้งหมด}/{โปรแนะนำ} = ข้อความโชว์ promo live
+ * 🔴 แทนเฉพาะเมื่อมีค่า (ว่าง = คงวงเล็บ → var-guard จับ) · รูปว่าง = ตัด wrapper [[รูป:...]] ทิ้ง+log (บอลลูนข้อความยังส่ง)
  */
 export function resolveCatalogVars(text: string, productRows: string[][], promoRows: string[][], now: Date = new Date()): string {
   if (!CATALOG_TEXT_VARS.some((v) => text.includes(v))) return text;
   let out = text;
-  if (out.includes("{ชื่อสินค้า}") || out.includes("{วิธีเก็บรักษา}")) {
-    const pCols = resolveCols(productRows, [PRODUCT_COLS.sku, PRODUCT_COLS.name, PRODUCT_COLS.status]);
-    if (pCols) {
-      const storageIdx = productRows[pCols.headerRow].map(normHeader).indexOf("วิธีเก็บรักษา");
-      for (let i = pCols.headerRow + 1; i < productRows.length; i++) {
-        const row = productRows[i];
-        const sku = cleanCell(row[pCols.cols[PRODUCT_COLS.sku]]);
-        if (!sku || cleanCell(row[pCols.cols[PRODUCT_COLS.status]]) !== STATUS_LIVE) continue;
-        const name = cleanCell(row[pCols.cols[PRODUCT_COLS.name]]);
-        const storage = storageIdx !== -1 ? cleanCell(row[storageIdx]) : "";
-        if (name) out = out.split("{ชื่อสินค้า}").join(name);
-        if (storage) out = out.split("{วิธีเก็บรักษา}").join(storage);
-        break; // live ตัวแรกพอ
+  const p = firstLiveProductVars(productRows);
+  if (p) {
+    if (p.name) out = out.split("{ชื่อสินค้า}").join(p.name);
+    if (p.storage) out = out.split("{วิธีเก็บรักษา}").join(p.storage);
+    if (p.fda) out = out.split("{เลข อย.}").join(p.fda);
+    if (p.ingredients) out = out.split("{ส่วนประกอบตามฉลาก}").join(p.ingredients);
+    if (p.unitPrice) out = out.split("{ราคาต่อหน่วย}").join(p.unitPrice);
+    if (out.includes("{รูปสินค้า}")) {
+      if (p.imageUrl) out = out.split("{รูปสินค้า}").join(p.imageUrl); // URL ดิบ
+      else {
+        // 🔴 รูปว่าง: ตัด wrapper [[รูป:{รูปสินค้า}]] ทั้งอันทิ้ง + log · บอลลูนข้อความยังส่งได้ (ไม่ปล่อย [[รูป:]] ค้าง)
+        out = out.replace(/\[\[รูป:\s*\{รูปสินค้า\}\s*\]\]/g, "");
+        if (out.includes("{รูปสินค้า}")) out = out.split("{รูปสินค้า}").join("");
+        console.warn(JSON.stringify({ scope: "vars", event: "product-image-empty", note: "รูปสินค้าว่าง — ตัด token รูปทิ้ง" }));
       }
     }
   }
   if (out.includes("{โปรโมชั่นทั้งหมด}")) {
     const texts = livePromoShowTexts(promoRows, now);
     if (texts.length > 0) out = out.split("{โปรโมชั่นทั้งหมด}").join(texts.join("\n"));
+  }
+  if (out.includes("{โปรแนะนำ}")) {
+    const rec = recommendedPromoShow(promoRows, now);
+    if (rec) out = out.split("{โปรแนะนำ}").join(rec);
   }
   return out;
 }
