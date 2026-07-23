@@ -556,13 +556,18 @@ async function processMessage(
   //    เฉพาะ history (เทิร์นเก่า) + state · ข้อความสด userMessage ไม่แตะ (AI ต้องสกัดเบอร์/ที่อยู่จากเทิร์นนี้) · DB/ลูกค้า ไม่แตะ
   const redactAccounts = [config.raw.get("เลขที่บัญชี") ?? "", config.raw.get("เลขพร้อมเพย์") ?? ""];
   const redactPhones = [customer?.pendingOrder["เบอร์"] ?? "", lastOrder?.["เบอร์"] ?? ""];
-  historyText = redactFinancial(historyText, redactAccounts, redactPhones);
-  stateText = redactFinancial(stateText, redactAccounts, []); // state คง เบอร์ ไว้ให้ AI รู้ว่าเก็บแล้ว (redact แค่บัญชี)
+  const redactHistory = redactFinancial(historyText, redactAccounts, redactPhones);
+  const redactState = redactFinancial(stateText, redactAccounts, []); // state คง เบอร์ ไว้ให้ AI รู้ว่าเก็บแล้ว (redact แค่บัญชี)
+  historyText = redactHistory.text;
+  stateText = redactState.text;
+  // D-48 ตอบข้อ 1: นับ redaction ต่อเทิร์น → ยืนยันว่า input โมเดลเป็น [เลขบัญชี]/[เบอร์] จริง ไม่ใช่เลขดิบ
+  console.log(JSON.stringify({ scope: "redact", history: redactHistory.count, state: redactState.count, historyLen: historyText.length }));
 
   // 🔴 D-47 ชิ้น 1: payment pre-check — เทิร์นเลือกวิธีจ่าย (เสี่ยงบล็อกสูงสุด) โค้ดตัดสิน ไม่พึ่ง AI
-  //    เงื่อนไข: มี items ใน pending + ยังไม่มีวิธีจ่าย + ไม่มีรูป → จับ โอน/COD จากข้อความ
-  const noPaymentYet = !(customer?.pendingOrder["การชำระเงิน"]);
-  const prePayment = ordersActive && customer && preItems.length > 0 && noPaymentYet && !imageContent
+  //    เงื่อนไข: มี items ใน pending + ไม่มีรูป → จับ โอน/COD จากข้อความ
+  //    D-48 fix (2): ตัด noPaymentYet ออก — เดิมล็อกยิงเฉพาะเทิร์นเลือกจ่ายครั้งแรก · เคส "เปลี่ยนเป็น COD"
+  //    (ลูกค้ามี payment=โอน อยู่แล้ว) เลย detect ไม่ได้ → gate คงค่าเก่า · detect ทุกเทิร์นครอบเคสเปลี่ยนด้วย
+  const prePayment = ordersActive && customer && preItems.length > 0 && !imageContent
     ? detectPaymentChoice(userMessage) : "";
   // ข้อความ = คำเลือกวิธีจ่ายล้วน + resolve ประตูได้ → ข้าม AI ทั้งเทิร์น (deterministic)
   const preCheckStep = prePayment && isPaymentChoiceOnly(userMessage) && lib ? resolvePaymentStep(lib.CSV_Step, prePayment) : null;

@@ -437,11 +437,13 @@ describe("D-47 payment pre-check + redact (pure)", () => {
     expect(resolvePaymentStep([["step_id"]], "โอน")).toBeNull();
   });
 
-  it("🔴 redactFinancial: เลขบัญชี/เบอร์ → label · ค่าอื่นไม่แตะ", () => {
+  it("🔴 redactFinancial: เลขบัญชี/เบอร์ → label · ค่าอื่นไม่แตะ · คืน count", () => {
     const txt = "โอนมาที่ 1234567890 นะคะ เบอร์ลูกค้า 0811111111 ยอด 275 บาท";
-    expect(redactFinancial(txt, ["1234567890"], ["0811111111"]))
-      .toBe("โอนมาที่ [เลขบัญชี] นะคะ เบอร์ลูกค้า [เบอร์] ยอด 275 บาท");
-    expect(redactFinancial(txt, [""], []), "ค่าว่าง = ไม่แตะ").toBe(txt);
-    expect(redactFinancial("ยอด 275 บาท", ["1234567890"], []), "ไม่มีเลขบัญชีในข้อความ = คงเดิม").toBe("ยอด 275 บาท");
+    const r = redactFinancial(txt, ["1234567890"], ["0811111111"]);
+    expect(r.text).toBe("โอนมาที่ [เลขบัญชี] นะคะ เบอร์ลูกค้า [เบอร์] ยอด 275 บาท");
+    expect(r.count, "นับ 2 รายการ (บัญชี+เบอร์)").toBe(2);
+    expect(redactFinancial(txt, [""], []), "ค่าว่าง = ไม่แตะ").toEqual({ text: txt, count: 0 });
+    expect(redactFinancial("ยอด 275 บาท", ["1234567890"], []), "ไม่มีเลขบัญชีในข้อความ = คงเดิม").toEqual({ text: "ยอด 275 บาท", count: 0 });
+    expect(redactFinancial("บัญชี 1234567890 · 1234567890", ["1234567890"], []).count, "นับทุกครั้งที่พบ").toBe(2);
   });
 });

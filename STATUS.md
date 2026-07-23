@@ -4,9 +4,13 @@
 > รายละเอียด → [docs/DECISIONS.md](docs/DECISIONS.md) · แผนที่โค้ด → [REPO-MAP.md](REPO-MAP.md) · brief → [docs/P2-REBUILD-BRIEF.md](docs/P2-REBUILD-BRIEF.md)
 
 ## 🔴 อยู่ตรงไหนตอนนี้ (สำคัญสุด)
+- **D-48 (extraction fallback — บันไดใหม่เมื่อ blocked) เสร็จ ✅** บน `main`
+  - หลักฐาน: combo "เปลี่ยน COD + ที่อยู่" ถูกบล็อก 7/7 = deterministic · retry เดิมไร้ผล
+  - งานหลัก: call หลัก blocked → **extraction call จิ๋ว** (ไม่มี prompt ขาย/ราคา/step/history = ตัดกลิ่นเงิน) → order_data เข้า gate · flow ต่อ · **แทน** retry เดิม
+  - fix (2): payment lock ตัด `noPaymentYet` → ครอบเคส "เปลี่ยนวิธีจ่าย" (เดิมยิงเฉพาะเลือกครั้งแรก) · +redact count log
 - **D-47 (ถอดชนวน PROHIBITED_CONTENT เส้นทางเงิน) เสร็จ ✅** บน `main`
   - ชิ้น 1 (พระเอก): payment pre-check ฝั่งโค้ด — เทิร์นเลือกจ่าย ("โอน"/"COD") ข้าม AI · deterministic
-  - ชิ้น 3: auto-retry 1 ครั้งเมื่อ blocked (probabilistic) · ชิ้น 2: redact เลขบัญชี/เบอร์ ใน input โมเดล · ชิ้น 4: log pattern blocked
+  - ชิ้น 3→D-48: retry เปลี่ยนเป็น extraction fallback · ชิ้น 2: redact เลขบัญชี/เบอร์ ใน input โมเดล · ชิ้น 4: log pattern blocked (หลักฐานนำสู่ D-48)
 - **D-46 (แก้ลูปวนขอที่อยู่ = Gemini บล็อก PROHIBITED_CONTENT ไม่เข้า degraded) เสร็จ ✅** บน `main`
   - ชั้น 1: `safetySettings` OFF ทั้ง 5 หมวด (บอทรับ PII เป็นเนื้องาน · 🔴 PROHIBITED_CONTENT ปรับไม่ได้ ยังบล็อกได้)
   - ชั้น 2 (หลักประกัน): route เทิร์นข้อความล้วน degraded → ข้อความ "ยังไม่ได้รับ ขอส่งใหม่" · ไม่ resend step ค้าง
@@ -19,7 +23,7 @@
   1. `HARNESS_REAL_GEMINI=1 npx vitest run golden-routing` — เกณฑ์: ≥24/25 เดิม + G26-G29 · G12 ยัง known-tuning
   2. `node scripts/sheet-lint.mjs` — รายงาน keyword คำโดดสามัญที่หลงเหลือในชีตจริง
 - 🔴 **ยังไม่ deploy prod / ยังไม่สลับ ENV** — โค้ด v2.0 อ่านชีต v2.0 เท่านั้น (contract = [docs/BOTLIB-V2-HEADERS.txt](docs/BOTLIB-V2-HEADERS.txt)) · รอเทส LINE จริง (dev OA) ก่อนสลับ `SHEET_BOTLIB_ID` + redeploy
-- เทสล่าสุด: **336 passed | 3 expected-fail | 34 skipped** (scripted) · tsc + build เขียว
+- เทสล่าสุด: **349 passed | 3 expected-fail | 34 skipped** (scripted) · tsc + build เขียว
 
 ## สรุป P2-REBUILD ที่จบ: "AI ไม่เขียนข้อความถึงลูกค้าอีกต่อไป"
 AI เหลือ 4 งาน (เลือก step · จำแนก objection · สกัด order_data · ตัดสิน handoff) · ทุกคำจากชีต (pattern) + resolver

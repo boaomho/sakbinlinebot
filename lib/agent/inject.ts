@@ -640,11 +640,22 @@ export function resolvePaymentStep(rows: string[][], payment: "โอน" | "COD
   return parsed.steps.find((s) => gatePayment(s) === payment)?.stepId ?? null;
 }
 
-/** D-47: ปิดบังข้อมูลการเงินใน input โมเดล (history/state) — เลขบัญชี/เบอร์ (ค่าที่รู้จริง) → label
+/** D-47/D-48: ปิดบังข้อมูลการเงินใน input โมเดล (history/state) — เลขบัญชี/เบอร์ (ค่าที่รู้จริง) → label · คืนจำนวนที่ redact (log)
  *  🔴 ใช้เฉพาะ input Gemini · ข้อความจริงถึงลูกค้า/DB ไม่แตะ · verbatim = AI ไม่ต้องพิมพ์เลขพวกนี้ (resolver ใส่) */
-export function redactFinancial(text: string, accounts: string[], phones: string[]): string {
+export function redactFinancial(text: string, accounts: string[], phones: string[]): { text: string; count: number } {
   let out = text;
-  for (const a of accounts) if (a && a.replace(/\D/g, "").length >= 6) out = out.split(a).join("[เลขบัญชี]");
-  for (const p of phones) if (p && p.replace(/\D/g, "").length >= 9) out = out.split(p).join("[เบอร์]");
-  return out;
+  let count = 0;
+  for (const a of accounts) {
+    if (!a || a.replace(/\D/g, "").length < 6) continue;
+    const parts = out.split(a);
+    count += parts.length - 1;
+    out = parts.join("[เลขบัญชี]");
+  }
+  for (const p of phones) {
+    if (!p || p.replace(/\D/g, "").length < 9) continue;
+    const parts = out.split(p);
+    count += parts.length - 1;
+    out = parts.join("[เบอร์]");
+  }
+  return { text: out, count };
 }

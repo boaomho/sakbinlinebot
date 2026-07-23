@@ -726,5 +726,17 @@ handoff ทุก path (edit/AI-semantic/keyword) ตั้งแค่ `human_m
 - **ชิ้น 4 (วัดก่อนแก้) — log pattern**: ทุกครั้ง blocked → log `historyLen` + `msgLen` + `msgHead(16)` + `msgHasDigit` + `hasImage` (ตัดทอน กัน PII) — สะสมหลักฐานว่าเทิร์นแบบไหนโดนบ่อย · ถ้า post-deploy ยังโดนถี่นอก pre-check ค่อยพิจารณาท่าใหญ่ (แยก call จำแนก/สกัด) — ยังไม่ทำ
 **harness:** unit (detect/only/resolvePaymentStep/redact) + retry (blocked→retry ผ่าน · blocked×2→degraded ไม่วนเกิน) + pipeline (โอนค่ะ+มี items→S3_TRANSFER ข้าม AI แม้ degraded · พ่วงที่อยู่→ล็อก payment ทับ · ไม่มี items→AI ปกติ) · **348 passed | 3 expected-fail** · tsc+build เขียว
 
+### D-48 · extraction fallback — บันไดใหม่เมื่อ blocked (แทน retry เดิม · 1 commit)
+**หลักฐานครบ (D-47 ชิ้น 4):** log 08:45–08:46 · combo "เปลี่ยนเป็น COD + ชื่อ/ที่อยู่/เบอร์" ถูกบล็อก **7/7** (attempt 0+1 ×2 รอบ) = **deterministic** · retry ด้วย prompt เดิมไร้ผลกับ combo นี้ (เหตุเดิมยังอยู่ = static prompt + ข้อความหนักการเงิน)
+**ตอบ 2 ข้อจาก log:**
+- **(1) redactFinancial:** logic ถูก แต่เดิมไม่มี log ยืนยัน → เพิ่ม `scope:"redact"` นับ `history`/`state` count ต่อเทิร์น (ยืนยัน input โมเดลเป็น `[เลขบัญชี]`/`[เบอร์]` จริง) · `redactFinancial` คืน `{text,count}` แล้ว
+- **(2) 🔴 บั๊กจริง — payment lock ไม่ยิงเคสเปลี่ยน:** เดิม `prePayment` มีเงื่อนไข `noPaymentYet` → เคส "เปลี่ยน COD" (ลูกค้ามี payment=โอน อยู่แล้ว) detect ไม่ได้ → gate คงค่าเก่า "โอน" · **แก้: ตัด `noPaymentYet`** → detect ทุกเทิร์น ครอบเคสเปลี่ยน (lock/skip-AI ยิงได้)
+**งานหลัก — extraction call (แทน retry):**
+- call หลัก blocked → `runExtraction()` (`gemini.ts`): systemInstruction สั้นเฉพาะกิจ "สกัด ชื่อ/ที่อยู่/เบอร์/payment/items เป็น JSON" · user = ข้อความลูกค้าล้วน · **ไม่มี prompt ขาย/ตารางราคา/สารบัญ step/catalog/history** = ตัดกลิ่นเงินเกือบหมด → ผ่าน classifier
+- ผล → `order_data`/`payment` ป้อน gate ตามปกติ · `stage = currentStage` (route คุมประตู) · `degraded=false` → ลูกค้าได้ flow ต่อ (ส่ง pattern ประตูปัจจุบัน · ไม่รู้ว่ามีดราม่า)
+- extraction ก็ blocked → `fallback` (degraded · **ตาข่าย D-46 = last resort**) · งบเวลา: อยู่ใน withTimeout 8s เดิม (**แทน** retry ไม่ใช่ซ้อนชั้น)
+- **ข้อจำกัด:** extraction ตั้ง `orderEditRequest=false` — เคสแก้ออเดอร์ที่**เขียนชีตแล้ว** (last_order) จะไม่ทริก edit-path ผ่านบันไดนี้ (แต่เคส pending merge ทำงานปกติ) · เฝ้าดู log `scope:"extraction"` post-deploy
+**harness:** extraction (หลัก blocked→extraction ผ่าน order_data/payment เข้า gate · blocked ทั้งคู่→degraded) + fix(2) pipeline (มี payment=โอน + เปลี่ยน COD → lock ทับ) + redact count · **349 passed | 3 expected-fail** · tsc+build เขียว
+
 ### Phase C · ลบ ENV ค้างใน Vercel
 `SHEET_STEP_URL` `SHEET_FAQ_URL` `SHEET_CONFIG_URL` `SHEET_FOLLOW_URL` — โค้ดไม่อ่านแล้ว ลบทิ้งได้

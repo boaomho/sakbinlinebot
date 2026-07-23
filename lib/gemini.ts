@@ -127,6 +127,30 @@ const RESPONSE_SCHEMA = {
   ],
 };
 
+/**
+ * D-48: schema จิ๋วสำหรับ extraction call — สกัดข้อมูลออเดอร์ล้วน ไม่มีช่องขาย/objection/handoff
+ * ใช้เฉพาะเมื่อ call หลักถูกบล็อก → ตัด prompt ขาย/ตารางราคา/สารบัญ step ออก = ลด "กลิ่นเงิน" ที่ทริกเกอร์ classifier
+ */
+const EXTRACT_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    order_data: {
+      type: Type.OBJECT,
+      properties: {
+        ชื่อ: { type: Type.STRING },
+        ที่อยู่: { type: Type.STRING },
+        เบอร์: { type: Type.STRING },
+        items: {
+          type: Type.ARRAY,
+          items: { type: Type.OBJECT, properties: { qty: { type: Type.NUMBER } } },
+        },
+      },
+    },
+    payment_method: { type: Type.STRING },
+  },
+  required: ["order_data", "payment_method"],
+};
+
 let client: GoogleGenAI | null = null;
 
 function getClient(): GoogleGenAI {
@@ -199,6 +223,69 @@ function parseOrderData(raw: unknown): OrderDataFromAI {
 
 function isValidImageIntent(value: unknown): value is ImageIntent {
   return value === "slip" || value === "damage" || value === "address" || value === "other";
+}
+
+/**
+ * D-48: extraction call — บันไดสำรองเมื่อ call หลักถูกบล็อก (แทน retry prompt เดิม ที่ไร้ผลกับ combo deterministic)
+ * systemInstruction สั้นเฉพาะกิจ "สกัดข้อมูล" · user = ข้อความลูกค้าล้วน (ไม่มี history/ตารางราคา/สารบัญ step/catalog)
+ * = ตัดกลิ่นเงินเกือบหมด → ผ่าน classifier · ผล order_data/payment ป้อน gate ตามปกติ · stage = current (route)
+ * คืน null ถ้า extraction ก็ถูกบล็อก/พัง → caller ตก fallback (degraded · ตาข่าย D-46 = last resort)
+ */
+async function runExtraction(input: GeminiTurnInput): Promise<GeminiTurnOutput | null> {
+  const system =
+    "คุณคือตัวสกัดข้อมูลออเดอร์ ตอบเป็น JSON เท่านั้น ห้ามมีข้อความอื่น\n" +
+    "สกัดจาก \"ข้อความลูกค้า\" ด้านล่าง: ชื่อผู้รับ / ที่อยู่จัดส่ง (ก้อนดิบตามที่พิมพ์) / เบอร์โทร / " +
+    "วิธีชำระ (payment_method = \"โอน\" หรือ \"COD\" หรือ \"\") / จำนวนสินค้า (items:[{qty}])\n" +
+    "🔴 ใส่เฉพาะที่ลูกค้าให้จริงในข้อความนี้ · ไม่ได้ให้ = เว้นว่าง/ไม่ใส่ key · ห้ามเดา · เลขจำนวน = qty ไม่ใช่เบอร์";
+  try {
+    const response = await getClient().models.generateContent({
+      model: MODEL,
+      contents: [{ text: `ข้อความลูกค้า: ${input.userMessage}` }],
+      config: {
+        systemInstruction: system,
+        temperature: 0.1,
+        maxOutputTokens: 1024,
+        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+        responseMimeType: "application/json",
+        responseSchema: EXTRACT_SCHEMA,
+        safetySettings: SAFETY_SETTINGS,
+      },
+    });
+    const text = response.text;
+    if (!text) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const r = response as any;
+      console.error(JSON.stringify({
+        scope: "extraction", warning: "extraction ก็ถูกบล็อก — ตก degraded (last resort)",
+        blockReason: r.promptFeedback?.blockReason, msgLen: input.userMessage.length,
+      }));
+      return null;
+    }
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    const orderData = parseOrderData(parsed.order_data);
+    const paymentMethod = toPaymentMethod(parsed.payment_method);
+    console.log(JSON.stringify({
+      scope: "extraction", recovered: true,
+      keys: Object.keys(orderData), payment: paymentMethod, // sku/qty/payment = ไม่ใช่ PII · เบอร์/ที่อยู่ log แค่ key
+    }));
+    return {
+      reply: DEFAULT_REPLY, // ไม่ใช้ (verbatim) — stage=current ให้ route ส่ง pattern ประตูปัจจุบัน
+      stage: input.currentStage,
+      tagsAdd: [],
+      handoff: false,
+      handoffReason: "",
+      orderData,
+      paymentMethod,
+      orderEditRequest: false,
+      imageIntent: "other",
+      imageNote: "",
+      objectionDetected: "none",
+      degraded: false, // flow ต่อเนื่อง (ลูกค้าไม่เห็นดราม่า) — ไม่ใช่ degraded reply
+    };
+  } catch (error) {
+    console.error(JSON.stringify({ scope: "extraction", warning: "extraction failed", error: String(error).slice(0, 80) }));
+    return null;
+  }
 }
 
 export async function runSalesTurn(input: GeminiTurnInput): Promise<GeminiTurnOutput> {
@@ -289,49 +376,42 @@ export async function runSalesTurn(input: GeminiTurnInput): Promise<GeminiTurnOu
   }
 
   try {
-    // D-47 ชิ้น 3: no-text (blocked) = probabilistic → retry 1 ครั้งก่อนตก fallback · MAX_TOKENS/parse-fail ไม่ retry
-    let parsed: Record<string, unknown> | null = null;
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const response = await getClient().models.generateContent({
-        model: MODEL,
-        contents: parts,
-        config: {
-          systemInstruction,
-          temperature: input.config.temperature,
-          maxOutputTokens: input.config.maxOutputTokens,
-          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-          responseMimeType: "application/json",
-          responseSchema: RESPONSE_SCHEMA,
-          safetySettings: SAFETY_SETTINGS, // D-46: OFF 5 หมวด (บอทรับ PII เป็นเนื้องาน)
-        },
-      });
-
-      const finishReason = response.candidates?.[0]?.finishReason;
-      const usage = response.usageMetadata;
-      // thinking+output ใช้เพดานร่วมกัน → ต้องเห็นสัดส่วนถึงจะรู้ว่าใครกิน budget
-      const budget = {
-        finishReason,
+    const response = await getClient().models.generateContent({
+      model: MODEL,
+      contents: parts,
+      config: {
+        systemInstruction,
+        temperature: input.config.temperature,
         maxOutputTokens: input.config.maxOutputTokens,
-        thoughtsTokenCount: usage?.thoughtsTokenCount, // thinking กินเท่าไหร่
-        candidatesTokenCount: usage?.candidatesTokenCount, // คำตอบจริงกินเท่าไหร่
-        totalTokenCount: usage?.totalTokenCount,
-        promptTokenCount: usage?.promptTokenCount, // prompt บวมมั้ย (Step/FAQ/ประวัติ)
-      };
+        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+        responseMimeType: "application/json",
+        responseSchema: RESPONSE_SCHEMA,
+        safetySettings: SAFETY_SETTINGS, // D-46: OFF 5 หมวด (บอทรับ PII เป็นเนื้องาน)
+      },
+    });
 
-      if (finishReason === "MAX_TOKENS") {
-        // ชนเพดาน = JSON ขาดกลางคัน → ห้าม parse เด็ดขาด (จะได้ค่าครึ่ง ๆ / throw) · retry ไม่ช่วย
-        console.error(JSON.stringify({ scope: "gemini", warning: "MAX_TOKENS — ตอบไม่จบ ใช้ fallback", ...budget }));
-        return fallback(input.currentStage);
-      }
+    const finishReason = response.candidates?.[0]?.finishReason;
+    const usage = response.usageMetadata;
+    // thinking+output ใช้เพดานร่วมกัน → ต้องเห็นสัดส่วนถึงจะรู้ว่าใครกิน budget
+    const budget = {
+      finishReason,
+      maxOutputTokens: input.config.maxOutputTokens,
+      thoughtsTokenCount: usage?.thoughtsTokenCount, // thinking กินเท่าไหร่
+      candidatesTokenCount: usage?.candidatesTokenCount, // คำตอบจริงกินเท่าไหร่
+      totalTokenCount: usage?.totalTokenCount,
+      promptTokenCount: usage?.promptTokenCount, // prompt บวมมั้ย (Step/FAQ/ประวัติ)
+    };
 
-      console.log(JSON.stringify({ scope: "gemini", attempt, ...budget }));
+    if (finishReason === "MAX_TOKENS") {
+      // ชนเพดาน = JSON ขาดกลางคัน → ห้าม parse เด็ดขาด (จะได้ค่าครึ่ง ๆ / throw) · extraction ไม่ช่วย (คนละเหตุ)
+      console.error(JSON.stringify({ scope: "gemini", warning: "MAX_TOKENS — ตอบไม่จบ ใช้ fallback", ...budget }));
+      return fallback(input.currentStage);
+    }
 
-      const text = response.text;
-      if (text) {
-        parsed = JSON.parse(text);
-        break;
-      }
+    console.log(JSON.stringify({ scope: "gemini", ...budget }));
 
+    const text = response.text;
+    if (!text) {
       // 🔬 candidates ว่าง/ไม่มี text = Gemini ไม่ผลิต output (prompt ถูกบล็อก / safety / อื่นๆ)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const r = response as any;
@@ -345,17 +425,20 @@ export async function runSalesTurn(input: GeminiTurnInput): Promise<GeminiTurnOu
       };
       // D-47 ชิ้น 4: log pattern เทิร์นที่โดนบล็อก (สะสมหลักฐานว่าเทิร์นแบบไหนโดนบ่อย · ตัดทอน กัน PII)
       console.error(JSON.stringify({
-        scope: "gemini", warning: "no text — candidates ว่าง/ถูกบล็อก", attempt, ...raw, ...budget,
+        scope: "gemini", warning: "no text — candidates ว่าง/ถูกบล็อก", ...raw, ...budget,
         historyLen: input.historyText.length, msgLen: input.userMessage.length,
         msgHead: input.userMessage.slice(0, 16), msgHasDigit: /\d/.test(input.userMessage), hasImage: Boolean(input.image),
       }));
       if (process.env.DIAG_PROMPT_TOKENS === "1") {
         console.log(JSON.stringify({ scope: "gemini", event: "raw-empty", promptFeedback: r.promptFeedback ?? null, candidate0: r.candidates?.[0] ? { ...r.candidates[0], content: undefined } : null }));
       }
-      if (attempt === 0) continue; // retry 1 ครั้ง (งบรวมคุมด้วย withTimeout 8s ที่ route · เกิน → degraded path D-46)
-      return fallback(input.currentStage); // บล็อกซ้ำครั้งที่ 2 → ยอมแพ้ (degraded)
+      // D-48: call หลัก blocked → บันได extraction จิ๋ว (แทน retry prompt เดิม) · อยู่ในงบ withTimeout 8s เดิม
+      const extracted = await runExtraction(input);
+      if (extracted) return extracted; // สกัดผ่าน → order_data เข้า gate · ลูกค้าได้ flow ต่อ
+      return fallback(input.currentStage); // extraction ก็บล็อก → degraded (ตาข่าย D-46 last resort)
     }
-    if (!parsed) return fallback(input.currentStage); // safety (ไม่ควรถึง — loop คืน/break เสมอ)
+
+    const parsed: Record<string, unknown> = JSON.parse(text);
 
     return {
       reply: typeof parsed.reply === "string" && parsed.reply.trim() ? parsed.reply.trim() : DEFAULT_REPLY,
