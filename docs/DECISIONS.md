@@ -97,11 +97,17 @@ Gemini core policy `PROHIBITED_CONTENT` **ปรับผ่าน safetySetting
 **เฝ้าต่อ:** log `scope:"extraction"` (ฟื้นบ่อยแค่ไหน) + `scope:"gemini" warning:"no text"` (blocked pattern: historyLen/msgHead/hasDigit) ·
 ถ้า post-deploy ยัง blocked ถี่ **นอก** 4 ชั้นนี้ → ค่อยพิจารณาท่าใหญ่ (แยก classify call ถาวร / เปลี่ยนโครง prompt) · **ยังไม่ทำ** (วัดก่อน)
 
-### KI-06 · ⏳ ล้าง `delivered_steps` หลัง cron แจกเลข — ผ่าน harness · รอหลักฐาน LINE จริง
+### KI-06 · ✅ แก้แล้ว (2026-07-24) — ล้าง `delivered_steps` หลัง cron: รากที่แท้จริง = คอลัมน์ R ว่าง
 
-`clearDeliveredStepsExceptCurrent` (D-45b · v1 hook ที่จุด cron ยืนยันออเดอร์) **พิสูจน์ผ่าน harness แล้ว** (ธงล้าง step เก่า คง current) ·
-แต่ยัง **รอหลักฐานลูกค้าเก่าเคสแรกบน LINE จริง** (ซื้อซ้ำหลังปิดออเดอร์ → step ส่งเต็มก้อนใหม่ ไม่ใช่ปิดท้ายค้าง) ·
-เฟสหลังการขายอาจย้าย/เพิ่มจุดล้าง (คอมเมนต์ไว้ในโค้ดแล้ว)
+**รากที่แท้จริงของ "ล้างธงไม่เคยพิสูจน์บน LINE จริง"** (เจอตอน audit T-STUDIO เฟส ก · เจ้าของยืนยันชีตจริง R ว่าง ไม่มีสูตร):
+`appendOrderRow` **ไม่เคยเขียน `line_user_id` (คอลัมน์ R)** แต่ cron ล้างธงด้วย `if (order.lineUserId)` →
+R ว่างเสมอ = **ธงไม่เคยถูกล้างผ่าน cron บน prod เลย** · harness D-45b เดิมเทส `clearDeliveredStepsExceptCurrent`
+แบบเรียกตรง (function-level) — **ไม่ได้เทส join ผ่านชีต** จึงเขียวทั้งที่ join ขาด · เทสจริง 2026-07-23
+"ซื้อซ้ำได้ S2 เต็มก้อน" ผ่านได้เพราะเหตุอื่น (ลูกค้าเทสใหม่/ธงยังไม่เคยตั้ง) ไม่ใช่เพราะ cron ล้าง
+
+**แก้ (commit แยก):** `appendOrderRow` เขียน `line_user_id` ลง R (`NewOrderInput.lineUserId` + caller ใน handler ส่ง `userId`) ·
+**เทส join จริงเพิ่ม** (golden บท 19): append ผ่าน pipeline → assert R=userId → ติ๊ก M → cron จริงอ่านแถว → ธงถูกล้างถูกคน + เลขถูกแจก
+**เหลือ:** แถวออเดอร์เก่าในชีต (ก่อน fix) R ยังว่าง — cron จะข้ามล้างธงให้ลูกค้ากลุ่มนั้น (ครั้งเดียว · ลูกค้าซื้อรอบใหม่จะได้แถวใหม่ที่มี R) · ยังรอหลักฐานลูกค้าเก่าเคสแรกบน LINE จริงเช่นเดิม
 
 ### KI-07 · 🧪 golden fixture G26-G29 รอ sync กับชีตจริง (ค้างจากรอบก่อน)
 

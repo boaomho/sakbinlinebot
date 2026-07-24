@@ -130,6 +130,9 @@ export interface NewOrderInput {
   shippingFee?: string;
   /** Q = order_id (idempotency key · Step 2 · D-29) */
   orderId?: string;
+  /** R = line_user_id — join key กับ Neon (KI-06: cron ใช้ล้างธง delivered_steps ตอนแจกเลข ·
+   *  เดิมไม่เคยเขียน = ธงไม่ถูกล้างบน prod · ยืนยันแล้วชีตจริง R ว่าง ไม่มีสูตร) */
+  lineUserId?: string;
 }
 
 export async function appendOrderRow(input: NewOrderInput): Promise<void> {
@@ -155,6 +158,7 @@ export async function appendOrderRow(input: NewOrderInput): Promise<void> {
     items_json: sanitizeShortText(input.itemsJson, 1000),
     ค่าส่ง: sanitizeAmount(input.shippingFee),
     order_id: sanitizeShortText(input.orderId, 40), // Q = idempotency key (D-29)
+    line_user_id: sanitizeShortText(input.lineUserId, 50), // R = join key ล้างธง (KI-06)
   };
 
   await withOrdersColumns(async (cols) => {

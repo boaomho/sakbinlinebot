@@ -360,6 +360,7 @@ async function runOrderGate(
         itemsJson: JSON.stringify(normItems), // S = items_json
         shippingFee: String(price.shippingFee), // T = ค่าส่ง
         orderId, // Q = idempotency key
+        lineUserId: userId, // R = join key — cron ล้างธง delivered_steps ตอนแจกเลข (KI-06)
       });
     } catch (error) {
       // 🔴 append ล้มจริง (403/network/quota) = ยังไม่เขียน → ไม่ mark written ไม่ clear → retry เทิร์นหน้า "เขียนใหม่" (ออเดอร์ไม่หาย)
