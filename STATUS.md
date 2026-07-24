@@ -21,7 +21,8 @@
   - ✅ cron ฟื้น — แจกเลขออเดอร์ (atomic) + แจ้งกลุ่ม format ถูก
   - ✅ ซื้อซ้ำได้ — ประตู S2 ส่งเต็มก้อนใหม่ (ธง `delivered_steps` ล้างหลังปิดออเดอร์ · KI-06)
 - **cron-job.org: enabled** ทุก 5 นาที (endpoint ออเดอร์ · เช็ค `Authorization: Bearer <CRON_SECRET>`)
-- เทสล่าสุด: **379 passed | 3 expected-fail | 34 skipped** (scripted) · tsc + build เขียว
+- **D-51 (ทักทายรายวัน) เสร็จ ✅** บน `main` — เทิร์นแรกของลูกค้าแต่ละวัน (เวลาไทย) เติม prefix หน้าบอลลูนข้อความแรก (delivery ล้วน · CSV_Config `ทักทายรายวัน` · ค่าเริ่ม `สวัสดีค่ะ ` · ว่าง=ปิด · ข้าม handoff/degraded/รูป) · 🔴 เจ้าของวางข้อความในแท็บ CSV_Config + วิธีใช้
+- เทสล่าสุด: **396 passed | 3 expected-fail | 34 skipped** (scripted) · tsc + build เขียว
 - known-tuning (ยอมรับแล้ว · ปิดได้ทีหลังด้วยการจูนชีต): **G12** (S2 vs S2_DIRECT · "ขอลองถ้วยเดียว") · **G29** stage (S4A/S4B)
 
 ## ซีรีส์ D-45→D-49 (เส้นทางเงิน + สมองยึด Step) — ปิดครบ ✅ บน `main`

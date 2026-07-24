@@ -49,7 +49,8 @@ function textBubbles(): string[] {
 }
 const OBJ_H = ["objection_id", "ลูกค้าพูดแบบไหนบ้าง", "ความกังวลที่แท้จริง", "หลักการตอบ", "คิดเอง", "ตัวอย่างคำตอบ"];
 function cfg(extra: [string, string][] = []): Map<string, string> {
-  return new Map<string, string>([...Object.entries(PRICING_CONFIG), ...extra]);
+  // D-51: ทักทายรายวันปิดโดยดีฟอลต์ใน harness (เทส verbatim อื่นไม่โดน prefix) · extra ทับได้
+  return new Map<string, string>([...Object.entries(PRICING_CONFIG), ["ทักทายรายวัน", ""], ...extra]);
 }
 function customerText(): string {
   return lineCalls.replies.flatMap((rr) => rr.messages).map((m) => (m.type === "text" ? m.text : "")).join(" ");
@@ -439,6 +440,75 @@ describe("D-49 · extraction-recovered + gate complete → ทวนครบจ
     expect(t, "ไม่มี token ดิบหลุด").not.toContain("{ออเดอร์");
     expect(orderCount(), "#2 ออเดอร์เขียนจริง 1 แถว (gate complete)").toBe(1);
     expect((await readCustomer(U))?.pending_order, "เขียนแล้ว → pending clear").toBeNull();
+  });
+});
+
+describe("D-51 ทักทายรายวัน — เติม prefix บอลลูนแรก เทิร์นแรกของวัน (delivery ล้วน)", () => {
+  const firstText = (idx: number): string => {
+    const rr = lineCalls.replies[idx];
+    const m = rr?.messages.find((x) => x.type === "text");
+    return m?.type === "text" ? m.text : "";
+  };
+
+  // config raw ที่ "ไม่มี key ทักทายรายวัน" → พิสูจน์ค่าเริ่มในโค้ด (สวัสดีค่ะ )
+  const noKeyRaw = (): Map<string, string> => new Map<string, string>(Object.entries(PRICING_CONFIG));
+  const onRaw = (): Map<string, string> => cfg([["ทักทายรายวัน", "สวัสดีค่ะ "]]);
+
+  it("🔴 ลูกค้าใหม่ + ไม่มี key ในชีต → ใช้ค่าเริ่ม 'สวัสดีค่ะ ' (กลืนบอลลูนเดิม ไม่เพิ่มบอลลูน)", async () => {
+    harnessOverrides.config = { raw: noKeyRaw() };
+    scriptGemini([turn({ reply: "AI", stage: "S1" })]);
+    await sendText(U, "สวัสดีค่ะ");
+    expect(firstText(0)).toBe("สวัสดีค่ะ ตัวอย่างทักทายในชีต");
+    expect(lineCalls.replies[0].messages.length, "ไม่เพิ่มจำนวนบอลลูน").toBe(1);
+  });
+
+  it("🔴 เทิร์นสองของวันเดียวกัน → ไม่ทัก", async () => {
+    harnessOverrides.config = { raw: onRaw() };
+    scriptGemini([turn({ reply: "AI", stage: "S1" }), turn({ reply: "AI", stage: "S_BOTH" })]);
+    await sendText(U, "สวัสดี");
+    expect(firstText(0), "เทิร์นแรก = ทัก").toMatch(/^สวัสดีค่ะ /);
+    await sendText(U, "รับทราบ");
+    expect(firstText(1), "🔴 เทิร์นสอง (วันเดียวกัน มีประวัติ) = ไม่ทัก").toBe("รับทราบค่ะ");
+  });
+
+  it("🔴 หลัง /reset (ประวัติล้าง) → ลูกค้าใหม่ ทักอีกครั้ง", async () => {
+    harnessOverrides.config = { raw: onRaw() };
+    scriptGemini([turn({ reply: "AI", stage: "S1" }), turn({ reply: "AI", stage: "S_BOTH" }), turn({ reply: "AI", stage: "S1" })]);
+    await sendText(U, "สวัสดี");
+    await sendText(U, "รับทราบ");
+    expect(firstText(1), "เทิร์นสองไม่ทัก").toBe("รับทราบค่ะ");
+    await resetCustomerMemory(U);
+    await sendText(U, "กลับมาแล้ว");
+    expect(firstText(2), "หลัง reset = ทักใหม่").toMatch(/^สวัสดีค่ะ /);
+  });
+
+  it("H4/handoff → ไม่ทัก (ลูกค้าไม่พอใจ ทิศปลอดภัย)", async () => {
+    harnessOverrides.config = { raw: onRaw() };
+    scriptGemini([turn({ reply: "AI", stage: "H1", handoff: true })]);
+    await sendText(U, "จะฟ้อง");
+    expect(firstText(0), "handoff = ไม่ทัก (ไม่มี prefix สวัสดีค่ะ )").not.toMatch(/^สวัสดีค่ะ /);
+  });
+
+  it("degraded (ระบบสะดุด) → ไม่ทัก", async () => {
+    harnessOverrides.config = { raw: onRaw() };
+    scriptGemini([turn({ reply: "AI", stage: "S1", degraded: true })]);
+    await sendText(U, "สนใจ");
+    expect(firstText(0), "degraded = ไม่ทัก").not.toMatch(/^สวัสดีค่ะ /);
+    expect(customerText()).toContain("ยังไม่ได้รับข้อความล่าสุด");
+  });
+
+  it("config ค่าว่าง → ปิดฟีเจอร์ (ไม่มี prefix)", async () => {
+    harnessOverrides.config = { raw: cfg([["ทักทายรายวัน", ""]]) };
+    scriptGemini([turn({ reply: "AI", stage: "S1" })]);
+    await sendText(U, "สวัสดี");
+    expect(firstText(0), "ว่าง = ปิด").toBe("ตัวอย่างทักทายในชีต");
+  });
+
+  it("ค่ากำหนดเอง → ใช้ข้อความเจ้าของ", async () => {
+    harnessOverrides.config = { raw: cfg([["ทักทายรายวัน", "หวัดดีจ้า "]]) };
+    scriptGemini([turn({ reply: "AI", stage: "S1" })]);
+    await sendText(U, "สวัสดี");
+    expect(firstText(0)).toBe("หวัดดีจ้า ตัวอย่างทักทายในชีต");
   });
 });
 

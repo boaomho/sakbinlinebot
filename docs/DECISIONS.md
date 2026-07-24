@@ -801,5 +801,16 @@ handoff ทุก path (edit/AI-semantic/keyword) ตั้งแค่ `human_m
 **harness:** fidelity (เทิร์นเดียวกันผ่าน webhook vs simulator → บอลลูน+stage+pending+ธง ตรงเป๊ะ) · เทสรั่ว (COD ครบเทิร์นเดียว → LINE=0 · ชีต append/batchUpdate=0 · แถว "จะเขียน"+ข้อความกลุ่มอยู่ใน collector · gate complete จริง ยอด 275 จาก pricing) · blob guard (importActual ข้าม mock) · cron จำลอง (แจกเลข+ล้างธง D-45b ผ่านโค้ด cron จริง เมื่อ R มีค่า) · reset · auth (404 เมื่อ ENV ปิด/401/cookie) · **356 passed | 3 expected-fail** · build เขียว (/train ขึ้นครบ)
 **🔴 gap พบระหว่าง audit (ยังไม่แก้ — รอเจ้าของยืนยัน):** `appendOrderRow` **ไม่เขียน `line_user_id` (คอลัมน์ R)** แต่ cron ใช้ R ล้างธง delivered_steps (`if (order.lineUserId)`) → ถ้าชีตจริงไม่มีสูตรเติม R เอง = **ธงไม่เคยถูกล้างผ่าน cron บน prod** (harness D-45b เทสฟังก์ชันตรง ไม่ได้เทส join ผ่านชีต) · เทสจริง 2026-07-23 ที่ "ซื้อซ้ำผ่าน" — ขอเจ้าของยืนยันว่า R ในชีตจริงถูกเติมด้วยอะไร (สูตร ARRAYFORMULA? กรอกมือ?) · ถ้าไม่มี → fix 1 บรรทัด (ส่ง userId เข้า appendOrderRow) เป็น commit แยก **ห้ามแก้เองก่อนยืนยัน เพราะถ้า R เป็นคอลัมน์สูตร การเขียนทับจะพังสูตร**
 
+### D-51 · ทักทายรายวัน (delivery ล้วน · ไม่แตะ AI/prompt/engine · 1 commit)
+เทิร์นแรกของลูกค้าใน**แต่ละวัน (เวลาไทย D-37)** → เติม prefix หน้าบอลลูนข้อความแรก (กลืนในบอลลูนเดิม · ไม่เพิ่มบอลลูน · ไม่ชน cap 5)
+- **ตัดสิน (`lib/greeting.ts` `isFirstMessageOfDay`):** ไม่มีประวัติ (`historyLen===0` = ลูกค้าใหม่/หลัง `/reset` ที่ล้าง messages) **หรือ** `bangkokYMD(customer.lastSeen) !== bangkokYMD(now)` (กิจกรรมล่าสุดคนละวันไทย) · `customer.lastSeen` = เวลาก่อนอัปเดต (ensureCustomer คืนค่าเก่า)
+- **เติม (`prependToFirstTextBubble`):** หา text chunk แรก (ข้าม `[[รูป:...]]`/ตัวคั่นบอลลูน) แล้วแทรก prefix ก่อนอักขระจริง · **บอลลูนแรกเป็นรูป → เติมที่ข้อความถัดไป** · ทั้งหมดเป็นรูป → ไม่เติม · ทำที่ `handler.ts` ก่อน `assistantSaved`/`deliverReply` (หลัง guard ทุกตัว)
+- **ข้อความ:** CSV_Config key ใหม่ **"ทักทายรายวัน"** · ไม่มี key = ค่าเริ่ม `"สวัสดีค่ะ "` (มี space ท้าย · ไม่มีอีโมจิ) · ค่าว่าง `""` = **ปิดฟีเจอร์**
+- **ยกเว้นไม่ทัก:** `isHandoffTurn` (H4/ลูกค้าไม่พอใจ — **รวม handoff อื่นๆ ด้วย = ทิศปลอดภัย**: H4 แยกสัญญาณเดี่ยวไม่ได้ชัด · greeting บนเทิร์น handoff = ผิดโทน) · `geminiOutput.degraded` (ระบบสะดุด) · `imageFallback`
+- **ห้องซ้อม (T-STUDIO):** `/reset` = ลูกค้าใหม่ (messages ล้าง) → ทักทันที — ใช้เทสฟีเจอร์ได้เลย
+- **harness:** ปิด greeting เป็นดีฟอลต์ (`testConfig`/`cfg()` ใส่ `"ทักทายรายวัน"=""`) กันเทสอื่นโดน prefix · เทส D-51 เปิดเอง
+- **เทส:** unit (isFirstMessageOfDay ข้ามเที่ยงคืนไทยแม้ UTC วันเดียว · prependToFirstTextBubble รูป/หลายบอลลูน/space) + pipeline (ลูกค้าใหม่ key-absent→ค่าเริ่ม · เทิร์นสองไม่ทัก · reset→ทักใหม่ · handoff/degraded ไม่ทัก · ""=ปิด · custom) · **396 passed | 3 expected-fail** · build เขียว
+- 🔴 **เจ้าของ:** วางข้อความในแท็บ CSV_Config ชีต key `ทักทายรายวัน` (ค่าเริ่ม `สวัสดีค่ะ ` · เว้นว่าง=ปิด) — โน้ตในแท็บวิธีใช้: "เติมหน้าคำตอบแรกของลูกค้าในแต่ละวัน · ใส่ space ท้ายให้กลืนกับข้อความ"
+
 ### Phase C · ลบ ENV ค้างใน Vercel
 `SHEET_STEP_URL` `SHEET_FAQ_URL` `SHEET_CONFIG_URL` `SHEET_FOLLOW_URL` — โค้ดไม่อ่านแล้ว ลบทิ้งได้

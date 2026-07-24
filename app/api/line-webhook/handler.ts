@@ -9,6 +9,7 @@ import {
 } from "@/lib/config";
 import { loadBotLibrary } from "@/lib/sheets/loader";
 import { buildStepInjection, buildFaqInjection, buildCatalogInjection, buildObjectionInjection, readConfigDescription, funnelStageOf, stepNameOf, stepVerbatim, stepClosing, joinVerbatimParts, detectPaymentChoice, isPaymentChoiceOnly, resolvePaymentStep, resolveRecoveredStage, redactFinancial } from "@/lib/agent/inject";
+import { isFirstMessageOfDay, prependToFirstTextBubble, DEFAULT_DAILY_GREETING } from "@/lib/greeting";
 import {
   ensureCustomer,
   updateCustomerAfterTurn,
@@ -547,8 +548,10 @@ export async function processMessage(
   let stateText = buildStateText(customer, orderWarning, preOrderPriceStuck, lastOrderLine);
 
   let historyText = "(ระบบความจำปิดอยู่)";
+  let historyLen = 0; // D-51: ประวัติก่อนเทิร์นนี้ (0 = ลูกค้าใหม่/หลัง reset) — ใช้ตัดสินทักทายรายวัน
   if (switches.memory) {
     const history = await getRecentHistory(userId, 20);
+    historyLen = history.length;
     historyText = formatHistoryForPrompt(history);
   }
 
@@ -916,6 +919,16 @@ export async function processMessage(
         outReply = VAR_FALLBACK_REPLY;
         deliverMarksStep = false;
       }
+    }
+  }
+  // D-51 ทักทายรายวัน: เทิร์นแรกของวัน (เวลาไทย) → เติม prefix หน้าบอลลูนข้อความแรก (delivery ล้วน)
+  //   ข้าม: handoff (H4/ลูกค้าไม่พอใจ + handoff อื่นๆ = ทิศปลอดภัย) · degraded (ระบบสะดุด) · รูป-fallback · ค่าว่าง=ปิด
+  if (switches.memory && customer && !imageFallback && !geminiOutput.degraded && !isHandoffTurn) {
+    const rawGreet = config.raw.get("ทักทายรายวัน");
+    const greet = rawGreet === undefined ? DEFAULT_DAILY_GREETING : rawGreet;
+    if (greet && isFirstMessageOfDay(historyLen, customer.lastSeen, nowDate)) {
+      outReply = prependToFirstTextBubble(outReply, greet);
+      console.log(JSON.stringify({ scope: "greeting", event: "daily-first", historyLen }));
     }
   }
   const assistantSaved = outReply;

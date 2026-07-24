@@ -31,6 +31,7 @@ export function testConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     ["ค่าส่ง_มาตรฐาน", "30"],
     ["ค่าส่ง_COD_เพิ่ม", "0"],
     ["เพดานจำนวน_คูณโปรใหญ่สุด", "2"],
+    ["ทักทายรายวัน", ""], // D-51: ปิดทักทายรายวันใน harness (เทสอื่นไม่โดน prefix) · เทส D-51 เปิดเอง
   ]);
 
   return {
