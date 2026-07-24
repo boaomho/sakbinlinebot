@@ -75,7 +75,7 @@ const S: Record<string, React.CSSProperties> = {
   lintBlock: { background: "#ffe3e3", color: "#a10000", borderRadius: 8, padding: "6px 10px", fontSize: 12, margin: "3px 0" },
   lintWarn: { background: "#fff4d6", color: "#8a6d00", borderRadius: 8, padding: "6px 10px", fontSize: 12, margin: "3px 0" },
   loginBox: { margin: "auto", background: "#fff", padding: 24, borderRadius: 12, boxShadow: "0 2px 12px rgba(0,0,0,.1)", display: "flex", flexDirection: "column", gap: 12, width: 300 },
-  sheet: { position: "fixed", left: 0, right: 0, bottom: 0, maxHeight: "85dvh", background: "#fff", borderRadius: "16px 16px 0 0", boxShadow: "0 -4px 20px rgba(0,0,0,.2)", overflowY: "auto", padding: 14, zIndex: 20 },
+  sheet: { position: "fixed", left: 0, right: 0, bottom: 0, maxHeight: "88dvh", background: "#fff", borderRadius: "16px 16px 0 0", boxShadow: "0 -4px 20px rgba(0,0,0,.2)", overflowY: "auto", WebkitOverflowScrolling: "touch", padding: 14, paddingBottom: "calc(20px + env(safe-area-inset-bottom))", scrollPaddingBottom: 100, zIndex: 20 },
   chip: { display: "inline-block", padding: "2px 8px", borderRadius: 12, background: "#eef", fontSize: 11, marginRight: 4 },
 };
 
@@ -96,6 +96,9 @@ export default function TrainStudio() {
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [confirm, setConfirm] = useState<{ column: string; old: string; next: string } | null>(null);
   const [toast, setToast] = useState("");
+  const [sheetChanged, setSheetChanged] = useState(false);
+  const [sheetDragY, setSheetDragY] = useState(0);
+  const dragStart = useRef(0);
   const [showX, setShowX] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const chatRef = useRef<HTMLDivElement>(null);
@@ -170,17 +173,29 @@ export default function TrainStudio() {
   }
 
   // ---- เฟส ข: editor ----
-  function openEditor(turnIdx: number, srcIdx = 0) {
+  // 🔴 เฟส ง (bug fix เฟส ค): fetch "ข้อความดิบ" สดจากชีตเสมอตอนเปิด (ไม่ใช้ค่าที่ติดมากับเทิร์นเก่า
+  //    ซึ่งอาจ stale หลังเขียนลงชีต) · ต่างจากค่าตอนเทิร์น → badge "ชีตถูกแก้แล้วหลังเทิร์นนี้"
+  async function openEditor(turnIdx: number, srcIdx = 0) {
     const src = turns[turnIdx]?.sources[srcIdx];
     if (!src) return;
-    // ค่าเริ่ม = overlay ที่มีอยู่ (ถ้าเคยแก้) ทับค่าชีต
-    const cols = src.columns.map((c) => {
-      const ov = overlay.find((o) => o.tab === src.tab && o.key === src.key && o.column === c.name);
-      return { name: c.name, value: ov ? ov.value : c.value };
+    setEditor({ turnIdx, srcIdx }); setPreview(null); setSheetChanged(false); setSheetDragY(0);
+    setDraftCols(src.columns.map((c) => ({ name: c.name, value: c.value }))); // ค่าชั่วคราวระหว่างโหลดสด
+    const fresh = await Promise.all(src.columns.map(async (c) => {
+      try {
+        const r = await fetch("/train/api/write", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: "diff", tab: src.tab, key: src.key, column: c.name }) });
+        const d = (await r.json()) as { old?: string };
+        return { name: c.name, sheet: r.ok ? (d.old ?? "") : c.value, turnVal: c.value };
+      } catch { return { name: c.name, sheet: c.value, turnVal: c.value }; }
+    }));
+    setSheetChanged(fresh.some((f) => f.sheet !== f.turnVal));
+    const cols = fresh.map((f) => {
+      const ov = overlay.find((o) => o.tab === src.tab && o.key === src.key && o.column === f.name);
+      return { name: f.name, value: ov ? ov.value : f.sheet }; // ฐาน = ชีตสด · overlay draft ชนะ
     });
-    setEditor({ turnIdx, srcIdx }); setDraftCols(cols); setPreview(null);
+    setDraftCols(cols);
     schedulePreview(src.tab, src.key, cols);
   }
+  function closeEditor() { setEditor(null); setPreview(null); setSheetDragY(0); }
   const schedulePreview = useCallback((tab: string, key: string, cols: SourceCol[]) => {
     if (previewTimer.current) clearTimeout(previewTimer.current);
     previewTimer.current = setTimeout(async () => {
@@ -257,10 +272,12 @@ export default function TrainStudio() {
   const editorSrc = editor ? turns[editor.turnIdx]?.sources[editor.srcIdx] : null;
   const editorOpen = Boolean(editorSrc);
   const sidePanel = editorOpen ? renderEditor() : renderXray();
+  const tb: React.CSSProperties = isMobile ? { ...S.toolBtn, minHeight: 46, fontSize: 15, padding: "12px 12px", flex: "1 1 40%" } : S.toolBtn;
 
   return (
     <main style={S.page}>
-      <div style={{ ...S.chatCol, display: isMobile && (showX || editorOpen) ? "none" : "flex" }}>
+      {/* มือถือ: แชทเต็มจอเสมอ (bottom sheet editor ลอยทับ · ไม่ซ่อนแชท) — ซ่อนเฉพาะตอนเปิด X-ray เต็มจอ */}
+      <div style={{ ...S.chatCol, display: isMobile && showX ? "none" : "flex" }}>
         <header style={S.header}>
           <span>🐟 ปลาทู (ห้องซ้อม)</span>
           <span style={{ fontSize: 12, fontWeight: 400 }}>{busy ? "กำลังคิด…" : overlay.length > 0 ? `draft ${overlay.length}` : "sandbox"}</span>
@@ -286,11 +303,11 @@ export default function TrainStudio() {
           {sys.map((s, i) => <div key={`s${i}`} style={S.sysB}>{s}</div>)}
         </div>
         <div style={S.toolRow}>
-          <button style={S.toolBtn} onClick={() => fileRef.current?.click()} disabled={busy}>📎 แนบรูป</button>
-          <button style={S.toolBtn} onClick={sendSampleSlip} disabled={busy}>🧾 สลิปตัวอย่าง</button>
-          <button style={S.toolBtn} onClick={cronSim} disabled={busy}>⚙️ ติ๊ก M + cron</button>
-          <button style={S.toolBtn} onClick={reset} disabled={busy}>🔄 reset</button>
-          {isMobile && <button style={S.toolBtn} onClick={() => setShowX(true)}>🔬 X-ray</button>}
+          <button style={tb} onClick={() => fileRef.current?.click()} disabled={busy}>📎 แนบรูป</button>
+          <button style={tb} onClick={sendSampleSlip} disabled={busy}>🧾 สลิปตัวอย่าง</button>
+          <button style={tb} onClick={cronSim} disabled={busy}>⚙️ ติ๊ก M + cron</button>
+          <button style={tb} onClick={reset} disabled={busy}>🔄 reset</button>
+          {isMobile && <button style={{ ...tb, background: "#eef3ff", borderColor: "#b9cdf0" }} onClick={() => setShowX(true)}>🔬 X-ray</button>}
           <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => e.target.files?.[0] && sendImage(e.target.files[0])} />
         </div>
         <div style={S.inputRow}>
@@ -301,8 +318,23 @@ export default function TrainStudio() {
 
       {/* Desktop = side panel · Mobile = bottom sheet (editor) / full (x-ray) */}
       {!isMobile && <aside style={S.side}>{sidePanel}</aside>}
-      {isMobile && editorOpen && <div style={S.sheet}>{renderEditor()}</div>}
-      {isMobile && showX && !editorOpen && <aside style={{ ...S.side, width: "100%", borderLeft: "none" }}><button style={{ ...S.toolBtn, width: "100%", marginBottom: 8 }} onClick={() => setShowX(false)}>← กลับแชท</button>{renderXray()}</aside>}
+      {isMobile && editorOpen && (
+        <>
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.35)", zIndex: 19 }} onClick={closeEditor} />
+          <div style={{ ...S.sheet, transform: `translateY(${sheetDragY}px)`, transition: sheetDragY === 0 ? "transform .2s" : "none" }}>
+            <div
+              style={{ padding: "2px 0 10px", cursor: "grab", touchAction: "none" }}
+              onTouchStart={(e) => { dragStart.current = e.touches[0].clientY; }}
+              onTouchMove={(e) => setSheetDragY(Math.max(0, e.touches[0].clientY - dragStart.current))}
+              onTouchEnd={() => { if (sheetDragY > 110) closeEditor(); else setSheetDragY(0); }}
+            >
+              <div style={{ width: 44, height: 5, borderRadius: 3, background: "#ccc", margin: "0 auto" }} />
+            </div>
+            {renderEditor()}
+          </div>
+        </>
+      )}
+      {isMobile && showX && !editorOpen && <aside style={{ ...S.side, width: "100%", borderLeft: "none" }}><button style={{ ...tb, width: "100%", marginBottom: 8 }} onClick={() => setShowX(false)}>← กลับแชท</button>{renderXray()}</aside>}
 
       {confirm && editorSrc && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 40, padding: 16 }} onClick={() => setConfirm(null)}>
@@ -330,12 +362,17 @@ export default function TrainStudio() {
       <div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <b style={{ color: "#06735c" }}>✎ แก้ที่มาของบอลลูน</b>
-          <button style={S.toolBtn} onClick={() => { setEditor(null); setPreview(null); }}>ปิด</button>
+          <button style={{ ...S.toolBtn, ...(isMobile ? { minHeight: 44, fontSize: 20, padding: "6px 16px" } : {}) }} onClick={closeEditor}>✕</button>
         </div>
+        {sheetChanged && (
+          <div style={{ background: "#fff4d6", color: "#8a6d00", borderRadius: 8, padding: "6px 10px", fontSize: 12, margin: "6px 0" }}>
+            ⚠︎ ชีตถูกแก้แล้วหลังเทิร์นนี้ — ช่องด้านล่างคือ &quot;ค่าสดจากชีต&quot; ไม่ใช่ค่าตอนบอทตอบ
+          </div>
+        )}
         {turns[editor!.turnIdx].sources.length > 1 && (
-          <div style={{ margin: "6px 0" }}>
+          <div style={{ margin: "6px 0", display: "flex", gap: 6, flexWrap: "wrap" }}>
             {turns[editor!.turnIdx].sources.map((s, i) => (
-              <button key={i} style={{ ...S.toolBtn, ...(i === editor!.srcIdx ? { background: "#d5f0e0", fontWeight: 700 } : {}) }} onClick={() => openEditor(editor!.turnIdx, i)}>{s.label}</button>
+              <button key={i} style={{ ...tb, ...(i === editor!.srcIdx ? { background: "#d5f0e0", fontWeight: 700 } : {}) }} onClick={() => openEditor(editor!.turnIdx, i)}>{s.label}</button>
             ))}
           </div>
         )}
@@ -348,11 +385,11 @@ export default function TrainStudio() {
           return (
             <div key={c.name} style={{ marginBottom: 8 }}>
               <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 2 }}>{c.name} <span style={{ color: "#999", fontWeight: 400 }}>(ดิบ ก่อน resolve)</span></div>
-              <textarea style={S.ta} value={c.value} onChange={(e) => editCol(c.name, e.target.value)} />
+              <textarea style={{ ...S.ta, ...(isMobile ? { minHeight: 90, fontSize: 16 } : {}) }} value={c.value} onChange={(e) => editCol(c.name, e.target.value)} />
               <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
-                <button style={S.toolBtn} onClick={() => copyCol(c.value)}>📋 Copy</button>
+                <button style={tb} onClick={() => copyCol(c.value)}>📋 Copy</button>
                 <button
-                  style={{ ...S.toolBtn, ...(hasBlock ? { opacity: 0.4, cursor: "not-allowed" } : { background: "#e7f6ec", borderColor: "#9dd6b3" }) }}
+                  style={{ ...tb, ...(hasBlock ? { opacity: 0.4, cursor: "not-allowed" } : { background: "#e7f6ec", borderColor: "#9dd6b3" }) }}
                   onClick={() => !hasBlock && prepareWrite(c.name)}
                   disabled={hasBlock}
                   title={hasBlock ? "lint แดง — แก้ให้ผ่านก่อนเขียน (copy ยังได้)" : "เขียนค่านี้กลับชีตจริง"}
@@ -362,11 +399,11 @@ export default function TrainStudio() {
           );
         })}
         <div style={{ display: "flex", gap: 6, margin: "6px 0", flexWrap: "wrap" }}>
-          <button style={{ ...S.btn, padding: "10px 14px" }} onClick={replayTurn} disabled={busy}>▶ เล่นข้อความนี้ใหม่</button>
-          <button style={S.toolBtn} onClick={clearThisDraft}>ล้าง draft แถวนี้</button>
+          <button style={{ ...S.btn, ...(isMobile ? { flex: "1 1 100%", minHeight: 48 } : { padding: "10px 14px" }) }} onClick={replayTurn} disabled={busy}>▶ เล่นข้อความนี้ใหม่</button>
+          <button style={tb} onClick={clearThisDraft}>ล้าง draft แถวนี้</button>
         </div>
         {preview && renderPreview(preview)}
-        <div style={{ fontSize: 11, color: "#999", marginTop: 10 }}>draft ทับเฉพาะในห้องซ้อม · เขียนกลับชีตจริงจะมาในเฟส ค</div>
+        <div style={{ fontSize: 11, color: "#999", marginTop: 10 }}>draft ทับเฉพาะในห้องซ้อม · กด 💾 เพื่อเขียนกลับชีตจริง</div>
       </div>
     );
   }

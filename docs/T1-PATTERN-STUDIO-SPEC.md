@@ -1,4 +1,4 @@
-# T-STUDIO SPEC — ห้องซ้อมเทรนปลาทู `[เฟส ก-ค ✅ · ง UNBUILT]`
+# T-STUDIO SPEC — ห้องซ้อมเทรนปลาทู `[เฟส ก-ง ✅ ครบ · พร้อมใช้]`
 
 > (ชื่อไฟล์คง T1- เดิมกันลิงก์เสีย · ซีรีส์เปลี่ยนชื่อเป็น **T-STUDIO** ตามบรีฟ 2026-07-23)
 > พอ build ครบทุกเฟส ดูดสรุปเข้า REPO-MAP แล้วลบไฟล์นี้ · contract คือชีต BotLibrary v2.0 — **ห้ามหน้าเว็บเปลี่ยน schema เอง**
@@ -62,9 +62,15 @@
 - **lint แดง = ปุ่มเขียนถูกปิด** (copy ยังได้ พร้อมคำเตือน)
 - ต้องการสิทธิ์ service account = **Editor** บนชีต BotLibrary (✅ เจ้าของตั้งแล้ว)
 
-## เฟส ง — mobile polish
+## เฟส ง — mobile polish ✅ build แล้ว (CSS/layout ล้วน · ไม่แตะ logic)
 
-- จอแคบ = แชทเต็มจอ · แตะบอลลูน → bottom sheet editor · ปุ่ม/ฟอนต์ขนาดนิ้วโป้ง · เทสบน viewport แคบจริง
+- จอแคบ = แชทเต็มจอเสมอ · แตะบอลลูน → **bottom sheet** ลอยทับ (backdrop แตะปิด · drag handle ลากลง >110px ปิด · `dvh`+safe-area+scrollPaddingBottom กันคีย์บอร์ดบังช่องพิมพ์)
+- ปุ่ม/ฟอนต์ขนาดนิ้วโป้งบนมือถือ (minHeight 46 · fontSize 15-16 · textarea 16px กัน iOS zoom) · ปุ่มจำลอง (สลิป/cron/reset/X-ray) เรียงแถว flex กดง่าย · X-ray = ปุ่มพับเต็มจอ
+- **bug fix เฟส ค:** เปิด editor → fetch "ข้อความดิบ" สดจากชีต (mode:diff) แทนค่าที่ติดมากับเทิร์นเก่า (กัน stale หลังเขียน) · ต่างจากค่าตอนเทิร์น → badge "ชีตถูกแก้แล้วหลังเทิร์นนี้"
+- ⚠️ viewport ~380px = ตรวจด้วยมือ/บนอุปกรณ์จริง (repo ไม่มี browser-render harness · เทส logic = diffCell อ่านสด)
+
+---
+🎉 **T-STUDIO ครบ 4 เฟส** — เจ้าของซ้อมสนทนา + แก้ pattern + เขียนกลับชีตได้จบในหน้าเดียว บนมือถือ · spec นี้พร้อมดูดเข้า REPO-MAP แล้วลบได้เมื่อเสถียร
 
 ## Lint (คงจาก spec เดิม · เรียงตามอันตราย)
 
