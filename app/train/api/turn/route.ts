@@ -1,11 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { guardTrainRequest } from "@/lib/train/auth";
 import { runTrainTurn } from "@/lib/train/turn";
+import type { OverlayEntry } from "@/lib/train/sandbox";
 import type { DownloadedContent } from "@/lib/line";
 
 export const maxDuration = 30; // งบเดียวกับ webhook (Gemini จริง + extraction อยู่ใน 8s เดิม)
 
 const SESSION_RE = /^[a-zA-Z0-9-]{8,64}$/;
+
+function sanitizeOverlay(raw: unknown): OverlayEntry[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((e): e is OverlayEntry => e && typeof e === "object" && typeof e.tab === "string" && typeof e.key === "string" && typeof e.column === "string" && typeof e.value === "string")
+    .slice(0, 200)
+    .map((e) => ({ tab: e.tab, key: e.key, column: e.column, value: e.value.slice(0, 4000) }));
+}
 
 export async function POST(req: NextRequest) {
   const guard = guardTrainRequest(req);
@@ -16,10 +25,12 @@ export async function POST(req: NextRequest) {
     text?: string;
     imageBase64?: string;
     imageMime?: string;
+    overlay?: unknown;
   };
   if (!body.sessionId || !SESSION_RE.test(body.sessionId)) {
     return NextResponse.json({ error: "sessionId ไม่ถูกต้อง" }, { status: 400 });
   }
+  const overlay = sanitizeOverlay(body.overlay);
 
   let image: DownloadedContent | undefined;
   let text = (body.text ?? "").trim();
@@ -32,7 +43,7 @@ export async function POST(req: NextRequest) {
   if (!text) return NextResponse.json({ error: "ไม่มีข้อความ" }, { status: 400 });
 
   try {
-    const result = await runTrainTurn(body.sessionId, text, image);
+    const result = await runTrainTurn(body.sessionId, text, image, overlay);
     return NextResponse.json(result);
   } catch (error) {
     console.error(JSON.stringify({ scope: "train", warning: "turn failed", error: String(error).slice(0, 200) }));

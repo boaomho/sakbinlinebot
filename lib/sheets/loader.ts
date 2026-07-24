@@ -1,6 +1,7 @@
 import { getSheets } from "./client";
 import { resolveSpreadsheetId } from "@/lib/core/sheet-id";
 import { validateStepFunnelStages, VALID_FUNNEL_STAGES } from "@/lib/agent/inject";
+import { getTrainSandbox } from "@/lib/train/sandbox";
 
 /**
  * lib/sheets/loader.ts — โหลด BotLibrary ทุกแท็บด้วย batchGet 1 call จาก SHEET_BOTLIB_ID
@@ -45,8 +46,12 @@ function emptyBundle(): BotLibrary {
  * คืน null เมื่อ env ขาด/ผิดรูป หรือโหลดครั้งแรกไม่สำเร็จ (ไม่มี cache) → ปิดฟีเจอร์
  */
 export async function loadBotLibrary(): Promise<BotLibrary | null> {
+  // 🔴 T-STUDIO (guarded no-op สำหรับ prod): อยู่ใน sandbox → bypass cache 60วิ ทั้งอ่าน/เขียน
+  //    เพื่อ (1) ให้ draft overlay (apply ที่ batchGet proxy) มีผลทันทีทุกเทิร์น
+  //    (2) 🔴 กัน bundle ที่มี overlay รั่วเข้า cache ที่ prod ใช้ร่วม · ไม่มี context = พฤติกรรมเดิมทุกบรรทัด
+  const inSandbox = Boolean(getTrainSandbox());
   const now = Date.now();
-  if (cache && now - cache.fetchedAt < CACHE_TTL_MS) {
+  if (!inSandbox && cache && now - cache.fetchedAt < CACHE_TTL_MS) {
     return cache.bundle;
   }
 
@@ -55,7 +60,7 @@ export async function loadBotLibrary(): Promise<BotLibrary | null> {
     spreadsheetId = resolveSpreadsheetId(process.env.SHEET_BOTLIB_ID, "SHEET_BOTLIB_ID");
   } catch (error) {
     console.error(JSON.stringify({ scope: "sheets", warning: "SHEET_BOTLIB_ID invalid", error: String(error) }));
-    return cache?.bundle ?? null; // ยังมี cache เก่าก็ใช้ต่อ ไม่งั้นปิดฟีเจอร์
+    return (inSandbox ? null : cache?.bundle) ?? null; // ยังมี cache เก่าก็ใช้ต่อ (prod) · sandbox = null
   }
 
   try {
@@ -69,12 +74,12 @@ export async function loadBotLibrary(): Promise<BotLibrary | null> {
     BOTLIB_TABS.forEach((tab, i) => {
       bundle[tab] = (valueRanges[i]?.values as string[][] | undefined) ?? [];
     });
-    cache = { bundle, fetchedAt: now };
+    if (!inSandbox) cache = { bundle, fetchedAt: now }; // 🔴 sandbox ไม่เขียน cache (กัน draft รั่ว prod)
     logStepFunnelStageIssues(bundle.CSV_Step); // Step 6: validate funnel_stage ครั้งเดียวต่อ load (ไม่ spam per-turn)
     return bundle;
   } catch (error) {
     console.error(JSON.stringify({ scope: "sheets", warning: "batchGet BotLibrary failed", error: String(error) }));
-    return cache?.bundle ?? null; // fallback cache เก่า · ไม่มีก็ปิดฟีเจอร์
+    return (inSandbox ? null : cache?.bundle) ?? null; // fallback cache เก่า (prod) · sandbox = null
   }
 }
 

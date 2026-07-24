@@ -26,16 +26,18 @@ lib/
   blob.ts         Vercel Blob — สลิป (private) + สินค้า (public)
   admin-commands.ts  parse คำสั่งในกลุ่มแอดมิน (ปิด/เปิดบอท)
   flex-cards.ts   Flex Cards (ปิดอยู่)
-  train/          # T-STUDIO ห้องซ้อมเทรน (/train · เฟส ก)
-    sandbox.ts      ALS context + collectors + console tee + fake grid Orders (wrapSheetsForSandbox)
-    turn.ts         runTrainTurn/runTrainCron/runTrainReset — orchestration ใน sandbox
+  train/          # T-STUDIO ห้องซ้อมเทรน (/train · เฟส ก+ข)
+    sandbox.ts      ALS context + collectors + console tee + fake grid Orders + draft overlay (applyOverlayToTab · batchGet proxy)
+    turn.ts         runTrainTurn/runTrainCron/runTrainReset/runTrainPreview — orchestration ใน sandbox
+    preview.ts      เฟส ข: buildReplySources (provenance) · renderPreview · buildTrainVarCtx · collectDroppedBubbles
+    lint.ts         เฟส ข: lintPattern (unknown-var/claims/price/bubbles · reuse guard production)
     auth.ts         TRAIN_PASSWORD + cookie HMAC · guardTrainRequest (All-or-nothing → 404)
 app/api/
   line-webhook/route.ts   webhook (POST บาง — Next ห้าม route.ts export อื่น)
   line-webhook/handler.ts เครื่องยนต์ทั้งหมด (ย้ายเชิงกลไกจาก route.ts ตอน T-STUDIO ก · export handleEvent+processMessage)
   cron/orders/route.ts    cron แจกเลขออเดอร์ + ยิงกลุ่มแพ็ค
   cron/follow/route.ts    cron ตามลูกค้า (Follow — dormant)
-app/train/        # T-STUDIO UI (page+TrainStudio client) + api/{login,turn,reset,cron}
+app/train/        # T-STUDIO UI (page+TrainStudio client) + api/{login,turn,reset,cron,preview}
 tests/
   harness/        replay(webhook+HMAC จริง) · setup(mock) · state · db · sheet · assert · fixtures
   scenarios/      *.test.ts (golden/order-core/inject/sheet-*/config-parse/gemini-guard/prompt-lint/image-url/expect-fail)
@@ -68,7 +70,7 @@ scripts/sheet-lint.mjs  D-45 · lint keyword ชีตจริง (คำโด
 > 🔴 **D-47/D-48:** payment pre-check (มี items → คำจ่ายล้วน ข้าม AI · พ่วงอื่น ล็อก payment ทับ · **D-48 ตัด noPaymentYet → ครอบเคสเปลี่ยนวิธีจ่าย**) ก่อนเรียก Gemini · redact เลขบัญชี/เบอร์ ใน history/state input (log `scope:"redact"` count)
 > 🔴 **D-48 extraction fallback (`gemini.ts` `runExtraction`):** call หลัก blocked → ยิง extraction call จิ๋ว (system สั้น "สกัด order_data" · ไม่มี prompt ขาย/ราคา/step/history = ตัดกลิ่นเงิน) → order_data/payment เข้า gate · stage=current · degraded=false · `recovered=true` · extraction ก็ blocked → fallback degraded (ตาข่าย D-46) · **แทน** retry เดิม · ในงบ 8s
 > 🔴 **D-49 ปิดช่องปาก-มือ (route หลัง merge · ก่อนเลือกข้อความ):** คำนวณ post-merge gate → **#1** `recovered` → `resolveRecoveredStage` เลือกประตูปลายทาง (complete→won · เลือกจ่าย→ประตูวิธีจ่าย) แทนตรึง current · **#3** `orderCompleteThisTurn` → complete ชนะ FAQ/OBJ (guard `!orderCompleteThisTurn`) · **#2** `!lastOrder && complete` → `synthLastOrder` จาก pending+price (order_id="" → guard ทิ้งบอลลูน `{ออเดอร์_เลขที่}`) เข้า `varCtx.lastOrder` · `resolveOrderVars` ค่าว่าง = คง token (ให้ guard ทิ้งบอลลูน)
-> 🔴 **T-STUDIO sandbox (เฟส ก):** `lib/train/sandbox.ts` `getTrainSandbox()`/`runInSandbox()`/`createSandbox()`/`trainUserId()`/`wrapSheetsForSandbox()` — guard ใน **line.ts (reply/push/pushRaw*/loading/getProfile/download) · blob.ts (uploadSlip/getSlipSignedUrl) · sheets/client.ts (proxy ชีต Orders → fake grid · header+BotLibrary ผ่านจริง) · db.ts getSql() (→DATABASE_URL_TRAIN)** · 🔴 guard เช็ค ALS เท่านั้น — ไม่มี context = production เดิมทุกบรรทัด · `lib/train/turn.ts` `runTrainTurn`/`runTrainCron`(เรียก cron GET จริง)/`runTrainReset` · `lib/train/auth.ts` `guardTrainRequest` · db: +ตาราง `train_sessions` (grid ต่อ session · schema เหมือนกัน 2 DB กัน drift) + `loadTrainSession`/`saveTrainSession`/`deleteTrainSession` · `ensureSchema` ธง ready แยกต่อ connection = **migrate อัตโนมัติต่อ DB**
+> 🔴 **T-STUDIO sandbox (เฟส ก+ข):** `lib/train/sandbox.ts` `getTrainSandbox()`/`runInSandbox()`/`createSandbox()`/`trainUserId()`/`wrapSheetsForSandbox()`/`applyOverlayToTab()` — guard ใน **line.ts (reply/push/pushRaw*/loading/getProfile/download) · blob.ts · sheets/client.ts (proxy: ชีต Orders→fake grid · BotLibrary batchGet→ทับ draft overlay) · db.ts getSql() (→DATABASE_URL_TRAIN) · loader.ts (bypass cache 60วิ กัน draft รั่ว prod)** · 🔴 guard เช็ค ALS เท่านั้น — ไม่มี context = production เดิม · turn.ts `runTrainTurn`(+overlay)/`runTrainCron`/`runTrainReset`/`runTrainPreview` · **เฟส ข** preview.ts `buildReplySources`(provenance จาก verbatim log + re-run matcher)/`renderPreview`/`collectDroppedBubbles`(จาก var-guard log) · lint.ts `lintPattern` · db: +`train_sessions` (2 DB · migrate อัตโนมัติต่อ connection)
 
 **lib/config.ts** — `getConfig()` · `resolveFeatureSwitches(config) → FeatureSwitches` · `formatConfigForPrompt`
 **lib/db.ts** — `ensureCustomer`/`mergePendingOrder`(items+order_id)/`reconcileWaitTags`(ลบเฉพาะ รอโอน/รอที่อยู่)/`resetCustomerMemory`(ล้าง human_mode+last_order · D-25/D-32)/`nextOrderNumber`(atomic · ลำดับ col A)/**D-29** `isOrderWritten`/`markOrderWritten`(ตาราง `orders_written` · idempotency source of truth)/**D-32** `setLastOrder`(customers.last_order JSONB snapshot)/`setLastOrderLocked`(M=TRUE)/**D-45b** `addDeliveredStep`+`clearDeliveredStepsExceptCurrent`(`delivered_steps TEXT[]` · ธง "ส่งเนื้อหา step แล้ว" → เคยส่ง=ปิดท้ายอย่างเดียว · cron แจกเลข=ล้างธงคง stage ปัจจุบัน · /reset ล้างหมด) ฯลฯ · CustomerState +`lastOrder`/`lastOrderLocked`/`deliveredSteps` · `CustomerState.tags` inject เข้า `<สถานะลูกค้า>` ทุกเทิร์น (คุมเงื่อนไขขายด้วยแท็กได้)

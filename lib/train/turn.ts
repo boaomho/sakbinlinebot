@@ -6,7 +6,8 @@ import { getCustomer, resetCustomerMemory, loadTrainSession, saveTrainSession, d
 import { loadBotLibrary } from "@/lib/sheets/loader";
 import { funnelStageOf, stepNameOf } from "@/lib/agent/inject";
 import { getSheets } from "@/lib/sheets/client";
-import { createSandbox, runInSandbox, trainUserId, TrainSandbox } from "./sandbox";
+import { createSandbox, runInSandbox, trainUserId, TrainSandbox, OverlayEntry } from "./sandbox";
+import { buildReplySources, collectDroppedBubbles, renderPreview, ReplySource, RenderResult } from "./preview";
 import type { DownloadedContent } from "@/lib/line";
 
 /**
@@ -41,6 +42,10 @@ export interface TrainTurnResult {
   /** แถวชีต Orders ที่ "จะถูกเขียน" — zip กับ header จริง (ไม่เขียนจริง) */
   orderRows: Record<string, string>[];
   xray: TrainXray;
+  /** เฟส ข: แถวชีตที่ประกอบ reply เทิร์นนี้ (คลิกบอลลูน → แก้) */
+  sources: ReplySource[];
+  /** เฟส ข: บอลลูนที่ถูก var-guard ทิ้ง (โชว์ขีดฆ่า ไม่หายเงียบ) */
+  droppedBubbles: { text: string; vars: string[] }[];
 }
 
 function pickLogs(ctx: TrainSandbox) {
@@ -114,23 +119,50 @@ async function withSession<T>(sessionId: string, fn: (ctx: TrainSandbox) => Prom
   });
 }
 
-/** 1 เทิร์นสนทนา — pipeline production เต็มสาย (Gemini จริง) ใน sandbox */
+/** ประกอบ TrainTurnResult จาก ctx หลังรัน (bubbles/X-ray/sources/dropped) — ใช้ร่วม turn+cron */
+async function buildResult(ctx: TrainSandbox, customer: CustomerState | null, userMessage: string): Promise<TrainTurnResult> {
+  const lib = await loadBotLibrary();
+  return {
+    bubbles: ctx.replies,
+    adminPushes: ctx.adminPushes,
+    orderRows: await rowsAsObjects(ctx),
+    xray: await buildXray(ctx, customer),
+    sources: buildReplySources(ctx.logs, lib, userMessage, customer?.stage ?? null),
+    droppedBubbles: collectDroppedBubbles(ctx.logs),
+  };
+}
+
+/** 1 เทิร์นสนทนา — pipeline production เต็มสาย (Gemini จริง) ใน sandbox · overlay = draft ทับชีต */
 export async function runTrainTurn(
   sessionId: string,
   text: string,
   image?: DownloadedContent,
+  overlay: OverlayEntry[] = [],
 ): Promise<TrainTurnResult> {
   return withSession(sessionId, async (ctx) => {
+    ctx.overlay = overlay; // draft มีผลตั้งแต่ loadBotLibrary (bypass cache ใน sandbox)
     const config = await getConfig();
     const switches = resolveFeatureSwitches(config);
     await processMessage(ctx.userId, text, "TRAIN-REPLY-TOKEN", config, switches, image);
     const customer = await getCustomer(ctx.userId);
-    return {
-      bubbles: ctx.replies,
-      adminPushes: ctx.adminPushes,
-      orderRows: await rowsAsObjects(ctx),
-      xray: await buildXray(ctx, customer),
-    };
+    return buildResult(ctx, customer, text);
+  });
+}
+
+/** เฟส ข: render preview 1 แถว+draft สด (สำหรับ editor · reuse resolver production) */
+export async function runTrainPreview(
+  sessionId: string,
+  tab: string,
+  key: string,
+  draft: Record<string, string>,
+): Promise<RenderResult> {
+  const ctx = createSandbox(sessionId);
+  return runInSandbox(ctx, async () => {
+    const config = await getConfig();
+    const lib = await loadBotLibrary();
+    if (!lib) throw new Error("โหลด BotLibrary ไม่ได้");
+    const customer = await getCustomer(ctx.userId);
+    return renderPreview(lib, config, customer, tab, key, draft, new Date());
   });
 }
 
@@ -156,12 +188,7 @@ export async function runTrainCron(sessionId: string): Promise<TrainTurnResult> 
     });
     await cronOrdersGET(req as unknown as NextRequest);
     const customer = await getCustomer(ctx.userId);
-    return {
-      bubbles: ctx.replies,
-      adminPushes: ctx.adminPushes,
-      orderRows: await rowsAsObjects(ctx),
-      xray: await buildXray(ctx, customer),
-    };
+    return buildResult(ctx, customer, ""); // system event — ไม่มี userMessage
   });
 }
 

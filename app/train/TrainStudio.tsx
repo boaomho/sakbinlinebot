@@ -1,34 +1,54 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 
 /**
- * T-STUDIO เฟส ก — UI ห้องซ้อม: แชทจำลอง + แผง X-ray (มือถือ = ปุ่มพับ)
- * เฟส ข จะเพิ่ม "แตะบอลลูนเพื่อแก้" · เฟส ง polish มือถือเต็ม — ตอนนี้ responsive พื้นฐาน
+ * T-STUDIO — เฟส ก (แชทจำลอง + X-ray) + เฟส ข (แตะบอลลูนเพื่อแก้ · draft overlay · lint สด)
+ * เฟส ค (เขียนกลับชีต) ยังไม่ทำ — ปุ่ม copy/เขียน จะมาเฟสหน้า
  */
 
-interface Bubble {
-  role: "user" | "bot" | "system";
-  text: string;
-  image?: boolean;
+interface Msg { type: string; text?: string; originalContentUrl?: string }
+interface SourceCol { name: string; value: string }
+interface ReplySource { tab: string; key: string; keyCol: string; label: string; columns: SourceCol[] }
+interface Turn {
+  user: string;
+  userImage?: boolean;
+  bot: { text: string; image?: boolean }[];
+  sources: ReplySource[];
+  dropped: { text: string; vars: string[] }[];
 }
-
 interface TurnResult {
-  bubbles: { via: string; messages: { type: string; text?: string; originalContentUrl?: string }[] }[];
+  bubbles: { via: string; messages: Msg[] }[];
   adminPushes: { to: string; text?: string }[];
   orderRows: Record<string, string>[];
   xray: Record<string, unknown> | null;
+  sources: ReplySource[];
+  droppedBubbles: { text: string; vars: string[] }[];
   error?: string;
 }
+interface OverlayEntry { tab: string; key: string; column: string; value: string }
+interface LintFinding { level: "block" | "warn"; kind: string; message: string; hits: string[] }
+interface PreviewResult {
+  rawPattern: string;
+  segments: { text: string; dropped: boolean; vars: string[] }[];
+  vars: { token: string; value: string; resolved: boolean; unknown: boolean }[];
+  lint: LintFinding[];
+  error?: string;
+}
+interface Editor { turnIdx: number; srcIdx: number }
+
+const OVERLAY_KEY = "train-overlay-v1";
 
 function sessionIdFromStorage(): string {
   const KEY = "train-session-id";
   let id = typeof localStorage !== "undefined" ? localStorage.getItem(KEY) : null;
-  if (!id) {
-    id = crypto.randomUUID();
-    localStorage.setItem(KEY, id);
-  }
+  if (!id) { id = crypto.randomUUID(); localStorage.setItem(KEY, id); }
   return id;
+}
+function bufToB64(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf); let bin = ""; const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  return btoa(bin);
 }
 
 const S: Record<string, React.CSSProperties> = {
@@ -37,132 +57,159 @@ const S: Record<string, React.CSSProperties> = {
   header: { padding: "10px 14px", background: "#06c755", color: "#fff", fontWeight: 700, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 },
   chat: { flex: 1, overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 8 },
   userB: { alignSelf: "flex-end", background: "#a5e87f", borderRadius: "16px 16px 2px 16px", padding: "8px 12px", maxWidth: "80%", whiteSpace: "pre-wrap", fontSize: 15 },
-  botB: { alignSelf: "flex-start", background: "#fff", borderRadius: "16px 16px 16px 2px", padding: "8px 12px", maxWidth: "80%", whiteSpace: "pre-wrap", fontSize: 15, boxShadow: "0 1px 1px rgba(0,0,0,.08)" },
+  botB: { alignSelf: "flex-start", background: "#fff", borderRadius: "16px 16px 16px 2px", padding: "8px 12px", maxWidth: "80%", whiteSpace: "pre-wrap", fontSize: 15, boxShadow: "0 1px 1px rgba(0,0,0,.08)", cursor: "pointer", border: "1px solid transparent" },
+  botEditable: { borderColor: "#cfe9d8" },
+  dropB: { alignSelf: "flex-start", background: "#fff0f0", borderRadius: 12, padding: "6px 10px", maxWidth: "80%", fontSize: 13, color: "#b00", textDecoration: "line-through", border: "1px dashed #f0a0a0" },
   sysB: { alignSelf: "center", background: "#e3e6ea", borderRadius: 10, padding: "4px 10px", fontSize: 12, color: "#555", whiteSpace: "pre-wrap" },
   inputRow: { display: "flex", gap: 6, padding: 10, background: "#fff", borderTop: "1px solid #ddd" },
   input: { flex: 1, padding: "12px 14px", borderRadius: 22, border: "1px solid #ccc", fontSize: 16, outline: "none" },
   btn: { padding: "12px 16px", borderRadius: 22, border: "none", background: "#06c755", color: "#fff", fontSize: 15, fontWeight: 600, cursor: "pointer" },
   toolRow: { display: "flex", gap: 6, padding: "6px 10px", background: "#fafafa", borderTop: "1px solid #eee", flexWrap: "wrap" },
   toolBtn: { padding: "10px 12px", borderRadius: 10, border: "1px solid #ccc", background: "#fff", fontSize: 13, cursor: "pointer" },
-  xrayCol: { width: 360, borderLeft: "1px solid #ddd", background: "#fff", overflowY: "auto", padding: 12, fontSize: 13 },
-  xrayTitle: { fontWeight: 700, margin: "10px 0 4px", color: "#06735c" },
+  side: { width: 400, borderLeft: "1px solid #ddd", background: "#fff", overflowY: "auto", padding: 12, fontSize: 13 },
+  title: { fontWeight: 700, margin: "10px 0 4px", color: "#06735c" },
   pre: { background: "#f6f8fa", borderRadius: 8, padding: 8, overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: 12, margin: 0 },
+  ta: { width: "100%", boxSizing: "border-box", minHeight: 70, padding: 8, borderRadius: 8, border: "1px solid #bbb", fontSize: 14, fontFamily: "inherit", resize: "vertical" },
+  segOk: { background: "#eef7f0", borderRadius: 8, padding: "6px 10px", fontSize: 14, margin: "3px 0", whiteSpace: "pre-wrap" },
+  segDrop: { background: "#fff0f0", borderRadius: 8, padding: "6px 10px", fontSize: 13, margin: "3px 0", color: "#b00", textDecoration: "line-through" },
+  lintBlock: { background: "#ffe3e3", color: "#a10000", borderRadius: 8, padding: "6px 10px", fontSize: 12, margin: "3px 0" },
+  lintWarn: { background: "#fff4d6", color: "#8a6d00", borderRadius: 8, padding: "6px 10px", fontSize: 12, margin: "3px 0" },
   loginBox: { margin: "auto", background: "#fff", padding: 24, borderRadius: 12, boxShadow: "0 2px 12px rgba(0,0,0,.1)", display: "flex", flexDirection: "column", gap: 12, width: 300 },
+  sheet: { position: "fixed", left: 0, right: 0, bottom: 0, maxHeight: "85dvh", background: "#fff", borderRadius: "16px 16px 0 0", boxShadow: "0 -4px 20px rgba(0,0,0,.2)", overflowY: "auto", padding: 14, zIndex: 20 },
+  chip: { display: "inline-block", padding: "2px 8px", borderRadius: 12, background: "#eef", fontSize: 11, marginRight: 4 },
 };
 
 export default function TrainStudio() {
   const [authed, setAuthed] = useState<boolean | null>(null);
   const [password, setPassword] = useState("");
   const [sessionId, setSessionId] = useState("");
-  const [bubbles, setBubbles] = useState<Bubble[]>([]);
+  const [turns, setTurns] = useState<Turn[]>([]);
+  const [sys, setSys] = useState<string[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [xray, setXray] = useState<Record<string, unknown> | null>(null);
   const [orderRows, setOrderRows] = useState<Record<string, string>[]>([]);
   const [adminPushes, setAdminPushes] = useState<{ to: string; text?: string }[]>([]);
-  const [showXray, setShowXray] = useState(false);
+  const [overlay, setOverlay] = useState<OverlayEntry[]>([]);
+  const [editor, setEditor] = useState<Editor | null>(null);
+  const [draftCols, setDraftCols] = useState<SourceCol[]>([]);
+  const [preview, setPreview] = useState<PreviewResult | null>(null);
+  const [showX, setShowX] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const chatRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const previewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     setSessionId(sessionIdFromStorage());
-    const mq = window.matchMedia("(max-width: 800px)");
+    try { setOverlay(JSON.parse(localStorage.getItem(OVERLAY_KEY) || "[]")); } catch { /* noop */ }
+    const mq = window.matchMedia("(max-width: 820px)");
     setIsMobile(mq.matches);
-    const onChange = (e: MediaQueryListEvent) => setIsMobile(e.matches);
-    mq.addEventListener("change", onChange);
-    // เช็ค auth ด้วย request เปล่า (400 = ผ่าน auth แล้ว · 401 = ต้องล็อกอิน · 404 = ฟีเจอร์ปิด)
+    const onCh = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mq.addEventListener("change", onCh);
     fetch("/train/api/turn", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
-      .then((r) => setAuthed(r.status !== 401 && r.status !== 404))
-      .catch(() => setAuthed(false));
-    return () => mq.removeEventListener("change", onChange);
+      .then((r) => setAuthed(r.status !== 401 && r.status !== 404)).catch(() => setAuthed(false));
+    return () => mq.removeEventListener("change", onCh);
   }, []);
-
-  useEffect(() => {
-    chatRef.current?.scrollTo({ top: chatRef.current.scrollHeight, behavior: "smooth" });
-  }, [bubbles]);
+  useEffect(() => { chatRef.current?.scrollTo({ top: chatRef.current.scrollHeight, behavior: "smooth" }); }, [turns, sys]);
+  useEffect(() => { localStorage.setItem(OVERLAY_KEY, JSON.stringify(overlay)); }, [overlay]);
 
   async function login() {
-    const r = await fetch("/train/api/login", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ password }),
-    });
+    const r = await fetch("/train/api/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password }) });
     if (r.ok) setAuthed(true);
     else alert(r.status === 404 ? "ฟีเจอร์ปิดอยู่ (ENV ไม่ครบ)" : "รหัสไม่ถูกต้อง");
   }
 
-  function applyResult(data: TurnResult) {
-    const botTexts: Bubble[] = data.bubbles.flatMap((b) =>
-      b.messages.map((m) =>
-        m.type === "text" ? { role: "bot" as const, text: m.text ?? "" } : { role: "bot" as const, text: `🖼 [รูป] ${m.originalContentUrl ?? ""}`, image: true },
-      ),
-    );
-    setBubbles((prev) => [...prev, ...botTexts]);
-    setXray(data.xray);
-    setOrderRows(data.orderRows ?? []);
-    setAdminPushes(data.adminPushes ?? []);
+  function applyResult(data: TurnResult, user: string, userImage?: boolean) {
+    const bot = data.bubbles.flatMap((b) => b.messages.map((m) => m.type === "text" ? { text: m.text ?? "" } : { text: `🖼 [รูป] ${m.originalContentUrl ?? ""}`, image: true }));
+    setTurns((prev) => [...prev, { user, userImage, bot, sources: data.sources ?? [], dropped: data.droppedBubbles ?? [] }]);
+    setXray(data.xray); setOrderRows(data.orderRows ?? []); setAdminPushes(data.adminPushes ?? []);
   }
 
-  async function callApi(path: string, body: Record<string, unknown>, sysLabel?: string): Promise<void> {
+  const callTurn = useCallback(async (body: Record<string, unknown>, user: string, userImage?: boolean) => {
     setBusy(true);
-    if (sysLabel) setBubbles((prev) => [...prev, { role: "system", text: sysLabel }]);
     try {
-      const r = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId, ...body }) });
+      const r = await fetch("/train/api/turn", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId, overlay, ...body }) });
       const data = (await r.json()) as TurnResult;
-      if (!r.ok) {
-        setBubbles((prev) => [...prev, { role: "system", text: `⚠️ ${data.error ?? r.status}` }]);
-        return;
-      }
-      applyResult(data);
-    } catch (e) {
-      setBubbles((prev) => [...prev, { role: "system", text: `⚠️ ${String(e)}` }]);
-    } finally {
-      setBusy(false);
-    }
-  }
+      if (!r.ok) { setSys((p) => [...p, `⚠️ ${data.error ?? r.status}`]); return; }
+      applyResult(data, user, userImage);
+    } catch (e) { setSys((p) => [...p, `⚠️ ${String(e)}`]); }
+    finally { setBusy(false); }
+  }, [sessionId, overlay]);
 
   async function send() {
-    const text = input.trim();
-    if (!text || busy) return;
-    setInput("");
-    setBubbles((prev) => [...prev, { role: "user", text }]);
-    await callApi("/train/api/turn", { text });
+    const text = input.trim(); if (!text || busy) return;
+    setInput(""); await callTurn({ text }, text);
   }
-
   async function sendImage(file: File) {
     if (busy) return;
-    const b64 = Buffer_from(await file.arrayBuffer());
-    setBubbles((prev) => [...prev, { role: "user", text: `🖼 [ส่งรูป ${file.name}]` }]);
-    await callApi("/train/api/turn", { imageBase64: b64, imageMime: file.type || "image/jpeg" });
+    const b64 = bufToB64(await file.arrayBuffer());
+    await callTurn({ imageBase64: b64, imageMime: file.type || "image/jpeg" }, `🖼 [ส่งรูป ${file.name}]`, true);
   }
-
   async function sendSampleSlip() {
     if (busy) return;
     const r = await fetch("/train-slip-sample.jpg");
-    if (!r.ok) {
-      alert("ยังไม่มีรูปตัวอย่าง — วางไฟล์สลิปจริงชื่อ public/train-slip-sample.jpg ใน repo หรือใช้ปุ่มแนบรูปแทน");
-      return;
-    }
-    const b64 = Buffer_from(await r.arrayBuffer());
-    setBubbles((prev) => [...prev, { role: "user", text: "🧾 [ส่งสลิปตัวอย่าง]" }]);
-    await callApi("/train/api/turn", { imageBase64: b64, imageMime: "image/jpeg" });
+    if (!r.ok) { alert("ยังไม่มีรูปตัวอย่าง — วาง public/train-slip-sample.jpg หรือใช้ปุ่มแนบรูป"); return; }
+    const b64 = bufToB64(await r.arrayBuffer());
+    await callTurn({ imageBase64: b64, imageMime: "image/jpeg" }, "🧾 [ส่งสลิปตัวอย่าง]", true);
   }
-
   async function cronSim() {
-    if (busy) return;
-    await callApi("/train/api/cron", {}, "⚙️ จำลอง: แอดมินติ๊ก M + cron แจกเลข");
+    if (busy) return; setBusy(true); setSys((p) => [...p, "⚙️ จำลอง: ติ๊ก M + cron แจกเลข"]);
+    try {
+      const r = await fetch("/train/api/cron", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId }) });
+      const data = (await r.json()) as TurnResult;
+      if (r.ok) { setXray(data.xray); setOrderRows(data.orderRows ?? []); setAdminPushes(data.adminPushes ?? []); }
+    } finally { setBusy(false); }
+  }
+  async function reset() {
+    if (busy) return; setBusy(true);
+    await fetch("/train/api/reset", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId }) });
+    setTurns([]); setSys(["🔄 ล้างความจำลูกค้าจำลองแล้ว"]); setXray(null); setOrderRows([]); setAdminPushes([]); setEditor(null); setPreview(null); setBusy(false);
   }
 
-  async function reset() {
-    if (busy) return;
-    setBusy(true);
-    await fetch("/train/api/reset", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId }) });
-    setBubbles([{ role: "system", text: "🔄 ล้างความจำลูกค้าจำลองแล้ว (เหมือน /reset)" }]);
-    setXray(null);
-    setOrderRows([]);
-    setAdminPushes([]);
-    setBusy(false);
+  // ---- เฟส ข: editor ----
+  function openEditor(turnIdx: number, srcIdx = 0) {
+    const src = turns[turnIdx]?.sources[srcIdx];
+    if (!src) return;
+    // ค่าเริ่ม = overlay ที่มีอยู่ (ถ้าเคยแก้) ทับค่าชีต
+    const cols = src.columns.map((c) => {
+      const ov = overlay.find((o) => o.tab === src.tab && o.key === src.key && o.column === c.name);
+      return { name: c.name, value: ov ? ov.value : c.value };
+    });
+    setEditor({ turnIdx, srcIdx }); setDraftCols(cols); setPreview(null);
+    schedulePreview(src.tab, src.key, cols);
+  }
+  const schedulePreview = useCallback((tab: string, key: string, cols: SourceCol[]) => {
+    if (previewTimer.current) clearTimeout(previewTimer.current);
+    previewTimer.current = setTimeout(async () => {
+      const draft = Object.fromEntries(cols.map((c) => [c.name, c.value]));
+      const r = await fetch("/train/api/preview", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId, tab, key, draft }) });
+      setPreview((await r.json()) as PreviewResult);
+    }, 350);
+  }, [sessionId]);
+
+  function editCol(name: string, value: string) {
+    if (!editor) return;
+    const src = turns[editor.turnIdx].sources[editor.srcIdx];
+    const cols = draftCols.map((c) => (c.name === name ? { ...c, value } : c));
+    setDraftCols(cols);
+    setOverlay((prev) => {
+      const rest = prev.filter((o) => !(o.tab === src.tab && o.key === src.key && o.column === name));
+      return [...rest, { tab: src.tab, key: src.key, column: name, value }];
+    });
+    schedulePreview(src.tab, src.key, cols);
+  }
+  function clearThisDraft() {
+    if (!editor) return;
+    const src = turns[editor.turnIdx].sources[editor.srcIdx];
+    setOverlay((prev) => prev.filter((o) => !(o.tab === src.tab && o.key === src.key)));
+    setEditor(null); setPreview(null);
+  }
+  async function replayTurn() {
+    if (!editor) return;
+    const text = turns[editor.turnIdx].user;
+    setEditor(null); setPreview(null);
+    await callTurn({ text }, text);
   }
 
   if (authed === null) return <main style={S.page} />;
@@ -171,121 +218,165 @@ export default function TrainStudio() {
       <main style={S.page}>
         <div style={S.loginBox}>
           <b>🔒 T-STUDIO · ห้องซ้อมเทรนปลาทู</b>
-          <input
-            style={S.input}
-            type="password"
-            placeholder="รหัสผ่าน"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && login()}
-          />
+          <input style={S.input} type="password" placeholder="รหัสผ่าน" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && login()} />
           <button style={S.btn} onClick={login}>เข้าห้องซ้อม</button>
         </div>
       </main>
     );
   }
 
-  const xrayVisible = !isMobile || showXray;
+  const editorSrc = editor ? turns[editor.turnIdx]?.sources[editor.srcIdx] : null;
+  const editorOpen = Boolean(editorSrc);
+  const sidePanel = editorOpen ? renderEditor() : renderXray();
+
   return (
     <main style={S.page}>
-      <div style={{ ...S.chatCol, display: isMobile && showXray ? "none" : "flex" }}>
+      <div style={{ ...S.chatCol, display: isMobile && (showX || editorOpen) ? "none" : "flex" }}>
         <header style={S.header}>
           <span>🐟 ปลาทู (ห้องซ้อม)</span>
-          <span style={{ fontSize: 12, fontWeight: 400 }}>{busy ? "กำลังพิมพ์…" : "sandbox"}</span>
+          <span style={{ fontSize: 12, fontWeight: 400 }}>{busy ? "กำลังคิด…" : overlay.length > 0 ? `draft ${overlay.length}` : "sandbox"}</span>
         </header>
         <div ref={chatRef} style={S.chat}>
-          {bubbles.length === 0 && <div style={S.sysB}>พิมพ์ทักปลาทูได้เลย — ทุกอย่างจำลอง ไม่แตะลูกค้า/ชีต/LINE จริง</div>}
-          {bubbles.map((b, i) => (
-            <div key={i} style={b.role === "user" ? S.userB : b.role === "bot" ? S.botB : S.sysB}>{b.text}</div>
+          {turns.length === 0 && sys.length === 0 && <div style={S.sysB}>ทักปลาทูได้เลย · แตะบอลลูนบอทเพื่อดูที่มา + แก้ (draft)</div>}
+          {turns.map((t, ti) => (
+            <div key={ti} style={{ display: "contents" }}>
+              <div style={S.userB}>{t.user}</div>
+              {t.bot.map((b, bi) => (
+                <div key={bi} style={{ ...S.botB, ...(t.sources.length ? S.botEditable : {}) }} onClick={() => t.sources.length && openEditor(ti)} title={t.sources.length ? "แตะเพื่อดูที่มา + แก้" : ""}>
+                  {b.text}
+                  {t.sources.length > 0 && bi === t.bot.length - 1 && <div style={{ fontSize: 10, color: "#8aa", marginTop: 3 }}>✎ {t.sources.map((s) => s.label).join(" + ")}</div>}
+                </div>
+              ))}
+              {t.dropped.map((d, di) => (
+                <div key={`d${di}`} style={S.dropB} title={`บอลลูนนี้ถูกทิ้ง เพราะตัวแปร ${d.vars.join(" ")} resolve ไม่ได้`}>
+                  {d.text}<div style={{ fontSize: 10, textDecoration: "none", color: "#b00", marginTop: 2 }}>⚠︎ ทิ้งบอลลูน: {d.vars.join(" ")} resolve ไม่ได้</div>
+                </div>
+              ))}
+            </div>
           ))}
+          {sys.map((s, i) => <div key={`s${i}`} style={S.sysB}>{s}</div>)}
         </div>
         <div style={S.toolRow}>
           <button style={S.toolBtn} onClick={() => fileRef.current?.click()} disabled={busy}>📎 แนบรูป</button>
           <button style={S.toolBtn} onClick={sendSampleSlip} disabled={busy}>🧾 สลิปตัวอย่าง</button>
-          <button style={S.toolBtn} onClick={cronSim} disabled={busy}>⚙️ ติ๊ก M + cron แจกเลข</button>
+          <button style={S.toolBtn} onClick={cronSim} disabled={busy}>⚙️ ติ๊ก M + cron</button>
           <button style={S.toolBtn} onClick={reset} disabled={busy}>🔄 reset</button>
-          {isMobile && <button style={S.toolBtn} onClick={() => setShowXray(true)}>🔬 X-ray</button>}
+          {isMobile && <button style={S.toolBtn} onClick={() => setShowX(true)}>🔬 X-ray</button>}
           <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => e.target.files?.[0] && sendImage(e.target.files[0])} />
         </div>
         <div style={S.inputRow}>
-          <input
-            style={S.input}
-            placeholder="พิมพ์ข้อความลูกค้า…"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && send()}
-            disabled={busy}
-          />
+          <input style={S.input} placeholder="พิมพ์ข้อความลูกค้า…" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && send()} disabled={busy} />
           <button style={S.btn} onClick={send} disabled={busy}>ส่ง</button>
         </div>
       </div>
 
-      {xrayVisible && (
-        <aside style={{ ...S.xrayCol, ...(isMobile ? { width: "100%", borderLeft: "none" } : {}) }}>
-          {isMobile && <button style={{ ...S.toolBtn, width: "100%" }} onClick={() => setShowXray(false)}>← กลับแชท</button>}
-          <div style={S.xrayTitle}>🔬 X-ray เทิร์นล่าสุด</div>
-          {!xray && <div>ยังไม่มีเทิร์น</div>}
-          {xray && (
-            <>
-              <div style={S.xrayTitle}>ประตู (stage)</div>
-              <pre style={S.pre}>{`${xray.stage ?? "-"} · ${xray.stageName ?? ""}\nfunnel: ${xray.funnel ?? "-"}\nhuman_mode: ${xray.humanMode}`}</pre>
-              <div style={S.xrayTitle}>pending order</div>
-              <pre style={S.pre}>{JSON.stringify(xray.pendingOrder ?? {}, null, 1)}</pre>
-              <div style={S.xrayTitle}>ธง delivered_steps</div>
-              <pre style={S.pre}>{JSON.stringify(xray.deliveredSteps ?? [])}</pre>
-              <div style={S.xrayTitle}>ผล gate</div>
-              <pre style={S.pre}>{JSON.stringify(xray.gate ?? "-", null, 1)}</pre>
-              <div style={S.xrayTitle}>verbatim / FAQ / OBJ เทิร์นนี้</div>
-              <pre style={S.pre}>{JSON.stringify(xray.verbatim ?? [], null, 1)}</pre>
-              {Array.isArray(xray.precheck) && xray.precheck.length > 0 && (
-                <>
-                  <div style={S.xrayTitle}>payment pre-check</div>
-                  <pre style={S.pre}>{JSON.stringify(xray.precheck, null, 1)}</pre>
-                </>
-              )}
-              {Array.isArray(xray.blocked) && xray.blocked.length > 0 && (
-                <>
-                  <div style={S.xrayTitle}>⚠️ blocked / extraction</div>
-                  <pre style={S.pre}>{JSON.stringify({ blocked: xray.blocked, extraction: xray.extraction, degraded: xray.degraded }, null, 1)}</pre>
-                </>
-              )}
-              {xray.lastOrder != null && (
-                <>
-                  <div style={S.xrayTitle}>last_order (บันทึกแล้ว)</div>
-                  <pre style={S.pre}>{JSON.stringify(xray.lastOrder, null, 1)}{xray.lastOrderLocked ? "\n🔒 ล็อกแล้ว (M=TRUE)" : ""}</pre>
-                </>
-              )}
-            </>
-          )}
-          {orderRows.length > 0 && (
-            <>
-              <div style={S.xrayTitle}>🧾 แถวชีต Orders ที่ &quot;จะถูกเขียน&quot; (ไม่เขียนจริง)</div>
-              {orderRows.map((r, i) => (
-                <pre key={i} style={S.pre}>{Object.entries(r).filter(([, v]) => v !== "").map(([k, v]) => `${k}: ${v}`).join("\n")}</pre>
-              ))}
-            </>
-          )}
-          {adminPushes.length > 0 && (
-            <>
-              <div style={S.xrayTitle}>📣 ข้อความที่ &quot;จะยิงกลุ่มแอดมิน&quot; (ไม่ยิงจริง)</div>
-              {adminPushes.map((p, i) => (
-                <pre key={i} style={S.pre}>{p.text ?? "[มีรูปแนบ]"}</pre>
-              ))}
-            </>
-          )}
-        </aside>
-      )}
+      {/* Desktop = side panel · Mobile = bottom sheet (editor) / full (x-ray) */}
+      {!isMobile && <aside style={S.side}>{sidePanel}</aside>}
+      {isMobile && editorOpen && <div style={S.sheet}>{renderEditor()}</div>}
+      {isMobile && showX && !editorOpen && <aside style={{ ...S.side, width: "100%", borderLeft: "none" }}><button style={{ ...S.toolBtn, width: "100%", marginBottom: 8 }} onClick={() => setShowX(false)}>← กลับแชท</button>{renderXray()}</aside>}
     </main>
   );
-}
 
-/** arraybuffer → base64 (ฝั่ง browser ไม่มี Buffer) */
-function Buffer_from(buf: ArrayBuffer): string {
-  const bytes = new Uint8Array(buf);
-  let binary = "";
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  function renderEditor() {
+    if (!editorSrc) return null;
+    return (
+      <div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <b style={{ color: "#06735c" }}>✎ แก้ที่มาของบอลลูน</b>
+          <button style={S.toolBtn} onClick={() => { setEditor(null); setPreview(null); }}>ปิด</button>
+        </div>
+        {turns[editor!.turnIdx].sources.length > 1 && (
+          <div style={{ margin: "6px 0" }}>
+            {turns[editor!.turnIdx].sources.map((s, i) => (
+              <button key={i} style={{ ...S.toolBtn, ...(i === editor!.srcIdx ? { background: "#d5f0e0", fontWeight: 700 } : {}) }} onClick={() => openEditor(editor!.turnIdx, i)}>{s.label}</button>
+            ))}
+          </div>
+        )}
+        <div style={{ fontSize: 12, color: "#666", margin: "6px 0" }}>
+          <span style={S.chip}>{editorSrc.tab}</span>
+          <span style={S.chip}>{editorSrc.keyCol} = {editorSrc.key}</span>
+        </div>
+        {draftCols.map((c) => (
+          <div key={c.name} style={{ marginBottom: 8 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 2 }}>{c.name} <span style={{ color: "#999", fontWeight: 400 }}>(ดิบ ก่อน resolve)</span></div>
+            <textarea style={S.ta} value={c.value} onChange={(e) => editCol(c.name, e.target.value)} />
+          </div>
+        ))}
+        <div style={{ display: "flex", gap: 6, margin: "6px 0", flexWrap: "wrap" }}>
+          <button style={{ ...S.btn, padding: "10px 14px" }} onClick={replayTurn} disabled={busy}>▶ เล่นข้อความนี้ใหม่</button>
+          <button style={S.toolBtn} onClick={clearThisDraft}>ล้าง draft แถวนี้</button>
+        </div>
+        {preview && renderPreview(preview)}
+        <div style={{ fontSize: 11, color: "#999", marginTop: 10 }}>draft ทับเฉพาะในห้องซ้อม · เขียนกลับชีตจริงจะมาในเฟส ค</div>
+      </div>
+    );
   }
-  return btoa(binary);
+
+  function renderPreview(pv: PreviewResult) {
+    if (pv.error) return <div style={S.lintBlock}>{pv.error}</div>;
+    return (
+      <div>
+        {pv.lint.length > 0 && (
+          <div style={{ margin: "6px 0" }}>
+            {pv.lint.map((f, i) => <div key={i} style={f.level === "block" ? S.lintBlock : S.lintWarn}>{f.level === "block" ? "🔴 " : "⚠︎ "}{f.message}</div>)}
+          </div>
+        )}
+        <div style={S.title}>พรีวิวบอลลูน (ลูกค้าจะเห็น)</div>
+        {pv.segments.length === 0 && <div style={{ fontSize: 12, color: "#999" }}>(ว่าง)</div>}
+        {pv.segments.map((s, i) => (
+          <div key={i} style={s.dropped ? S.segDrop : S.segOk}>
+            {s.text}{s.dropped && <div style={{ fontSize: 10, textDecoration: "none", color: "#b00" }}>⚠︎ ถูกทิ้ง: {s.vars.join(" ")} resolve ไม่ได้</div>}
+          </div>
+        ))}
+        {pv.vars.length > 0 && (
+          <>
+            <div style={S.title}>ตัวแปรที่ใช้</div>
+            {pv.vars.map((v, i) => (
+              <div key={i} style={{ fontSize: 12, padding: "2px 0" }}>
+                <code>{v.token}</code> → {v.unknown ? <span style={{ color: "#a10000" }}>ไม่รู้จัก (พิมพ์ผิด?)</span> : v.resolved ? <b>{v.value || "(ว่าง)"}</b> : <span style={{ color: "#b00" }}>resolve ไม่ได้ในสถานะนี้</span>}
+              </div>
+            ))}
+          </>
+        )}
+      </div>
+    );
+  }
+
+  function renderXray() {
+    return (
+      <div>
+        <div style={S.title}>🔬 X-ray เทิร์นล่าสุด</div>
+        {!xray && <div>ยังไม่มีเทิร์น</div>}
+        {xray && (
+          <>
+            <div style={S.title}>ประตู</div>
+            <pre style={S.pre}>{`${xray.stage ?? "-"} · ${xray.stageName ?? ""}\nfunnel: ${xray.funnel ?? "-"} · human_mode: ${xray.humanMode}`}</pre>
+            <div style={S.title}>pending order</div>
+            <pre style={S.pre}>{JSON.stringify(xray.pendingOrder ?? {}, null, 1)}</pre>
+            <div style={S.title}>ธง delivered_steps</div>
+            <pre style={S.pre}>{JSON.stringify(xray.deliveredSteps ?? [])}</pre>
+            <div style={S.title}>ผล gate</div>
+            <pre style={S.pre}>{JSON.stringify(xray.gate ?? "-", null, 1)}</pre>
+            <div style={S.title}>verbatim / FAQ / OBJ</div>
+            <pre style={S.pre}>{JSON.stringify(xray.verbatim ?? [], null, 1)}</pre>
+            {Array.isArray(xray.blocked) && (xray.blocked as unknown[]).length > 0 && (
+              <><div style={S.title}>⚠️ blocked / extraction</div><pre style={S.pre}>{JSON.stringify({ blocked: xray.blocked, extraction: xray.extraction, degraded: xray.degraded }, null, 1)}</pre></>
+            )}
+          </>
+        )}
+        {orderRows.length > 0 && (
+          <>
+            <div style={S.title}>🧾 แถว &quot;จะถูกเขียน&quot; (ไม่เขียนจริง)</div>
+            {orderRows.map((r, i) => <pre key={i} style={S.pre}>{Object.entries(r).filter(([, v]) => v !== "").map(([k, v]) => `${k}: ${v}`).join("\n")}</pre>)}
+          </>
+        )}
+        {adminPushes.length > 0 && (
+          <>
+            <div style={S.title}>📣 &quot;จะยิงกลุ่ม&quot; (ไม่ยิงจริง)</div>
+            {adminPushes.map((p, i) => <pre key={i} style={S.pre}>{p.text ?? "[มีรูปแนบ]"}</pre>)}
+          </>
+        )}
+      </div>
+    );
+  }
 }

@@ -1,4 +1,4 @@
-# T-STUDIO SPEC — ห้องซ้อมเทรนปลาทู `[เฟส ก ✅ · ข-ง UNBUILT]`
+# T-STUDIO SPEC — ห้องซ้อมเทรนปลาทู `[เฟส ก-ข ✅ · ค-ง UNBUILT]`
 
 > (ชื่อไฟล์คง T1- เดิมกันลิงก์เสีย · ซีรีส์เปลี่ยนชื่อเป็น **T-STUDIO** ตามบรีฟ 2026-07-23)
 > พอ build ครบทุกเฟส ดูดสรุปเข้า REPO-MAP แล้วลบไฟล์นี้ · contract คือชีต BotLibrary v2.0 — **ห้ามหน้าเว็บเปลี่ยน schema เอง**
@@ -29,7 +29,15 @@
 - **ปุ่มจำลองเหตุการณ์ระบบ:** "ติ๊ก M + cron แจกเลข" (เรียก handler cron จริงใน sandbox — เทสล้างธง/ทวนหลังเขียนโดยไม่รอจริง) · "ส่งรูปสลิปจำลอง" (รูปตัวอย่างใน repo + อัปโหลดรูปเองได้) · /reset
 - **เทสบังคับ:** simulator ให้ผลตรง pipeline จริง (เทิร์นเดียวกันผ่าน webhook vs simulator → บอลลูน+state เหมือนกัน) + เทสรั่ว (LINE/ชีต/Blob ต้องเป็นศูนย์)
 
-## เฟส ข — แตะบอลลูนเพื่อแก้
+## เฟส ข — แตะบอลลูนเพื่อแก้ ✅ build แล้ว
+
+> **กลไก (ไม่แตะ engine · reuse production ทั้งหมด):**
+> - **draft overlay** = client เก็บ `{tab,key,column,value}[]` (localStorage) ส่งไปกับ turn/replay → sandbox ทับที่ **`batchGet` proxy** (ก่อน loader/inject อ่าน) · `loadBotLibrary` bypass cache 60วิ เมื่ออยู่ใน sandbox (กัน draft รั่วเข้า cache prod · guarded no-op)
+> - **provenance** = X-ray `verbatim` log (source+stage) + re-run `buildFaqInjection`/`buildObjectionInjection` หา row key → `sources[]` ต่อเทิร์น
+> - **dropped bubble** = X-ray `var-guard` log (`before`+`dropped`) → split หาบอลลูนที่โดนทิ้ง (โชว์ขีดฆ่า+ตัวแปรค้าง ไม่หายเงียบ)
+> - **preview สด** = `/train/api/preview` render 1 แถว+draft ผ่าน `resolveAllVars`/`parseReplyIntoMessages` + `lintPattern` (reuse `findBannedClaims`/`findBadPrices`/`buildAllowedPriceStrings`/`KNOWN_RUNTIME_VARS`)
+> - UI: แตะบอลลูนบอท → editor (desktop=side · มือถือ=bottom sheet) · textarea ต่อคอลัมน์ · lint สดทุกครั้งที่พิมพ์ · ปุ่ม "▶ เล่นข้อความนี้ใหม่" (re-send ด้วย draft)
+> - ⚠️ ข้อจำกัด: ตัวแปรใน preview resolve กับ **สถานะปัจจุบันในห้องซ้อม** (ไม่ใช่ snapshot ตอนส่งจริง) · "เล่นใหม่" = ส่งข้อความซ้ำ ณ สถานะปัจจุบัน (ไม่ใช่แทนที่เทิร์นกลางบทย้อนหลัง)
 
 - ทุกบอลลูนบอทกดได้ → panel/bottom-sheet: มาจากแท็บ/แถว/คอลัมน์ไหน (step_id/faq_id/objection_id + ชื่อคอลัมน์) · ข้อความดิบก่อน resolve · ตัวแปรแต่ละตัว resolve เป็นอะไร
 - บอลลูนที่โดน var-guard ทิ้ง = โชว์เป็นบอลลูนขีดฆ่า + เหตุผล (**ห้ามหายเงียบ**)

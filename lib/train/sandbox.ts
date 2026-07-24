@@ -1,5 +1,48 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { resolveSpreadsheetId } from "@/lib/core/sheet-id";
+import { cleanHeader, cleanCell } from "@/lib/sheets/clean";
+
+/** เฟส ข: draft overlay 1 รายการ = ทับค่าเซลล์เดียวในชีต (เฉพาะใน simulator) */
+export interface OverlayEntry {
+  tab: string;
+  key: string;
+  column: string;
+  value: string;
+}
+
+/** key column ต่อแท็บ (ใช้หาแถวที่จะทับ · header-driven ไม่ใช้ index ตายตัว) */
+const TAB_KEY_COL: Record<string, string> = {
+  CSV_Step: "step_id",
+  CSV_Objections: "objection_id",
+  CSV_FAQ: "คำถาม",
+  CSV_Vars: "ตัวแปร",
+  CSV_Follow: "follow_id",
+};
+
+export function tabKeyColumn(tab: string): string | null {
+  return TAB_KEY_COL[tab] ?? null;
+}
+
+/** ทับค่าตาม overlay ลงในแถวของแท็บ (clone · header-driven) — คืนชุดแถวใหม่ (ไม่แตะต้นฉบับ) */
+export function applyOverlayToTab(tab: string, rows: string[][], overlay: OverlayEntry[]): string[][] {
+  const entries = overlay.filter((o) => o.tab === tab);
+  if (entries.length === 0 || rows.length === 0) return rows;
+  const keyColName = TAB_KEY_COL[tab];
+  if (!keyColName) return rows;
+  const header = rows[0].map(cleanHeader);
+  const keyIdx = header.indexOf(keyColName);
+  if (keyIdx === -1) return rows;
+  const out = rows.map((r) => [...r]);
+  for (const e of entries) {
+    const colIdx = header.indexOf(cleanHeader(e.column));
+    if (colIdx === -1) continue;
+    const rowIdx = out.findIndex((r, i) => i > 0 && cleanCell(r[keyIdx] ?? "") === e.key);
+    if (rowIdx === -1) continue;
+    while (out[rowIdx].length <= colIdx) out[rowIdx].push("");
+    out[rowIdx][colIdx] = e.value;
+  }
+  return out;
+}
 
 /**
  * lib/train/sandbox.ts — T-STUDIO เฟส ก: sandbox context สำหรับห้องซ้อมเทรน (/train)
@@ -41,6 +84,8 @@ export interface TrainSandbox {
   orderRows: string[][];
   /** log JSON (มี scope) ที่ pipeline พ่นระหว่างเทิร์น — tee มาเป็นแหล่ง X-ray */
   logs: Record<string, unknown>[];
+  /** เฟส ข: draft overlay — ทับค่าชีต BotLibrary ที่ batchGet proxy (เฉพาะ simulator) */
+  overlay: OverlayEntry[];
 }
 
 const store = new AsyncLocalStorage<TrainSandbox>();
@@ -56,6 +101,7 @@ export function createSandbox(sessionId: string): TrainSandbox {
     slipCounter: 0,
     orderRows: [],
     logs: [],
+    overlay: [],
   };
 }
 
@@ -159,7 +205,17 @@ export function wrapSheetsForSandbox(real: any, ctx: TrainSandbox): any {
       }
       return realValues.batchUpdate(p);
     },
-    batchGet: async (p: any) => realValues.batchGet(p), // BotLibrary เท่านั้น — ผ่านของจริงเสมอ
+    batchGet: async (p: any) => {
+      const res = await realValues.batchGet(p); // BotLibrary — อ่านของจริงเสมอ (read-only)
+      if (ctx.overlay.length === 0) return res;
+      // เฟส ข: ทับ draft overlay ลงผลลัพธ์ก่อนส่งเข้า pipeline (loader/inject อ่าน draft โดยอัตโนมัติ)
+      const valueRanges = (res.data?.valueRanges ?? []).map((vr: any) => {
+        const tab = String(vr.range ?? "").split("!")[0];
+        const rows = (vr.values as string[][] | undefined) ?? [];
+        return { ...vr, values: applyOverlayToTab(tab, rows, ctx.overlay) };
+      });
+      return { ...res, data: { ...res.data, valueRanges } };
+    },
   };
   return { spreadsheets: { values } };
 }
