@@ -135,6 +135,14 @@ export async function ensureSchema(): Promise<void> {
     )
   `;
 
+  // D-50: idempotency แจ้งเลขพัสดุ (แบบเดียวกับ orders_written D-29) — มีแถว = แจ้งลูกค้าแล้ว ห้ามแจ้งซ้ำ
+  await sql`
+    CREATE TABLE IF NOT EXISTS shipping_notified (
+      order_id TEXT PRIMARY KEY,
+      notified_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+
   // T-STUDIO: state ของ session ห้องซ้อม (fake grid ออเดอร์ ฯลฯ) — ใช้จริงเฉพาะ train branch
   // สร้างทั้ง 2 DB (schema เหมือนกัน 100% กัน drift) · บน prod = ตารางว่างเฉยๆ ไม่มีใครเขียน
   await sql`
@@ -689,6 +697,20 @@ export async function logFunnelEvent(
   await ensureSchema();
   const sql = getSql();
   await sql`INSERT INTO funnel_events (user_id, from_stage, to_stage) VALUES (${userId}, ${fromStage}, ${toStage})`;
+}
+
+// ---- D-50: แจ้งเลขพัสดุ (idempotent · atomic claim กัน cron รันซ้อนแจ้งซ้ำ) ----
+
+/** เคลมสิทธิ์แจ้งพัสดุออเดอร์นี้ (atomic) — คืน true = เพิ่งเคลม (ให้แจ้ง) · false = เคยแจ้ง/เคลมแล้ว (ข้าม) */
+export async function markShippingNotified(orderId: string): Promise<boolean> {
+  await ensureSchema();
+  const sql = getSql();
+  const rows = await sql`
+    INSERT INTO shipping_notified (order_id) VALUES (${orderId})
+    ON CONFLICT (order_id) DO NOTHING
+    RETURNING order_id
+  `;
+  return rows.length > 0;
 }
 
 // ---- order counter (atomic) ----

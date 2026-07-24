@@ -812,5 +812,16 @@ handoff ทุก path (edit/AI-semantic/keyword) ตั้งแค่ `human_m
 - **เทส:** unit (isFirstMessageOfDay ข้ามเที่ยงคืนไทยแม้ UTC วันเดียว · prependToFirstTextBubble รูป/หลายบอลลูน/space) + pipeline (ลูกค้าใหม่ key-absent→ค่าเริ่ม · เทิร์นสองไม่ทัก · reset→ทักใหม่ · handoff/degraded ไม่ทัก · ""=ปิด · custom) · **396 passed | 3 expected-fail** · build เขียว
 - 🔴 **เจ้าของ:** วางข้อความในแท็บ CSV_Config ชีต key `ทักทายรายวัน` (ค่าเริ่ม `สวัสดีค่ะ ` · เว้นว่าง=ปิด) — โน้ตในแท็บวิธีใช้: "เติมหน้าคำตอบแรกของลูกค้าในแต่ละวัน · ใส่ space ท้ายให้กลืนกับข้อความ"
 
+### D-50 · แจ้งเลขพัสดุ (ก้อน B เฟสหลังการขาย ส่วนแรก · 1 commit)
+ทีมแพ็คกรอกเลข Tracking (P) → cron รอบถัดไป push แจ้งลูกค้า (ขนส่ง+เลขพัสดุ+ของถึง 2-3 วัน)
+**เคาะแล้ว (2026-07-24):**
+- **ทริกเกอร์ = P (Tracking) ไม่ว่าง** (การกรอกเลข = การส่ง · จังหวะเดียว) + แจกเลขแล้ว(O=TRUE) + !cancelled · 🔴 **ไม่ใช้ "ติ๊ก O"** เพราะ O ถูก cron แจกเลขติ๊กเองอยู่แล้ว (= แจกเลข ไม่ใช่ ส่งของ) · P ว่าง = ยังไม่ส่ง โดยนิยาม → ข้ามเงียบ (ไม่ warn)
+- **dedup = Neon `shipping_notified(order_id)`** (แบบ D-29 · `markShippingNotified` atomic claim `INSERT ON CONFLICT DO NOTHING RETURNING`) — เคลมก่อน push กัน cron รันซ้อน
+- **template = CSV_Config key `ข้อความแจ้งพัสดุ`** + `{ขนส่ง}{เลขพัสดุ}` · ไม่มี key = ค่าเริ่ม (`lib/shipping.ts DEFAULT_SHIPPING_TEMPLATE`) · ค่าว่าง = ปิดฟีเจอร์ · carrier = Config `ขนส่ง_เริ่มต้น` (default `Shopee Express`) · **per-order carrier = เฟสหน้า** (ยังไม่มีคอลัมน์ขนส่ง)
+**flow (`cron/orders/route.ts notifyShipping` · หลัง loop แจกเลข):** `listOrdersToNotifyShipping` (O+P+!cancel) → ต่อแถว: เคลม `markShippingNotified` → R ว่าง (แถวเก่าก่อน KI-06)/no order_id = ข้าม(+เคลมกันวน log) → `getCustomer(R)`: human_mode/บอทปิด → **แจ้งกลุ่มแอดมิน "โปรดแจ้งเอง"** · ปกติ → `formatShippingMessage` + **greeting D-51** (push แรกของวันได้ "สวัสดีค่ะ ") → `pushMessages(userId)` → กลุ่มแอดมินได้ **"แจ้งพัสดุลูกค้าแล้ว ✓ <เลขออเดอร์>"** (ทีมแพ็คเห็นสถานะจากกลุ่ม แทนคอลัมน์สถานะ)
+**T-STUDIO:** `runTrainCron(sessionId, {tracking})` — จำลองกรอก P + ติ๊ก M → cron รอบเดียวแจกเลข+แจ้งพัสดุ (push เข้า collector) · UI ปุ่ม "📦 กรอกพัสดุ + cron" + ช่องเลขพัสดุจำลอง
+**ไม่แตะ:** cron แจกเลข/idempotency D-29/O semantics เดิม (เพิ่ม loop ต่อท้าย) · **harness:** cron (push+ขนส่ง+เลข · idempotent ไม่ซ้ำ · P ว่าง/R ว่าง ข้าม · human_mode→แอดมิน · greeting · ""=ปิด) + train sim + formatShippingMessage · **405 passed | 3 expected-fail** · build เขียว
+**จบเคส CRM/Follow (ลูกค้าตอบได้รับ→ถามรีวิว) = ก้อน B ส่วนหลัง · ยังไม่ทำ**
+
 ### Phase C · ลบ ENV ค้างใน Vercel
 `SHEET_STEP_URL` `SHEET_FAQ_URL` `SHEET_CONFIG_URL` `SHEET_FOLLOW_URL` — โค้ดไม่อ่านแล้ว ลบทิ้งได้

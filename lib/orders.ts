@@ -205,7 +205,8 @@ function isTrue(value: string | undefined): boolean {
  * เงื่อนไข: คอนเฟิร์ม(O)=TRUE และ ส่งออเดอร์แล้ว(Q)≠TRUE และไม่ถูกยกเลิก
  * ถ้าติ๊กทั้ง คอนเฟิร์ม(O) และ ยกเลิก(P) พร้อมกัน → ถือว่ายกเลิก (ปลอดภัยไว้ก่อน จึงกรอง cancelled ออกก่อนเสมอ)
  */
-export async function listPendingOrders(): Promise<OrderRow[]> {
+/** อ่านทุกแถวออเดอร์ (header-driven) — ผู้เรียกกรองเอง (pending / แจ้งพัสดุ) */
+async function readAllOrderRows(): Promise<OrderRow[]> {
   if (!process.env.SHEET_ORDERS_ID) return []; // env ไม่มี = ฟีเจอร์ปิด ข้ามเงียบ (พฤติกรรมเดิม)
 
   const cols = await getOrdersColumns(); // env ผิดรูป/ header ไม่ครบ = ดังทันที
@@ -216,7 +217,7 @@ export async function listPendingOrders(): Promise<OrderRow[]> {
   });
   const rows = (res.data.values as string[][] | undefined) ?? [];
 
-  const parsed: OrderRow[] = rows.map((r, i) => ({
+  return rows.map((r, i) => ({
     rowIndex: i + 2,
     orderNumber: cell(r, cols, "ลำดับ"),
     lineDisplayName: cell(r, cols, "ชื่อไลน์ลูกค้า"),
@@ -234,10 +235,18 @@ export async function listPendingOrders(): Promise<OrderRow[]> {
     sent: isTrue(cell(r, cols, "ส่งออเดอร์แล้ว")),
     trackingNumber: cell(r, cols, "เลขTracking"),
     orderId: cell(r, cols, "order_id"), // หาโดยชื่อ ไม่ใช่ r[16]
-    lineUserId: cell(r, cols, "line_user_id"), // D-45b: cron ล้างธง delivered_steps
+    lineUserId: cell(r, cols, "line_user_id"), // D-45b/KI-06: cron ล้างธง + D-50 แจ้งพัสดุ (join key)
   }));
+}
 
-  return parsed.filter((o) => o.confirmed && !o.cancelled && !o.sent);
+/** ออเดอร์รอแจกเลข: คอนเฟิร์ม(M)=TRUE · ยังไม่ส่ง(O)≠TRUE · ไม่ยกเลิก */
+export async function listPendingOrders(): Promise<OrderRow[]> {
+  return (await readAllOrderRows()).filter((o) => o.confirmed && !o.cancelled && !o.sent);
+}
+
+/** D-50 ออเดอร์รอแจ้งพัสดุ: แจกเลขแล้ว(O)=TRUE · มีเลขพัสดุ(P)ไม่ว่าง · ไม่ยกเลิก (dedup ที่ Neon shipping_notified) */
+export async function listOrdersToNotifyShipping(): Promise<OrderRow[]> {
+  return (await readAllOrderRows()).filter((o) => o.sent && !o.cancelled && o.trackingNumber.trim() !== "");
 }
 
 // ---- แก้ออเดอร์ที่เขียนแล้ว (D-31 · Plan B) — แก้แถวเดิมด้วย order_id ห้ามเขียนแถวใหม่ ----

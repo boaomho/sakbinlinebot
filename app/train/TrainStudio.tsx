@@ -99,6 +99,7 @@ export default function TrainStudio() {
   const [toast, setToast] = useState("");
   const [sheetChanged, setSheetChanged] = useState(false);
   const [sheetDragY, setSheetDragY] = useState(0);
+  const [tracking, setTracking] = useState("TH1234567890");
   const dragStart = useRef(0);
   const [showX, setShowX] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
@@ -159,12 +160,18 @@ export default function TrainStudio() {
     const b64 = bufToB64(await r.arrayBuffer());
     await callTurn({ imageBase64: b64, imageMime: "image/jpeg" }, "🧾 [ส่งสลิปตัวอย่าง]", true);
   }
-  async function cronSim() {
-    if (busy) return; setBusy(true); setSys((p) => [...p, "⚙️ จำลอง: ติ๊ก M + cron แจกเลข"]);
+  async function cronSim(tracking?: string) {
+    if (busy) return; setBusy(true);
+    setSys((p) => [...p, tracking ? `📦 จำลอง: กรอกเลขพัสดุ ${tracking} + cron → แจ้งลูกค้า` : "⚙️ จำลอง: ติ๊ก M + cron แจกเลข"]);
     try {
-      const r = await fetch("/train/api/cron", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId }) });
+      const r = await fetch("/train/api/cron", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId, tracking }) });
       const data = (await r.json()) as TurnResult;
-      if (r.ok) { setXray(data.xray); setOrderRows(data.orderRows ?? []); setAdminPushes(data.adminPushes ?? []); }
+      if (r.ok) {
+        setXray(data.xray); setOrderRows(data.orderRows ?? []); setAdminPushes(data.adminPushes ?? []);
+        // D-50: ข้อความแจ้งพัสดุ push เข้า collector (bubbles) → โชว์ในแชท
+        const bot = (data.bubbles ?? []).flatMap((b) => b.messages.map((m) => m.type === "text" ? { text: m.text ?? "" } : { text: `🖼 [รูป]`, image: true }));
+        if (bot.length > 0) setTurns((prev) => [...prev, { user: "⚙️ (ระบบ: cron แจ้งพัสดุ)", bot, sources: [], dropped: [] }]);
+      }
     } finally { setBusy(false); }
   }
   async function reset() {
@@ -313,7 +320,9 @@ export default function TrainStudio() {
         <div style={S.toolRow}>
           <button style={tb} onClick={() => fileRef.current?.click()} disabled={busy}>📎 แนบรูป</button>
           <button style={tb} onClick={sendSampleSlip} disabled={busy}>🧾 สลิปตัวอย่าง</button>
-          <button style={tb} onClick={cronSim} disabled={busy}>⚙️ ติ๊ก M + cron</button>
+          <button style={tb} onClick={() => cronSim()} disabled={busy}>⚙️ ติ๊ก M + cron</button>
+          <input style={{ ...tb, minWidth: 120, padding: "8px 10px" }} value={tracking} onChange={(e) => setTracking(e.target.value)} placeholder="เลขพัสดุจำลอง" />
+          <button style={tb} onClick={() => cronSim(tracking.trim() || "TH0000")} disabled={busy}>📦 กรอกพัสดุ + cron</button>
           <button style={tb} onClick={reset} disabled={busy}>🔄 reset</button>
           {isMobile && <button style={{ ...tb, background: "#eef3ff", borderColor: "#b9cdf0" }} onClick={() => setShowX(true)}>🔬 X-ray</button>}
           <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => e.target.files?.[0] && sendImage(e.target.files[0])} />

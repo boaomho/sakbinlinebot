@@ -142,6 +142,21 @@ describe("T-STUDIO เฟส ก · cron จำลอง — โค้ด cron �
     expect(c?.delivered_steps, "ธงเก่าถูกล้าง (คงเฉพาะ step ปัจจุบัน) — D-45b hook ผ่าน cron จริง").not.toContain("S_OLD_FLAG");
   });
 
+  it("🔴 D-50 sim: กรอกพัสดุ + cron → แจ้งเลขพัสดุลูกค้าเข้า collector (ไม่ยิงจริง)", async () => {
+    seedBotLib({ stepRows: stepSheet() });
+    scriptGemini([turn({ reply: "AI", stage: "S4B", paymentMethod: "COD", orderData: { items: [{ qty: 3 }], ...FULL_ADDRESS } })]);
+    const sess = "train-ship-0001";
+    await runTrainTurn(sess, "เอา 3 ถ้วย เก็บปลายทาง สมชาย ใจดี 123/45 หมู่ 6 ต.บางรัก อ.เมือง จ.ชลบุรี 20000 0811122334");
+    // กรอกพัสดุ + cron รอบเดียว: แจกเลข(O) + แจ้งพัสดุลูกค้า
+    const res = await runTrainCron(sess, { tracking: "TH55555" });
+    const bubbles = res.bubbles.flatMap((b) => b.messages).map((m) => (m as { text?: string }).text ?? "").join(" ");
+    expect(bubbles, "ลูกค้าจำลองได้ข้อความแจ้งพัสดุ").toContain("TH55555");
+    expect(bubbles, "ขนส่ง default").toContain("Shopee Express");
+    expect(JSON.stringify(res.adminPushes), "กลุ่มได้ ✓ แจ้งพัสดุแล้ว").toContain("แจ้งพัสดุลูกค้าแล้ว ✓");
+    expect(lineCalls.pushes.length, "🔴 ไม่ push LINE จริง").toBe(0);
+    expect(sheetsCalls.batchUpdates.length, "🔴 ไม่แตะชีตจริง").toBe(0);
+  });
+
   it("reset: ล้างความจำ + fake grid ของ session", async () => {
     const sess = "train-reset-0001";
     seedBotLib({ stepRows: stepSheet() });

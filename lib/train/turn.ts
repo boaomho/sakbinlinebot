@@ -166,18 +166,27 @@ export async function runTrainPreview(
   });
 }
 
-/** ปุ่ม "ติ๊ก M + cron แจกเลข" — ติ๊กคอนเฟิร์มทุกแถวค้าง แล้วเรียก handler cron จริงใน sandbox */
-export async function runTrainCron(sessionId: string): Promise<TrainTurnResult> {
+/** ปุ่ม "ติ๊ก M + cron แจกเลข" — ติ๊กคอนเฟิร์มทุกแถวค้าง แล้วเรียก handler cron จริงใน sandbox
+ *  opts.tracking (D-50): จำลองทีมแพ็คกรอกเลขพัสดุ(P) + ติ๊ก M → cron รอบเดียวแจกเลข(O)+แจ้งพัสดุลูกค้า */
+export async function runTrainCron(sessionId: string, opts: { tracking?: string } = {}): Promise<TrainTurnResult> {
   return withSession(sessionId, async (ctx) => {
-    // ติ๊ก M (คอนเฟิร์ม) แถวที่ยังไม่ส่ง — จำลองมือแอดมิน · ตำแหน่งคอลัมน์จาก header จริง
     const header = await readOrdersHeader();
     const mIdx = header.indexOf("คอนเฟิร์ม");
     const sentIdx = header.indexOf("ส่งออเดอร์แล้ว");
+    const pIdx = header.indexOf("เลขTracking");
+    const cancelIdx = header.indexOf("ยกเลิก");
     if (mIdx >= 0 && sentIdx >= 0) {
       for (const row of ctx.orderRows) {
+        if (cancelIdx >= 0 && (row[cancelIdx] ?? "").toUpperCase() === "TRUE") continue;
+        // ติ๊ก M ทุกแถวที่ยังไม่ส่ง (แอดมินคอนเฟิร์ม)
         if ((row[sentIdx] ?? "").toUpperCase() !== "TRUE") {
           while (row.length <= mIdx) row.push("");
           row[mIdx] = "TRUE";
+        }
+        // D-50: ถ้ามี tracking → กรอก P (ทีมแพ็คส่งของ) — cron รอบนี้จะแจกเลข(O)ก่อน แล้วเห็น O+P → แจ้งลูกค้า
+        if (opts.tracking && pIdx >= 0 && !(row[pIdx] ?? "").trim()) {
+          while (row.length <= pIdx) row.push("");
+          row[pIdx] = opts.tracking;
         }
       }
     }

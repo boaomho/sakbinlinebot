@@ -11,6 +11,7 @@ const TABLES = [
   "pending_messages",
   "admin_pending_choices",
   "orders_written",
+  "shipping_notified", // D-50: idempotency แจ้งพัสดุ — ต้องล้างต่อเทส กัน claim ค้างข้ามเคส
   "train_sessions", // T-STUDIO: fake grid ห้องซ้อม — ไม่ล้าง = ค้างข้ามเทส/ข้ามรอบ
 ];
 
