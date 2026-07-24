@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
+import { EditorBoundary, EditorRenderer } from "./EditorBoundary";
 
 /**
  * T-STUDIO — เฟส ก (แชทจำลอง + X-ray) + เฟส ข (แตะบอลลูนเพื่อแก้ · draft overlay · lint สด)
@@ -269,10 +270,17 @@ export default function TrainStudio() {
     );
   }
 
+  // 🔴 tb ต้องประกาศ "ก่อน" ถูกอ้างใน renderEditor/JSX (TDZ fix — เดิมประกาศหลัง sidePanel ที่เรียก renderEditor
+  //    → ตอนเปิด editor เกิด Reference: Cannot access 'tb' before initialization → ล้มทั้งหน้าบนมือถือ)
+  const tb: React.CSSProperties = isMobile ? { ...S.toolBtn, minHeight: 46, fontSize: 15, padding: "12px 12px", flex: "1 1 40%" } : S.toolBtn;
   const editorSrc = editor ? turns[editor.turnIdx]?.sources[editor.srcIdx] : null;
   const editorOpen = Boolean(editorSrc);
-  const sidePanel = editorOpen ? renderEditor() : renderXray();
-  const tb: React.CSSProperties = isMobile ? { ...S.toolBtn, minHeight: 46, fontSize: 15, padding: "12px 12px", flex: "1 1 40%" } : S.toolBtn;
+  // แผง editor ครอบด้วย EditorBoundary + render ผ่าน EditorRenderer (child ของ boundary) → error ตอน render ถูกจับ ไม่ล้มหน้าแชท
+  const editorPanel = (
+    <EditorBoundary onClose={closeEditor}>
+      <EditorRenderer render={renderEditor} />
+    </EditorBoundary>
+  );
 
   return (
     <main style={S.page}>
@@ -317,20 +325,20 @@ export default function TrainStudio() {
       </div>
 
       {/* Desktop = side panel · Mobile = bottom sheet (editor) / full (x-ray) */}
-      {!isMobile && <aside style={S.side}>{sidePanel}</aside>}
+      {!isMobile && <aside style={S.side}>{editorOpen ? editorPanel : renderXray()}</aside>}
       {isMobile && editorOpen && (
         <>
           <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.35)", zIndex: 19 }} onClick={closeEditor} />
           <div style={{ ...S.sheet, transform: `translateY(${sheetDragY}px)`, transition: sheetDragY === 0 ? "transform .2s" : "none" }}>
             <div
               style={{ padding: "2px 0 10px", cursor: "grab", touchAction: "none" }}
-              onTouchStart={(e) => { dragStart.current = e.touches[0].clientY; }}
-              onTouchMove={(e) => setSheetDragY(Math.max(0, e.touches[0].clientY - dragStart.current))}
+              onTouchStart={(e) => { const t = e.touches[0]; if (t) dragStart.current = t.clientY; }}
+              onTouchMove={(e) => { const t = e.touches[0]; if (t) setSheetDragY(Math.max(0, t.clientY - dragStart.current)); }}
               onTouchEnd={() => { if (sheetDragY > 110) closeEditor(); else setSheetDragY(0); }}
             >
               <div style={{ width: 44, height: 5, borderRadius: 3, background: "#ccc", margin: "0 auto" }} />
             </div>
-            {renderEditor()}
+            {editorPanel}
           </div>
         </>
       )}
