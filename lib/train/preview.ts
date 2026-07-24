@@ -16,7 +16,7 @@ import type { CustomerState } from "@/lib/db";
 const EMPTY_VARS: RuntimeVarContext = { summary: null, total: null, payment: null, breakdown: null, nextTierOffer: null };
 
 /** คอลัมน์ที่แก้ได้ (=บอลลูน) ต่อแท็บ */
-const EDITABLE_COLS: Record<string, string[]> = {
+export const EDITABLE_COLS: Record<string, string[]> = {
   CSV_Step: ["ตัวอย่างคำตอบ", "ตัวอย่างประโยคปิดท้าย"],
   CSV_Objections: ["ตัวอย่างคำตอบ"],
   CSV_FAQ: ["คำตอบ"],
@@ -95,8 +95,8 @@ export function buildTrainVarCtx(customer: CustomerState | null, lib: BotLibrary
   };
 }
 
-/** สร้างแพตเทิร์นจากคอลัมน์ (draft ทับแล้ว) ตามแท็บ */
-function patternFromColumns(tab: string, cols: Record<string, string>): string {
+/** สร้างแพตเทิร์นจากคอลัมน์ (draft ทับแล้ว) ตามแท็บ — reuse โดย write.ts (lint gate) */
+export function patternFromColumns(tab: string, cols: Record<string, string>): string {
   if (tab === "CSV_Step") return joinVerbatimParts(cols["ตัวอย่างคำตอบ"] ?? "", cols["ตัวอย่างประโยคปิดท้าย"] ?? "");
   if (tab === "CSV_Objections") return (cols["ตัวอย่างคำตอบ"] ?? "").trim();
   if (tab === "CSV_FAQ") return (cols["คำตอบ"] ?? "").trim();

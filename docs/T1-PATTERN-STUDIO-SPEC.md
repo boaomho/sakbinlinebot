@@ -1,4 +1,4 @@
-# T-STUDIO SPEC — ห้องซ้อมเทรนปลาทู `[เฟส ก-ข ✅ · ค-ง UNBUILT]`
+# T-STUDIO SPEC — ห้องซ้อมเทรนปลาทู `[เฟส ก-ค ✅ · ง UNBUILT]`
 
 > (ชื่อไฟล์คง T1- เดิมกันลิงก์เสีย · ซีรีส์เปลี่ยนชื่อเป็น **T-STUDIO** ตามบรีฟ 2026-07-23)
 > พอ build ครบทุกเฟส ดูดสรุปเข้า REPO-MAP แล้วลบไฟล์นี้ · contract คือชีต BotLibrary v2.0 — **ห้ามหน้าเว็บเปลี่ยน schema เอง**
@@ -44,7 +44,18 @@
 - แก้ในช่อง → เซฟเป็น **draft overlay** (ทับค่าชีตเฉพาะใน simulator) → ปุ่ม "เล่นเทิร์นนี้ใหม่" เห็นผลทันที
 - lint รันสดทุกครั้งที่พิมพ์ (ตารางเช็คด้านล่าง)
 
-## เฟส ค — เขียนกลับ + copy
+## เฟส ค — เขียนกลับ + copy ✅ build แล้ว
+
+> **กลไก (`lib/train/write.ts` · รันนอก sandbox = getSheets จริง):**
+> - ต่อคอลัมน์ใน editor: ปุ่ม **📋 Copy** (clipboard) + **💾 เขียนลงชีต**
+> - เขียน = 2 จังหวะ: `mode:diff` (อ่านค่าปัจจุบันสด → modal โชว์ เก่า vs ใหม่) → ยืนยัน → `mode:commit`
+> - 🔴 **target สดทุกครั้ง:** `writeCell` โหลดชีตสด (`__resetBotLibraryCache`) → หา row/col จาก **key column + ชื่อ header** → คำนวณ A1 ตอนเขียน (`values.batchUpdate` · ไม่จำ A1/index)
+> - 🔴 **กันชนกัน:** ค่าจริงในชีต ≠ `expectedOld` (ที่โชว์ diff) → `409 conflict` ยกเลิก+รีเฟรช diff · ไม่เขียนทับ
+> - 🔴 **hard guard 2 ชั้น:** tab ∈ {CSV_Step/Objections/FAQ/Vars} + คอลัมน์ใน whitelist + spreadsheetId ยืนยัน BotLibrary (ปฏิเสธถ้า = Orders) — **ห้ามแตะ Orders เด็ดขาด**
+> - **lint gate ฝั่ง server** (`lintPattern` full-row · ไม่เชื่อ client): มี block → `422` ไม่เขียน · ฝั่ง UI ปุ่มเขียนดับเมื่อ lint แดง (copy ยังได้)
+> - **TRAIN_LOG:** append เวลา/แท็บ/key/คอลัมน์/เก่าย่อ/ใหม่ย่อ (สร้าง tab อัตโนมัติถ้ายังไม่มี)
+> - หลังเขียน: `__resetBotLibraryCache` (เทิร์นถัดไปเห็นของจริงใหม่) + client เคลียร์ overlay ของเซลล์นั้น
+> - ต้องการ service account = **Editor** (✅ เจ้าของตั้งแล้ว)
 
 - ต่อเซลล์: ปุ่ม **Copy** (พร้อมวาง) + ปุ่ม **"เขียนลงชีต"** → target ด้วย key column + header (**ห้ามใช้ A1 ตายตัว**) → โชว์ diff เก่า/ใหม่ → ยืนยัน → เขียนผ่าน Sheets API
 - เขียนสำเร็จ → จดลงแท็บใหม่ **TRAIN_LOG** (เวลา/แท็บ/แถว/คอลัมน์/ค่าเก่าย่อ/ค่าใหม่ย่อ) → เคลียร์ draft overlay ของเซลล์นั้น

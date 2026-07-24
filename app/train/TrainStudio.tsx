@@ -94,6 +94,8 @@ export default function TrainStudio() {
   const [editor, setEditor] = useState<Editor | null>(null);
   const [draftCols, setDraftCols] = useState<SourceCol[]>([]);
   const [preview, setPreview] = useState<PreviewResult | null>(null);
+  const [confirm, setConfirm] = useState<{ column: string; old: string; next: string } | null>(null);
+  const [toast, setToast] = useState("");
   const [showX, setShowX] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const chatRef = useRef<HTMLDivElement>(null);
@@ -212,6 +214,33 @@ export default function TrainStudio() {
     await callTurn({ text }, text);
   }
 
+  // ---- เฟส ค: copy + เขียนกลับชีต ----
+  function flash(msg: string) { setToast(msg); setTimeout(() => setToast(""), 2600); }
+  async function copyCol(value: string) {
+    try { await navigator.clipboard.writeText(value); flash("📋 คัดลอกแล้ว — วางลงเซลล์ชีตได้เลย"); }
+    catch { flash("คัดลอกไม่ได้ (เบราว์เซอร์ไม่อนุญาต)"); }
+  }
+  async function prepareWrite(column: string) {
+    if (!editorSrc) return;
+    const next = draftCols.find((c) => c.name === column)?.value ?? "";
+    const r = await fetch("/train/api/write", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: "diff", tab: editorSrc.tab, key: editorSrc.key, column }) });
+    const data = (await r.json()) as { old?: string; error?: string };
+    if (!r.ok) { flash(`⚠️ ${data.error ?? r.status}`); return; }
+    if ((data.old ?? "") === next) { flash("ค่าตรงกับชีตอยู่แล้ว — ไม่ต้องเขียน"); return; }
+    setConfirm({ column, old: data.old ?? "", next });
+  }
+  async function commitWrite() {
+    if (!editorSrc || !confirm) return;
+    const { column, old, next } = confirm;
+    const r = await fetch("/train/api/write", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: "commit", tab: editorSrc.tab, key: editorSrc.key, column, newValue: next, expectedOld: old }) });
+    const data = (await r.json()) as { status?: string; current?: string; error?: string };
+    if (r.status === 409) { flash("🔶 ชีตถูกแก้ระหว่างนั้น — รีเฟรช diff ใหม่"); setConfirm({ column, old: data.current ?? "", next }); return; }
+    if (!r.ok) { flash(`⚠️ ${data.error ?? "เขียนไม่ได้"}`); setConfirm(null); return; }
+    // สำเร็จ → เคลียร์ overlay ของเซลล์นั้น (เทิร์นถัดไปเห็นของจริงใหม่)
+    setOverlay((prev) => prev.filter((o) => !(o.tab === editorSrc.tab && o.key === editorSrc.key && o.column === column)));
+    setConfirm(null); flash("✅ เขียนลงชีตแล้ว + จด TRAIN_LOG");
+  }
+
   if (authed === null) return <main style={S.page} />;
   if (!authed) {
     return (
@@ -274,6 +303,24 @@ export default function TrainStudio() {
       {!isMobile && <aside style={S.side}>{sidePanel}</aside>}
       {isMobile && editorOpen && <div style={S.sheet}>{renderEditor()}</div>}
       {isMobile && showX && !editorOpen && <aside style={{ ...S.side, width: "100%", borderLeft: "none" }}><button style={{ ...S.toolBtn, width: "100%", marginBottom: 8 }} onClick={() => setShowX(false)}>← กลับแชท</button>{renderXray()}</aside>}
+
+      {confirm && editorSrc && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 40, padding: 16 }} onClick={() => setConfirm(null)}>
+          <div style={{ background: "#fff", borderRadius: 12, padding: 18, maxWidth: 520, width: "100%", maxHeight: "85dvh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+            <b style={{ color: "#06735c" }}>ยืนยันเขียนกลับชีตจริง</b>
+            <div style={{ fontSize: 12, color: "#666", margin: "6px 0" }}><span style={S.chip}>{editorSrc.tab}</span><span style={S.chip}>{editorSrc.keyCol} = {editorSrc.key}</span><span style={S.chip}>{confirm.column}</span></div>
+            <div style={{ fontSize: 12, fontWeight: 600, marginTop: 8 }}>ค่าเก่าในชีตตอนนี้</div>
+            <pre style={{ ...S.pre, background: "#fff0f0" }}>{confirm.old || "(ว่าง)"}</pre>
+            <div style={{ fontSize: 12, fontWeight: 600 }}>ค่าใหม่ (draft)</div>
+            <pre style={{ ...S.pre, background: "#eef7f0" }}>{confirm.next || "(ว่าง)"}</pre>
+            <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end" }}>
+              <button style={S.toolBtn} onClick={() => setConfirm(null)}>ยกเลิก</button>
+              <button style={{ ...S.btn, padding: "10px 16px" }} onClick={commitWrite}>ยืนยันเขียน</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {toast && <div style={{ position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)", background: "#333", color: "#fff", padding: "10px 18px", borderRadius: 22, fontSize: 14, zIndex: 50, boxShadow: "0 2px 10px rgba(0,0,0,.3)" }}>{toast}</div>}
     </main>
   );
 
@@ -296,12 +343,24 @@ export default function TrainStudio() {
           <span style={S.chip}>{editorSrc.tab}</span>
           <span style={S.chip}>{editorSrc.keyCol} = {editorSrc.key}</span>
         </div>
-        {draftCols.map((c) => (
-          <div key={c.name} style={{ marginBottom: 8 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 2 }}>{c.name} <span style={{ color: "#999", fontWeight: 400 }}>(ดิบ ก่อน resolve)</span></div>
-            <textarea style={S.ta} value={c.value} onChange={(e) => editCol(c.name, e.target.value)} />
-          </div>
-        ))}
+        {draftCols.map((c) => {
+          const hasBlock = (preview?.lint ?? []).some((f) => f.level === "block");
+          return (
+            <div key={c.name} style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 2 }}>{c.name} <span style={{ color: "#999", fontWeight: 400 }}>(ดิบ ก่อน resolve)</span></div>
+              <textarea style={S.ta} value={c.value} onChange={(e) => editCol(c.name, e.target.value)} />
+              <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+                <button style={S.toolBtn} onClick={() => copyCol(c.value)}>📋 Copy</button>
+                <button
+                  style={{ ...S.toolBtn, ...(hasBlock ? { opacity: 0.4, cursor: "not-allowed" } : { background: "#e7f6ec", borderColor: "#9dd6b3" }) }}
+                  onClick={() => !hasBlock && prepareWrite(c.name)}
+                  disabled={hasBlock}
+                  title={hasBlock ? "lint แดง — แก้ให้ผ่านก่อนเขียน (copy ยังได้)" : "เขียนค่านี้กลับชีตจริง"}
+                >💾 เขียนลงชีต</button>
+              </div>
+            </div>
+          );
+        })}
         <div style={{ display: "flex", gap: 6, margin: "6px 0", flexWrap: "wrap" }}>
           <button style={{ ...S.btn, padding: "10px 14px" }} onClick={replayTurn} disabled={busy}>▶ เล่นข้อความนี้ใหม่</button>
           <button style={S.toolBtn} onClick={clearThisDraft}>ล้าง draft แถวนี้</button>

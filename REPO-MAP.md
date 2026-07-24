@@ -31,13 +31,14 @@ lib/
     turn.ts         runTrainTurn/runTrainCron/runTrainReset/runTrainPreview — orchestration ใน sandbox
     preview.ts      เฟส ข: buildReplySources (provenance) · renderPreview · buildTrainVarCtx · collectDroppedBubbles
     lint.ts         เฟส ข: lintPattern (unknown-var/claims/price/bubbles · reuse guard production)
+    write.ts        เฟส ค: diffCell/writeCell — เขียนกลับ BotLibrary (key+header→A1 สด · conflict · lint gate · TRAIN_LOG · hard guard ห้าม Orders)
     auth.ts         TRAIN_PASSWORD + cookie HMAC · guardTrainRequest (All-or-nothing → 404)
 app/api/
   line-webhook/route.ts   webhook (POST บาง — Next ห้าม route.ts export อื่น)
   line-webhook/handler.ts เครื่องยนต์ทั้งหมด (ย้ายเชิงกลไกจาก route.ts ตอน T-STUDIO ก · export handleEvent+processMessage)
   cron/orders/route.ts    cron แจกเลขออเดอร์ + ยิงกลุ่มแพ็ค
   cron/follow/route.ts    cron ตามลูกค้า (Follow — dormant)
-app/train/        # T-STUDIO UI (page+TrainStudio client) + api/{login,turn,reset,cron,preview}
+app/train/        # T-STUDIO UI (page+TrainStudio client) + api/{login,turn,reset,cron,preview,write}
 tests/
   harness/        replay(webhook+HMAC จริง) · setup(mock) · state · db · sheet · assert · fixtures
   scenarios/      *.test.ts (golden/order-core/inject/sheet-*/config-parse/gemini-guard/prompt-lint/image-url/expect-fail)

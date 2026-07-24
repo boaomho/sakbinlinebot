@@ -3,13 +3,14 @@
 > สแนปช็อตสำหรับคนรับช่วงต่อ (ไม่เห็นแชทก็ทำต่อได้) · อัปเดต 2026-07-23
 > รายละเอียด → [docs/DECISIONS.md](docs/DECISIONS.md) · แผนที่โค้ด → [REPO-MAP.md](REPO-MAP.md) · brief → [docs/P2-REBUILD-BRIEF.md](docs/P2-REBUILD-BRIEF.md)
 
-## 🔴 กำลังทำ: T-STUDIO ห้องซ้อมเทรน (/train) — เฟส ก+ข เสร็จ ✅ บน `main`
-- **เฟส ก Simulator:** แชทจำลองรัน pipeline production จริงเต็มสาย (Gemini จริง) ใน sandbox — ALS guard ที่ leaf I/O · LINE/ชีต Orders/Blob → collector · Neon → branch `train` (`DATABASE_URL_TRAIN`) · X-ray + ปุ่ม cron/สลิป/reset · spec = [docs/T1-PATTERN-STUDIO-SPEC.md](docs/T1-PATTERN-STUDIO-SPEC.md)
-- **เฟส ข แตะบอลลูนเพื่อแก้:** คลิกบอลลูนบอท → editor (มือถือ=bottom sheet) โชว์ที่มา (แท็บ/key/คอลัมน์ + raw ก่อน resolve + ตัวแปร resolve เป็นอะไร) · **draft overlay** ทับชีตเฉพาะในห้องซ้อม (batchGet proxy · reuse resolver production) · **lint สด** (ตัวแปรผิด/claims/ราคา) · บอลลูนโดน var-guard ทิ้ง = ขีดฆ่า+เหตุผล ไม่หายเงียบ · ปุ่ม "▶ เล่นข้อความนี้ใหม่"
-- **โครงสร้างขยับ:** `route.ts`→`handler.ts` (เฟส ก) · `loader.ts` bypass cache ใน sandbox (เฟส ข · guarded no-op กัน draft รั่ว prod)
-- ✅ **KI-06 ปิดแล้ว (2026-07-24):** `appendOrderRow` เขียน `line_user_id` ลง R + เทส join จริง (append→cron→ล้างธงถูกคน · golden บท 19) · แถวเก่าก่อน fix R ยังว่าง cron ข้าม (ครั้งเดียว)
-- 🔴 **รอเจ้าของ:** (1) ENV `DATABASE_URL_TRAIN` (Neon branch `train`) เข้า Vercel → redeploy → เปิด /train (2) ปุ่ม "สลิปตัวอย่าง" → วาง `public/train-slip-sample.jpg` (ไม่มี = ใช้ปุ่มแนบรูป)
-- **ต่อไป:** เฟส ค (เขียนกลับชีต + TRAIN_LOG + copy · service account = Editor ✅) → ง (mobile polish)
+## 🔴 กำลังทำ: T-STUDIO ห้องซ้อมเทรน (/train) — เฟส ก+ข+ค เสร็จ ✅ บน `main`
+- **เฟส ก Simulator:** แชทจำลองรัน pipeline production จริง (Gemini จริง) ใน sandbox — ALS guard ที่ leaf I/O · LINE/ชีต Orders/Blob → collector · Neon → branch `train` · X-ray + ปุ่ม cron/สลิป/reset · spec = [docs/T1-PATTERN-STUDIO-SPEC.md](docs/T1-PATTERN-STUDIO-SPEC.md)
+- **เฟส ข แตะบอลลูนเพื่อแก้:** คลิกบอลลูน → editor โชว์ที่มา (แท็บ/key/คอลัมน์ + raw + ตัวแปร resolve) · draft overlay (batchGet proxy) · lint สด · dropped bubble ขีดฆ่าไม่หายเงียบ · "▶ เล่นใหม่"
+- **เฟส ค เขียนกลับ + copy:** ปุ่ม 📋 Copy + 💾 เขียนลงชีต ต่อคอลัมน์ · diff (เก่า vs ใหม่) → ยืนยัน → เขียนจริง (`values.batchUpdate` · A1 สดจาก key+header) · **conflict กัน** (ค่าจริง≠expectedOld=409) · **hard guard: เขียนเฉพาะ BotLibrary · ห้ามแตะ Orders** · lint block=ปุ่มดับ+ปฏิเสธ server · **TRAIN_LOG** จดทุกครั้ง · เขียนเสร็จ reset cache + เคลียร์ overlay
+- **โครงสร้างขยับ:** `route.ts`→`handler.ts` (ก) · `loader.ts` bypass cache ใน sandbox (ข · guarded no-op)
+- ✅ **KI-06 ปิดแล้ว (2026-07-24):** `appendOrderRow` เขียน `line_user_id` (R) + เทส join จริง (golden บท 19)
+- 🔴 **รอเจ้าของ:** (1) ENV `DATABASE_URL_TRAIN` (Neon branch `train`) เข้า Vercel → redeploy → เปิด /train (2) ปุ่ม "สลิปตัวอย่าง" → วาง `public/train-slip-sample.jpg`
+- **ต่อไป:** เฟส ง (mobile polish — bottom sheet/ฟอนต์นิ้วโป้ง/viewport แคบจริง) เท่านั้น
 
 ## 🟢 ระบบพร้อมรับลูกค้าจริง
 
@@ -18,7 +19,7 @@
   - ✅ cron ฟื้น — แจกเลขออเดอร์ (atomic) + แจ้งกลุ่ม format ถูก
   - ✅ ซื้อซ้ำได้ — ประตู S2 ส่งเต็มก้อนใหม่ (ธง `delivered_steps` ล้างหลังปิดออเดอร์ · KI-06)
 - **cron-job.org: enabled** ทุก 5 นาที (endpoint ออเดอร์ · เช็ค `Authorization: Bearer <CRON_SECRET>`)
-- เทสล่าสุด: **366 passed | 3 expected-fail | 34 skipped** (scripted) · tsc + build เขียว
+- เทสล่าสุด: **373 passed | 3 expected-fail | 34 skipped** (scripted) · tsc + build เขียว
 - known-tuning (ยอมรับแล้ว · ปิดได้ทีหลังด้วยการจูนชีต): **G12** (S2 vs S2_DIRECT · "ขอลองถ้วยเดียว") · **G29** stage (S4A/S4B)
 
 ## ซีรีส์ D-45→D-49 (เส้นทางเงิน + สมองยึด Step) — ปิดครบ ✅ บน `main`
