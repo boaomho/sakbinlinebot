@@ -823,5 +823,14 @@ handoff ทุก path (edit/AI-semantic/keyword) ตั้งแค่ `human_m
 **ไม่แตะ:** cron แจกเลข/idempotency D-29/O semantics เดิม (เพิ่ม loop ต่อท้าย) · **harness:** cron (push+ขนส่ง+เลข · idempotent ไม่ซ้ำ · P ว่าง/R ว่าง ข้าม · human_mode→แอดมิน · greeting · ""=ปิด) + train sim + formatShippingMessage · **405 passed | 3 expected-fail** · build เขียว
 **จบเคส CRM/Follow (ลูกค้าตอบได้รับ→ถามรีวิว) = ก้อน B ส่วนหลัง · ยังไม่ทำ**
 
+### M-0 · Research Meta Messenger adapter (ไม่เขียนโค้ด · ค้นสด 2026-07-29)
+เอกสาร [docs/META-ADAPTER-SPEC.md](META-ADAPTER-SPEC.md) `[UNBUILT]` — สรุป onboarding/webhook/Send API + ร่างสถาปัตยกรรม adapter
+- 🔴 **`POST_PURCHASE_UPDATE` ตาย (27 เม.ย. 2026):** แจ้งพัสดุ/Follow **นอก 24 ชม.** บน Messenger ต้องใช้ **Utility Templates** (pre-approve + จ่ายเงิน) → **D-50 ยกมาเฉยๆ ไม่ได้** · แกนขาย (ก้อน A · ใน 24 ชม. `RESPONSE`) พอร์ตได้เต็ม
+- **Dev Mode เทสได้ทันที** กับ role Admin/Dev/Tester ก่อน App Review · คุยลูกค้าจริง = App Review + Business Verification (`pages_messaging` Advanced Access)
+- **สถาปัตยกรรม:** route ใหม่ → verify `X-Hub-Signature-256` → normalize event (ระบุ `page_id` ชัดทุก event) → `resolvePageContext(pageId)` → `processMessage` เดิม ผ่าน **`ChannelTransport`** (สกัด LINE ออกจาก handler · LINE คงพฤติกรรมเดิม) → Send API (PSID ตรง ไม่มี reply token)
+- **กันตายทาง (ระดับ ShippingProvider):** `resolvePageContext(pageId)` = จุดเปลี่ยนจุดเดียว — วันนี้ env 1 เพจ · อนาคตตาราง `channel_pages` โดยไม่รื้อ webhook/transport/handler
+- **contract ที่ต้องเคาะก่อน build:** customer key ข้าม channel (composite `(channel, external_id)` vs prefix) · attribution ในชีต Orders (`line_user_id`→ generalize เป็น channel key ของ D-50) · D-50 นอก 24 ชม. · echo→human_mode
+- **ไม่แตะ production** (research + doc ล้วน)
+
 ### Phase C · ลบ ENV ค้างใน Vercel
 `SHEET_STEP_URL` `SHEET_FAQ_URL` `SHEET_CONFIG_URL` `SHEET_FOLLOW_URL` — โค้ดไม่อ่านแล้ว ลบทิ้งได้
