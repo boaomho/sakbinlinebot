@@ -57,6 +57,7 @@ import {
   DownloadedContent,
 } from "@/lib/line";
 import { ChannelTransport, LineTransport } from "@/lib/channel/transport";
+import { channelLabel } from "@/lib/channel/label";
 import { checkHandoffKeywords } from "@/lib/handoff";
 import {
   parseAdminCommand,
@@ -168,7 +169,7 @@ async function handoff(
     const footer = `🔴 บอทปิดการทำงานกับลูกค้ารายนี้แล้ว · รอแอดมินรับช่วง (เปิดคืน: เปิดบอท ${name})`;
     const text = [
       `🔔 ส่งต่อแอดมิน — ${opts.reason}`,
-      `ลูกค้า: ${name}`,
+      `ลูกค้า: ${channelLabel(userId)} ${name}`,
       opts.userMessage ? `ข้อความล่าสุด: ${opts.userMessage}` : null,
       opts.attachImage?.note || null,
       "———",
@@ -249,7 +250,7 @@ async function handleImageIntent(
     }
     if (adminGroupId) {
       const name = await transport.getProfileName();
-      const text = `💰 มีลูกค้าส่งสลิปมาค่ะ${noteLine}\n\nLineOA: ${name}`;
+      const text = `💰 มีลูกค้าส่งสลิปมาค่ะ${noteLine}\n\nLineOA: ${channelLabel(userId)} ${name}`;
       const signedUrl = uploaded ? await getSlipSignedUrl(uploaded.pathname, config.slipUrlExpiryDays) : null;
       if (signedUrl) {
         await pushRawMessages(adminGroupId, [
@@ -334,7 +335,7 @@ async function runOrderGate(
       const name = await transport.getProfileName();
       await pushRawText(
         adminGroupId,
-        `⚠️ ยอดไม่ตรง — บอทแจ้งลูกค้า ${guard2Off.join("/")} บาท · ระบบคำนวณ ${price ? price.total : "?"} บาท ขอยืนยัน\nรายการ: ${itemsToNames(pending.items, nameMap)}\n———\nLineOA: ${name}`,
+        `⚠️ ยอดไม่ตรง — บอทแจ้งลูกค้า ${guard2Off.join("/")} บาท · ระบบคำนวณ ${price ? price.total : "?"} บาท ขอยืนยัน\nรายการ: ${itemsToNames(pending.items, nameMap)}\n———\nLineOA: ${channelLabel(userId)} ${name}`,
       );
     }
   }
@@ -391,7 +392,7 @@ async function runOrderGate(
     await setHasWrittenOrder(userId);
     await setPaidNoAddressNotified(userId, false);
     if (adminGroupId) {
-      const text = buildNewOrderAdminText(formatOrderSummary(price.lines), price.total, payment, name, pending["เบอร์"] ?? "");
+      const text = buildNewOrderAdminText(formatOrderSummary(price.lines), price.total, payment, `${channelLabel(userId)} ${name}`, pending["เบอร์"] ?? "");
       const signedUrl = payment === "โอน" && slipPathname ? await getSlipSignedUrl(slipPathname, config.slipUrlExpiryDays) : null;
       if (signedUrl) {
         await pushRawMessages(adminGroupId, [
@@ -419,9 +420,10 @@ async function runOrderGate(
   if ((gate.brokenOrder || priceStuckReady) && !customer.paidNoAddressNotified) {
     if (adminGroupId) {
       const name = await transport.getProfileName();
+      const labeledName = `${channelLabel(userId)} ${name}`;
       const text = priceStuckReady
-        ? buildPriceStuckAdminText(pending, price?.error ?? "เกินเพดาน/ต้องมีคนดู", name, itemsToNames(pending.items, nameMap))
-        : buildBrokenOrderAdminText(pending, gate.missing, name);
+        ? buildPriceStuckAdminText(pending, price?.error ?? "เกินเพดาน/ต้องมีคนดู", labeledName, itemsToNames(pending.items, nameMap))
+        : buildBrokenOrderAdminText(pending, gate.missing, labeledName);
       await pushRawText(adminGroupId, text);
     }
     await setPaidNoAddressNotified(userId, true);
@@ -683,7 +685,7 @@ export async function processMessage(
     const result = await updateOrderRow(orderId, changes, nowDate);
     console.log(JSON.stringify({ scope: "orders", event: "order-edit", orderId, status: result.status, changedFields: Object.keys(changes), suspect: result.suspect ?? [] }));
     if (result.status === "updated") {
-      if (adminGroupId) await pushRawText(adminGroupId, buildOrderEditAdminText(orderId, result.changed ?? [], name));
+      if (adminGroupId) await pushRawText(adminGroupId, buildOrderEditAdminText(orderId, result.changed ?? [], `${channelLabel(userId)} ${name}`));
     } else if (result.status === "confirmed") {
       // แอดมินคอนเฟิร์มแล้ว (M=TRUE · ของไปแพ็ค) → ล็อก + ส่งต่อคน (X2) ผ่านประตูรวม
       if (switches.memory) await setLastOrderLocked(userId);
@@ -694,7 +696,7 @@ export async function processMessage(
     }
     // 🔴 ที่อยู่ใหม่สั้นผิดปกติ → ไม่ทับ (กันเขียนที่อยู่ผิด) + แจ้งแอดมิน (บอทควรถามลูกค้ายืนยันที่อยู่เต็ม — เทรนใน S_EDIT)
     if ((result.suspect?.length ?? 0) > 0 && adminGroupId) {
-      await pushRawText(adminGroupId, `⚠️ ลูกค้าแก้ ${result.suspect!.join("/")} ของ ${orderId} แต่ค่าที่ได้สั้นผิดปกติ — ไม่เขียนลงชีต รบกวนยืนยันกับลูกค้า\n———\nLineOA: ${name}`);
+      await pushRawText(adminGroupId, `⚠️ ลูกค้าแก้ ${result.suspect!.join("/")} ของ ${orderId} แต่ค่าที่ได้สั้นผิดปกติ — ไม่เขียนลงชีต รบกวนยืนยันกับลูกค้า\n———\nLineOA: ${channelLabel(userId)} ${name}`);
     }
     // no_change (ไม่มี suspect) → ลูกค้ายืนยัน/ขอบคุณเฉยๆ → ไม่แก้ ไม่ push ไม่ handoff (Bug 2 หาย)
   }
@@ -846,7 +848,7 @@ export async function processMessage(
       const name = await transport.getProfileName();
       await pushRawText(
         adminGroupId,
-        `⚠️ ข้อมูลโอนเงิน resolve ไม่ได้: ${unresolvedTransfer.join(" ")} — บอทงดส่งข้อความโอนให้ลูกค้า\nตรวจ CSV_Config: เลขที่บัญชี / ชื่อบัญชี / ธนาคาร\n———\nLineOA: ${name}`,
+        `⚠️ ข้อมูลโอนเงิน resolve ไม่ได้: ${unresolvedTransfer.join(" ")} — บอทงดส่งข้อความโอนให้ลูกค้า\nตรวจ CSV_Config: เลขที่บัญชี / ชื่อบัญชี / ธนาคาร\n———\nLineOA: ${channelLabel(userId)} ${name}`,
       );
     }
     outReply = TRANSFER_UNRESOLVED_REPLY;
@@ -868,7 +870,7 @@ export async function processMessage(
       const name = await transport.getProfileName();
       await pushRawText(
         adminGroupId,
-        `⚠️ พบคำโฆษณาต้องห้าม (พ.ร.บ.อาหาร) · โหมด: ${claimsMode}\nวลีที่ชน: ${bannedClaims.join(", ")}\nข้อความบอท: ${outReply}\n———\nLineOA: ${name}`,
+        `⚠️ พบคำโฆษณาต้องห้าม (พ.ร.บ.อาหาร) · โหมด: ${claimsMode}\nวลีที่ชน: ${bannedClaims.join(", ")}\nข้อความบอท: ${outReply}\n———\nLineOA: ${channelLabel(userId)} ${name}`,
       );
     }
     if (blockClaim) {
@@ -893,7 +895,7 @@ export async function processMessage(
       const adminGroupId = process.env.ADMIN_GROUP_ID;
       if (adminGroupId) {
         const name = await transport.getProfileName();
-        await pushRawText(adminGroupId, `⚠️ บอทพูดราคานอกระบบ · โหมด: ${priceMode}\nเลขที่ชน: ${badPrices.join(", ")} บาท\nข้อความบอท: ${outReply}\n———\nLineOA: ${name}`);
+        await pushRawText(adminGroupId, `⚠️ บอทพูดราคานอกระบบ · โหมด: ${priceMode}\nเลขที่ชน: ${badPrices.join(", ")} บาท\nข้อความบอท: ${outReply}\n———\nLineOA: ${channelLabel(userId)} ${name}`);
       }
       if (blockPrice) {
         outReply = PRICE_BAD_REPLY;
@@ -1016,7 +1018,7 @@ export async function processMessage(
       const name = await transport.getProfileName();
       const prevDoor = (lib && customer?.stage ? stepNameOf(lib.CSV_Step, customer.stage) : null) ?? "เรื่องที่คุยค้าง";
       const newDoor = (lib ? stepNameOf(lib.CSV_Step, geminiOutput.stage) : null) ?? "ประตูอื่น";
-      await pushRawText(adminGroupId, `⚠️ ลูกค้าเพิ่งคุยเรื่อง "${prevDoor}" แล้วเปลี่ยนไป "${newDoor}" · รบกวนตรวจสอบเรื่องค้าง (บอทยังดูแลต่ออยู่)\nข้อความล่าสุด: ${userMessage}\n———\nLineOA: ${name}`);
+      await pushRawText(adminGroupId, `⚠️ ลูกค้าเพิ่งคุยเรื่อง "${prevDoor}" แล้วเปลี่ยนไป "${newDoor}" · รบกวนตรวจสอบเรื่องค้าง (บอทยังดูแลต่ออยู่)\nข้อความล่าสุด: ${userMessage}\n———\nLineOA: ${channelLabel(userId)} ${name}`);
     }
   }
 }
@@ -1130,7 +1132,7 @@ async function applyBotMode(
 }
 
 function buildDisambigMessage(query: string, matches: CustomerBrief[], verb: string): string {
-  const lines = matches.map((m, i) => `${i + 1}) ${m.displayName ?? "(ไม่มีชื่อ)"} — คุยล่าสุด ${formatThaiRelative(m.lastSeen)}`);
+  const lines = matches.map((m, i) => `${i + 1}) ${channelLabel(m.userId)} ${m.displayName ?? "(ไม่มีชื่อ)"} — คุยล่าสุด ${formatThaiRelative(m.lastSeen)}`);
   return (
     `⚠️ เจอลูกค้าชื่อ "${query}" ${matches.length} คน — เลือกคนที่ต้องการ\n\n` +
     `${lines.join("\n")}\n\n` +
@@ -1212,7 +1214,7 @@ async function handleListRecentCommand(replyToken: string, groupId: string): Pro
   await savePendingChoices(groupId, choices);
   const lines = recent.map((m, i) => {
     const status = m.humanMode ? "🔴" : "🟢";
-    return `${i + 1}) ${status} ${m.displayName ?? "(ไม่มีชื่อ)"} — คุยล่าสุด ${formatThaiRelative(m.lastSeen)}`;
+    return `${i + 1}) ${status} ${channelLabel(m.userId)} ${m.displayName ?? "(ไม่มีชื่อ)"} — คุยล่าสุด ${formatThaiRelative(m.lastSeen)}`;
   });
   await replyToAdmin(
     replyToken,

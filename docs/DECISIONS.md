@@ -823,6 +823,12 @@ handoff ทุก path (edit/AI-semantic/keyword) ตั้งแค่ `human_m
 **ไม่แตะ:** cron แจกเลข/idempotency D-29/O semantics เดิม (เพิ่ม loop ต่อท้าย) · **harness:** cron (push+ขนส่ง+เลข · idempotent ไม่ซ้ำ · P ว่าง/R ว่าง ข้าม · human_mode→แอดมิน · greeting · ""=ปิด) + train sim + formatShippingMessage · **405 passed | 3 expected-fail** · build เขียว
 **จบเคส CRM/Follow (ลูกค้าตอบได้รับ→ถามรีวิว) = ก้อน B ส่วนหลัง · ยังไม่ทำ**
 
+### D-52 · ป้ายช่องทางในข้อความฝั่งแอดมิน (ต่อยอด M-2 · 1 commit)
+`lib/channel/label.ts` `channelLabel(channelUserId, pageName?)`: `fb:`→`[FB]` (มีชื่อเพจ→`[FB·<ชื่อ>]` · โครงหลายเพจ) · `TRAIN:`→`[ซ้อม]` · อื่น→`[LINE]` · วางหน้าชื่อลูกค้า ตำแหน่งเดียวกันทุกที่ · **ห้ามแตะข้อความฝั่งลูกค้า**
+- **ใช้ทุกจุดที่โชว์ชื่อลูกค้าให้แอดมิน:** handoff (`ลูกค้า: [LINE] ชื่อ`) · ออเดอร์ใหม่/สลิป/ยอดไม่ตรง/ออเดอร์พัง/แก้ออเดอร์ (builders + `LineOA:`) · guard transfer/claims/price/door-change · list/รายชื่อ (matched+recent) · cron formatOrderMessage (แจ้งกลุ่มแพ็ค) + D-50 human_mode fallback
+- วิธี: prepend `channelLabel(userId)` เข้า arg `name` ของ builders (ไม่แตะ pure builder) + inline · LINE เดิมได้ป้าย `[LINE]` (เทสเดิมใช้ `.toContain(name)` = ไม่พัง)
+- **harness:** channelLabel 3 prefix + pageName + ป้ายโผล่ในแจ้งกลุ่ม (handoff `ลูกค้า: [LINE]`) · **420 passed** · build เขียว
+
 ### M-2 · Meta Messenger webhook + MessengerTransport (1 commit · เทส Dev Mode)
 รับ-ตอบแชทเพจ Facebook ด้วย `processMessage` เดิม · LINE ไม่กระทบ
 - **ใหม่:** `lib/channel/pages.ts` (🔴 จุดเดียวอ่าน META_* · `resolveAppContext`+`resolvePageContext` env 1 เพจ) · `lib/channel/meta.ts` (Send API + `verifyMetaSignature` HMAC-SHA256 · `GRAPH_VERSION=v21.0`) · `lib/channel/meta-webhook.ts` (`processMetaWebhook`/`metaVerifyChallenge`/`metaUserId`) · `app/api/meta-webhook/route.ts` (GET challenge + POST) · `MessengerTransport` ใน transport.ts (reuse `parseReplyIntoMessages` → invariant cap-5/image-last ที่เดียว)

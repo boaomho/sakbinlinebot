@@ -44,6 +44,7 @@ lib/channel/          # M-1/M-2 · adapter หลายช่องทาง
   pages.ts            🔴 จุดเดียวอ่าน META_* · resolveAppContext (verify/echo) · resolvePageContext(pageId→config · env 1 เพจ · อนาคต table channel_pages)
   meta.ts             Send API client (text/image/sender_action · getProfileName · downloadFromUrl) + verifyMetaSignature (HMAC-SHA256)
   meta-webhook.ts     processMetaWebhook (verify sig → parse entry/messaging → กรอง echo → runInboundText/Image เดิม) · metaVerifyChallenge (GET) · metaUserId(fb:<pageId>:<psid>)
+  label.ts            D-52 · channelLabel(id[,pageName]) → [FB]/[ซ้อม]/[LINE] · วางหน้าชื่อลูกค้าในข้อความแอดมินทุกจุด (ห้ามฝั่งลูกค้า)
 app/api/meta-webhook/route.ts  # GET challenge + POST event (M-2)
 tests/
   harness/        replay(webhook+HMAC จริง) · setup(mock) · state · db · sheet · assert · fixtures

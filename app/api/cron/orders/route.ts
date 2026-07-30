@@ -6,6 +6,7 @@ import { bangkokShift } from "@/lib/core/time";
 import { pushRawText, pushMessages } from "@/lib/line";
 import { formatShippingMessage, DEFAULT_SHIPPING_TEMPLATE, DEFAULT_CARRIER } from "@/lib/shipping";
 import { isFirstMessageOfDay, prependToFirstTextBubble, DEFAULT_DAILY_GREETING } from "@/lib/greeting";
+import { channelLabel } from "@/lib/channel/label";
 
 export const maxDuration = 30;
 
@@ -32,7 +33,7 @@ function formatOrderMessage(orderNumber: string, order: OrderRow): string {
     "",
     `${order.total} ${order.paymentMethod || "-"} ${order.province}ค่ะ.`,
     "",
-    order.customerName,
+    `${channelLabel(order.lineUserId)} ${order.customerName}`,
     [order.address, order.province, order.postalCode].filter(Boolean).join(" "),
     order.phone,
     "",
@@ -142,7 +143,7 @@ async function notifyShipping(
       // human_mode/บอทถูกปิด (หรือหา customer ไม่เจอ) → ไม่ push ลูกค้า · แจ้งกลุ่มแอดมินให้แจ้งเอง
       if (!customer || customer.humanMode) {
         if (adminGroupId) {
-          await pushRawText(adminGroupId, `⚠️ ลูกค้าอยู่โหมดแอดมิน/บอทปิด — โปรดแจ้งเลขพัสดุเอง\nออเดอร์ ${o.orderNumber || o.orderId} · ${carrier} ${o.trackingNumber}\n${o.customerName} ${o.phone}`);
+          await pushRawText(adminGroupId, `⚠️ ลูกค้าอยู่โหมดแอดมิน/บอทปิด — โปรดแจ้งเลขพัสดุเอง\nออเดอร์ ${o.orderNumber || o.orderId} · ${carrier} ${o.trackingNumber}\n${channelLabel(o.lineUserId)} ${o.customerName} ${o.phone}`);
         }
         continue;
       }
