@@ -37,8 +37,17 @@ interface PreviewResult {
   error?: string;
 }
 interface Editor { turnIdx: number; srcIdx: number }
+interface MgmtRow { key: string; status: string; active: boolean; preview: string }
+interface MgmtData { header: string[]; keyCol: string | null; hasStatusCol: boolean; editableCols: string[]; rows: MgmtRow[]; suggestedKey: string | null }
 
 const OVERLAY_KEY = "train-overlay-v1";
+const MGMT_TABS: { tab: string; label: string }[] = [
+  { tab: "CSV_FAQ", label: "FAQ" },
+  { tab: "CSV_Objections", label: "ข้อโต้แย้ง" },
+  { tab: "CSV_Step", label: "ประตูขาย" },
+  { tab: "CSV_Vars", label: "ตัวแปร" },
+];
+const STATUS_COL = "สถานะ";
 
 function sessionIdFromStorage(): string {
   const KEY = "train-session-id";
@@ -103,6 +112,13 @@ export default function TrainStudio() {
   const dragStart = useRef(0);
   const [showX, setShowX] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  // T2-ค: จัดการแถวคลังความรู้
+  const [mgmtOpen, setMgmtOpen] = useState(false);
+  const [mgmtTab, setMgmtTab] = useState("CSV_FAQ");
+  const [mgmtData, setMgmtData] = useState<MgmtData | null>(null);
+  const [mgmtBusy, setMgmtBusy] = useState(false);
+  const [addForm, setAddForm] = useState<Record<string, string> | null>(null);
+  const [addLint, setAddLint] = useState<LintFinding[]>([]);
   const chatRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const previewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -264,6 +280,60 @@ export default function TrainStudio() {
     setConfirm(null); flash("✅ เขียนลงชีตแล้ว + จด TRAIN_LOG");
   }
 
+  // ---- T2-ค: จัดการแถวคลังความรู้ (list · เพิ่มแถว draft · live↔draft · ทดสอบ draft ในห้องซ้อม) ----
+  const loadRows = useCallback(async (tab: string) => {
+    setMgmtBusy(true); setAddForm(null); setAddLint([]);
+    try {
+      const r = await fetch("/train/api/rows", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ tab }) });
+      if (r.ok) setMgmtData((await r.json()) as MgmtData); else setMgmtData(null);
+    } finally { setMgmtBusy(false); }
+  }, []);
+  function openMgmt() { setMgmtOpen(true); loadRows(mgmtTab); }
+  function switchMgmtTab(tab: string) { setMgmtTab(tab); loadRows(tab); }
+
+  async function toggleRowStatus(key: string, toStatus: "live" | "draft") {
+    const verb = toStatus === "live" ? "เผยแพร่ (live)" : "ปิดชั่วคราว (draft)";
+    if (!window.confirm(`${verb} แถว "${key}" ในแท็บ ${mgmtTab}?\n${toStatus === "live" ? "ลูกค้าจริงจะเริ่มเห็นแถวนี้" : "แถวนี้จะถูกซ่อนจากลูกค้าจริง (แต่ยังทดสอบในห้องซ้อมได้)"}`)) return;
+    const r = await fetch("/train/api/write", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: "status", tab: mgmtTab, key, toStatus }) });
+    if (r.ok) { flash(`✅ ${verb} แล้ว + จด TRAIN_LOG`); loadRows(mgmtTab); }
+    else { const d = await r.json().catch(() => ({})); flash(`⚠️ ${d.error ?? "สลับสถานะไม่ได้"}`); }
+  }
+
+  function openAddForm() {
+    if (!mgmtData) return;
+    if (!mgmtData.hasStatusCol) { flash("🔴 แท็บนี้ไม่มีคอลัมน์ 'สถานะ' — เพิ่มแถวไม่ได้ (กันแถวใหม่ขึ้นหน้าร้านทันที)"); return; }
+    const init: Record<string, string> = {};
+    for (const h of mgmtData.header) if (h && h !== STATUS_COL) init[h] = "";
+    if (mgmtData.keyCol && mgmtData.suggestedKey) init[mgmtData.keyCol] = mgmtData.suggestedKey;
+    setAddForm(init); setAddLint([]);
+  }
+  async function submitAdd() {
+    if (!addForm) return;
+    setMgmtBusy(true); setAddLint([]);
+    try {
+      const r = await fetch("/train/api/write", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: "add-row", tab: mgmtTab, cols: addForm }) });
+      const d = (await r.json()) as { status?: string; lint?: LintFinding[]; message?: string; error?: string };
+      if (r.ok && d.status === "ok") { flash("✅ เพิ่มแถว (draft) แล้ว — ทดสอบในห้องซ้อมก่อนเผยแพร่"); setAddForm(null); loadRows(mgmtTab); return; }
+      if (d.status === "lint") { setAddLint(d.lint ?? []); return; }
+      const msg: Record<string, string> = {
+        dup: "key นี้มีอยู่แล้ว — เปลี่ยน key ใหม่", no_status_col: "แท็บนี้ไม่มีคอลัมน์ 'สถานะ' — เพิ่มไม่ได้",
+        key_invalid: d.message ?? "key ไม่ถูกต้อง", funnel: d.message ?? "funnel_stage ไม่ถูกต้อง", not_found: "โหลดแท็บไม่ได้",
+      };
+      flash(`⚠️ ${msg[d.status ?? ""] ?? d.error ?? "เพิ่มแถวไม่ได้"}`);
+    } finally { setMgmtBusy(false); }
+  }
+
+  function testDraftInSandbox(key: string) {
+    // overlay สถานะ→live เฉพาะแถวนี้ในห้องซ้อม (prod ยังกรอง draft ทิ้ง) + pre-fill ข้อความลูกค้าที่เกี่ยว
+    setOverlay((prev) => {
+      const rest = prev.filter((o) => !(o.tab === mgmtTab && o.key === key && o.column === STATUS_COL));
+      return [...rest, { tab: mgmtTab, key, column: STATUS_COL, value: "live" }];
+    });
+    if (mgmtTab === "CSV_FAQ") setInput(key); // FAQ key = คำถาม → เติมให้เลย
+    setMgmtOpen(false);
+    flash(mgmtTab === "CSV_FAQ" ? "▶ ใส่คำถามให้แล้ว — กดส่งเพื่อทดสอบ draft (ห้องซ้อมเห็น live)" : "▶ draft พร้อมทดสอบ — พิมพ์ข้อความที่จะกระตุ้นแถวนี้ (ห้องซ้อมเห็น live)");
+  }
+
   if (authed === null) return <main style={S.page} />;
   if (!authed) {
     return (
@@ -296,6 +366,7 @@ export default function TrainStudio() {
         <header style={S.header}>
           <span>🐟 ปลาทู · 🧪 ห้องซ้อม</span>
           <span style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <button onClick={openMgmt} style={{ color: "#fff", background: "rgba(0,0,0,.18)", border: "none", padding: "5px 10px", borderRadius: 8, fontSize: 12, cursor: "pointer" }}>📚 คลังความรู้</button>
             <a href="/train/dashboard" style={{ color: "#fff", textDecoration: "none", background: "rgba(0,0,0,.18)", padding: "4px 10px", borderRadius: 8, fontSize: 12 }}>🔴 ร้านจริง →</a>
             <span style={{ fontSize: 12, fontWeight: 400 }}>{busy ? "กำลังคิด…" : overlay.length > 0 ? `draft ${overlay.length}` : "sandbox"}</span>
           </span>
@@ -372,6 +443,66 @@ export default function TrainStudio() {
           </div>
         </div>
       )}
+      {mgmtOpen && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 45, padding: isMobile ? 0 : 16 }} onClick={() => setMgmtOpen(false)}>
+          <div style={{ background: "#fff", borderRadius: isMobile ? 0 : 14, width: isMobile ? "100%" : 640, maxWidth: "100%", height: isMobile ? "100dvh" : "86dvh", display: "flex", flexDirection: "column", overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ padding: "12px 14px", background: "#06735c", color: "#fff", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <b>📚 คลังความรู้ (จัดการแถว)</b>
+              <button style={{ ...S.toolBtn, background: "transparent", color: "#fff", border: "1px solid rgba(255,255,255,.5)" }} onClick={() => setMgmtOpen(false)}>✕ ปิด</button>
+            </div>
+            <div style={{ display: "flex", gap: 6, padding: "8px 12px", borderBottom: "1px solid #eee", flexWrap: "wrap" }}>
+              {MGMT_TABS.map((t) => (
+                <button key={t.tab} style={{ ...S.toolBtn, ...(mgmtTab === t.tab ? { background: "#d5f0e0", fontWeight: 700 } : {}) }} onClick={() => switchMgmtTab(t.tab)}>{t.label}</button>
+              ))}
+              <span style={{ flex: 1 }} />
+              <button style={{ ...S.btn, padding: "8px 12px", fontSize: 13 }} onClick={openAddForm} disabled={mgmtBusy || !mgmtData}>＋ เพิ่มแถว</button>
+            </div>
+            <div style={{ flex: 1, overflowY: "auto", padding: 12, fontSize: 13 }}>
+              {mgmtBusy && <div style={{ color: "#888" }}>กำลังโหลด…</div>}
+
+              {addForm && mgmtData && (
+                <div style={{ border: "1px solid #cfe9d8", borderRadius: 10, padding: 12, marginBottom: 12, background: "#f7fdf9" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <b style={{ color: "#06735c" }}>＋ แถวใหม่ · <span style={{ background: "#fff4d6", color: "#8a6d00", padding: "1px 8px", borderRadius: 8, fontSize: 12 }}>สถานะ: draft (บังคับ)</span></b>
+                    <button style={S.toolBtn} onClick={() => setAddForm(null)}>ยกเลิก</button>
+                  </div>
+                  <div style={{ fontSize: 11, color: "#888", marginBottom: 8 }}>แถวใหม่เกิดเป็น draft เสมอ — ทดสอบในห้องซ้อมก่อน แล้วค่อยกดเผยแพร่ (live)</div>
+                  {mgmtData.header.filter((h) => h && h !== STATUS_COL).map((h) => (
+                    <div key={h} style={{ marginBottom: 8 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 2 }}>
+                        {h}{h === mgmtData.keyCol && <span style={{ color: "#06735c" }}> (key)</span>}
+                        {mgmtTab === "CSV_Step" && h === "funnel_stage" && <span style={{ color: "#a10000", fontWeight: 400 }}> · ต้องเป็นสเตจที่ถูก (บอทใช้เป็นตาข่าย handoff)</span>}
+                      </div>
+                      <textarea style={{ ...S.ta, minHeight: mgmtData.editableCols.includes(h) ? 70 : 38 }} value={addForm[h] ?? ""} onChange={(e) => setAddForm({ ...addForm, [h]: e.target.value })} />
+                    </div>
+                  ))}
+                  {addLint.length > 0 && <div style={{ margin: "6px 0" }}>{addLint.map((f, i) => <div key={i} style={f.level === "block" ? S.lintBlock : S.lintWarn}>{f.level === "block" ? "🔴 " : "⚠︎ "}{f.message}</div>)}</div>}
+                  <button style={{ ...S.btn, padding: "10px 14px", marginTop: 4 }} onClick={submitAdd} disabled={mgmtBusy}>บันทึกเป็น draft</button>
+                </div>
+              )}
+
+              {mgmtData && !mgmtData.hasStatusCol && <div style={S.lintWarn}>⚠︎ แท็บนี้ไม่มีคอลัมน์ &quot;สถานะ&quot; — เพิ่มแถว/สลับสถานะไม่ได้ (กันแถวใหม่ขึ้นหน้าร้านทันที)</div>}
+              {mgmtData && mgmtData.rows.length === 0 && !mgmtBusy && <div style={{ color: "#888" }}>ยังไม่มีแถว</div>}
+              {mgmtData?.rows.map((row) => (
+                <div key={row.key} style={{ display: "flex", gap: 8, alignItems: "center", padding: "8px 0", borderBottom: "1px solid #f0f0f0" }}>
+                  <span style={{ fontSize: 11, padding: "1px 7px", borderRadius: 10, background: row.active ? "#e7f6ec" : "#fbe6e6", color: row.active ? "#1e7e42" : "#b00", whiteSpace: "nowrap" }}>{row.active ? "🟢 live" : "🔴 draft"}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.key}</div>
+                    <div style={{ fontSize: 11, color: "#888", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.preview}</div>
+                  </div>
+                  {!row.active && <button style={{ ...S.toolBtn, padding: "6px 8px", fontSize: 12 }} onClick={() => testDraftInSandbox(row.key)} title="ทดสอบ draft นี้ในห้องซ้อม">▶ ทดสอบ</button>}
+                  {mgmtData.hasStatusCol && (
+                    <button style={{ ...S.toolBtn, padding: "6px 8px", fontSize: 12 }} onClick={() => toggleRowStatus(row.key, row.active ? "draft" : "live")}>
+                      {row.active ? "ปิด (draft)" : "เผยแพร่ (live)"}
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {toast && <div style={{ position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)", background: "#333", color: "#fff", padding: "10px 18px", borderRadius: 22, fontSize: 14, zIndex: 50, boxShadow: "0 2px 10px rgba(0,0,0,.3)" }}>{toast}</div>}
     </main>
   );

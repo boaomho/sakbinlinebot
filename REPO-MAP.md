@@ -29,16 +29,17 @@ lib/
   train/          # T-STUDIO ห้องซ้อมเทรน (/train · เฟส ก+ข)
     sandbox.ts      ALS context + collectors + console tee + fake grid Orders + draft overlay (applyOverlayToTab · batchGet proxy)
     turn.ts         runTrainTurn/runTrainCron/runTrainReset/runTrainPreview — orchestration ใน sandbox
-    preview.ts      เฟส ข: buildReplySources (provenance) · renderPreview · buildTrainVarCtx · collectDroppedBubbles
-    lint.ts         เฟส ข: lintPattern (unknown-var/claims/price/bubbles · reuse guard production)
-    write.ts        เฟส ค: diffCell/writeCell — เขียนกลับ BotLibrary (key+header→A1 สด · conflict · lint gate · TRAIN_LOG · hard guard ห้าม Orders)
+    preview.ts      เฟส ข: buildReplySources (provenance) · renderPreview · buildTrainVarCtx · collectDroppedBubbles · T2-ค: triggerTextForTab (H1)
+    lint.ts         เฟส ข/T2-ค: lintPattern (unknown-var/claims/price/bubbles/health-h1 · reuse guard production) · lintHealthH1 (trigger-aware · แถวเกี่ยวสุขภาพ→คำตอบต้อง handoff)
+    write.ts        เฟส ค/T2-ค: diffCell/writeCell · appendRow(บังคับ draft·no_status_col ปฏิเสธ·dedup·funnel) · setRowStatus(live↔draft) · listTabRows/suggestNextKey — เขียนกลับ BotLibrary (key+header→A1 สด · conflict · lint gate · TRAIN_LOG +action(edit/add-row/status-change) · hard guard ห้าม Orders)
     auth.ts         TRAIN_PASSWORD + cookie HMAC · guardTrainRequest (All-or-nothing → 404)
 app/api/
   line-webhook/route.ts   webhook (POST บาง — Next ห้าม route.ts export อื่น)
   line-webhook/handler.ts เครื่องยนต์ทั้งหมด (export handleEvent + processMessage) · M-1: processMessage รับ ChannelTransport แทน replyToken
   cron/orders/route.ts    cron แจกเลขออเดอร์ + ยิงกลุ่มแพ็ค + D-50 แจ้งพัสดุ
   cron/follow/route.ts    cron ตามลูกค้า (Follow — dormant)
-app/train/        # T-STUDIO UI (page+TrainStudio client) + api/{login,turn,reset,cron,preview,write}
+app/train/        # T-STUDIO UI (page+TrainStudio client · +T2-ค แผง "📚 คลังความรู้") + api/{login,turn,reset,cron,preview,write,rows}
+# api/write โหมด: diff·commit·add-row·status (T2-ค) · api/rows = list แถวแท็บความรู้ (read-only · header-driven form)
 app/train/dashboard/  # T2-ก/ข/ฉ · Dashboard "ร้านจริง" (DashboardView client · แท็บ ลูกค้า｜ออเดอร์ · อ่าน PROD Neon นอก sandbox) + api/dashboard/{route,customer,switch,orders}
 lib/train/dashboard.ts # T2-ก/ฉ pure: channelOf · deriveStatus(🟢🟡🔴✅⚪) · formatOrderSummary (ห้าม JSON ดิบ) · deriveOrderStatus+ORDER_STATUS_META (สถานะออเดอร์ · cancelled ก่อนเสมอ)
 lib/train/bot-switch.ts # T2-ข · builder ข้อความ (botModeMsg/channelSwitchMsg · handler เดิม import ร่วม → คำสั่งพิมพ์เท่าเดิม) + channelStatusLine/listChannelStates + orchestrator (applyChannelSwitch/applyCustomerBotMode → reuse setChannelEnabled/setHumanMode · push กลุ่ม +(จาก Dashboard))

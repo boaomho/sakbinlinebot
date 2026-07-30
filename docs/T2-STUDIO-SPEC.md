@@ -1,4 +1,4 @@
-# T2-STUDIO-SPEC — T-STUDIO v2: ศูนย์บัญชาการปลาทู `[ก·ข·ฉ ✅ · ค-ง-จ UNBUILT]`
+# T2-STUDIO-SPEC — T-STUDIO v2: ศูนย์บัญชาการปลาทู `[ก·ข·ฉ·ค ✅ · ง-จ UNBUILT]`
 
 > **สถานะ:** spec จากแชทภาพรวม (สถาปนิก) · ยังไม่เขียนโค้ด · ทำทีละเฟส 1 เฟส 1 commit · report แผน+จุดแตะไฟล์ก่อนลงมือทุกเฟส
 > **ฐาน:** ต่อยอด T-STUDIO v1 (เฟส ก-ง เสร็จแล้ว: simulator sandbox · แตะบอลลูนแก้ · เขียนกลับชีต diff/conflict/TRAIN_LOG · mobile) — **ห้ามรื้อของ v1** ทุกฟีเจอร์เดิมต้องทำงานเหมือนเดิม
@@ -92,7 +92,15 @@ v1 ทั้งหมดคือ **โลกซ้อม (sandbox)** — v2 เ
 
 ---
 
-## เฟส T2-ค · จัดการแถว Step/FAQ/OBJ/Vars จากหน้าเว็บ
+## เฟส T2-ค · จัดการแถว Step/FAQ/OBJ/Vars จากหน้าเว็บ ✅ เสร็จ (D-57)
+
+> **build แล้ว:** แท็บ "📚 คลังความรู้" ใน `/train` (modal · 4 แท็บ) — list แถว (key + ป้าย 🟢live/🔴draft + preview) · "＋ เพิ่มแถว" (ฟอร์ม header-driven · 🔴 บังคับ draft) · ปุ่ม live↔draft (soft delete) · ปุ่ม "▶ ทดสอบ" (draft ในห้องซ้อม)
+> **workflow บังคับ:** สร้าง (draft) → ▶ ทดสอบในห้องซ้อม (overlay สถานะ→live รายแถว · prod ยังกรอง draft) → พอใจแล้วกด "เผยแพร่ (live)" · แก้เนื้อหา = แตะบอลลูนหลังทดสอบ (editor เดิม)
+> **safety:** appendRow บังคับ `สถานะ=draft` · แท็บไร้คอลัมน์สถานะ=ปฏิเสธ (KI-08) · dedup key · funnel_stage enum (Step) · **lintHealthH1 trigger-aware** (แถวเกี่ยวสุขภาพ→คำตอบต้อง handoff ไม่งั้น block · เคส handoff=เหลือง) · เขียนผ่านกลไก v1 (hard guard·conflict·lint) · TRAIN_LOG +action
+> ไฟล์: `lib/train/{write,lint,preview}.ts` · `lib/agent/inject.ts`(export isActiveStatus) · `app/train/api/{rows,write}` · `TrainStudio.tsx`
+> **เหลือในเฟสถัด:** แก้เนื้อหาแถวจาก list โดยตรง (วันนี้ผ่าน bubble editor) · draft overlay แบบ "ทุกแถว" (วันนี้รายแถว)
+
+**สเปกเดิม (อ้างอิง):**
 
 **โจทย์:** เพิ่มเคสใหม่ (objection ใหม่ / FAQ ใหม่ / step ใหม่ / ตัวแปรใหม่) โดยไม่ต้องเปิดชีต
 
@@ -127,7 +135,7 @@ v1 ทั้งหมดคือ **โลกซ้อม (sandbox)** — v2 เ
 
 ## ลำดับ + กติกา
 
-- ลำดับ build: **ก → ข → ฉ → ค → ง → จ** (คุณค่าเร็ว→ช้า · เสี่ยงต่ำ→สูง · T2-ฉ อ่านอย่างเดียวแทรกก่อนงานเขียนชีต) · หยุดพักระหว่างเฟสได้ทุกจุด — แต่ละเฟสจบในตัว
+- ลำดับ build: **ก → ข → ฉ → ค → ง → จ** (คุณค่าเร็ว→ช้า · เสี่ยงต่ำ→สูง · T2-ฉ อ่านอย่างเดียวแทรกก่อนงานเขียนชีต) · เสร็จแล้ว: ก·ข·ฉ·ค · หยุดพักระหว่างเฟสได้ทุกจุด — แต่ละเฟสจบในตัว
 - ทุกเฟส: report แผน+จุดแตะไฟล์ก่อน · 1 commit · npm test เขียว · อัปเดต STATUS/DECISIONS/spec นี้ (ติ๊กเฟสที่เสร็จ) ในคอมมิตเดียวกัน
 - ห้ามแตะ: engine/pipeline/invariants/H1/gate/pricing ทั้งหมด · v1 simulator ต้องทำงานเหมือนเดิมทุกเฟส (เทส fidelity เดิมเขียวตลอด)
 - โมเดล: ทุกเฟสเริ่มด้วย Opus · สลับ Fable เฉพาะติดจริงตามกติกาโปรเจกต์

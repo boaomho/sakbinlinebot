@@ -28,8 +28,9 @@ const STEP_COLS = [
   "ตัวอย่างประโยคปิดท้าย",
 ];
 
-/** แถว active มั้ย — คอลัมน์ สถานะ/status (v2.0): live/เปิด = ใช้ · draft/ปิด/inactive = ทิ้ง · ว่าง = ใช้ (key-column-empty กรอง junk แล้ว) */
-function isActiveStatus(raw: string | undefined): boolean {
+/** แถว active มั้ย — คอลัมน์ สถานะ/status (v2.0): live/เปิด = ใช้ · draft/ปิด/inactive = ทิ้ง · ว่าง = ใช้ (key-column-empty กรอง junk แล้ว)
+ *  🔴 export ให้ T2-ค (ห้องซ้อมจัดการแถว) ใช้ตัดสิน live/draft ด้วย logic เดียวกับ prod เป๊ะ — ห้าม fork */
+export function isActiveStatus(raw: string | undefined): boolean {
   const v = cleanCell(raw).toLowerCase();
   if (v === "") return true;
   return ["live", "เปิด", "active", "true", "on", "1", "ใช่"].includes(v);

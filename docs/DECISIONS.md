@@ -114,6 +114,15 @@ R ว่างเสมอ = **ธงไม่เคยถูกล้างผ�
 pipeline fixture (`golden-routing.test.ts` · G26-G29 delivery) เขียนจาก **โครงชีตที่คาด** — ยังไม่ sync กับ "เข้าเมื่อ/ตัวอย่างคำตอบ" ของชีต v2.0 จริง ·
 เจ้าของรัน `HARNESS_REAL_GEMINI=1` แล้วแดง → จูนชีต + sync fixture (คู่กับ KI known-tuning: G12 S2/S2_DIRECT · G29 stage S4A/S4B)
 
+### KI-08 · 🔴 กับดักถาวร: ช่องสถานะว่าง = LIVE (คนแก้ชีตมือต้องระวัง)
+
+`isActiveStatus` ([lib/agent/inject.ts](../lib/agent/inject.ts)) ถือว่า **ช่อง "สถานะ" ว่าง = active (live)** โดยตั้งใจ (กัน junk ที่ key ว่างมาก่อนแล้ว) →
+**เพิ่มแถวมือในชีตโดยไม่กรอกสถานะ = แถวนั้นขึ้นหน้าร้านให้ลูกค้าจริงเห็นทันที** (ไม่มี draft กั้น)
+- **โค้ดกันแล้วฝั่ง T2-ค:** `appendRow` บังคับ `สถานะ=draft` เสมอ + แท็บไม่มีคอลัมน์สถานะ = ปฏิเสธ (ดู D-57) → เพิ่มผ่านเว็บปลอดภัย
+- **ยังเป็นกับดักเมื่อแก้ชีตด้วยมือ** (นอก T-STUDIO) — 🔴 **เจ้าของต้องวางข้อความเตือนในแท็บวิธีใช้ของชีต:**
+  > `🔴 เพิ่มแถวใหม่ด้วยมือ: ต้องใส่คอลัมน์ "สถานะ = draft" ก่อนเสมอ · ช่องสถานะว่าง = บอทถือว่า live ทันที (ลูกค้าจริงเห็นเลย) · ทดสอบในห้องซ้อมก่อน แล้วค่อยเปลี่ยนเป็น live`
+- ไม่ "แก้" ที่โค้ด (ว่าง=live เป็น contract เดิมที่ระบบพึ่งพา — เปลี่ยนจะกระทบทุก consumer) → รับด้วย add-row guard + เอกสารเตือน
+
 ---
 
 ## Decisions
@@ -851,6 +860,17 @@ Dashboard คุมบอทได้จริง: สวิตช์ราย�
 - **หัวจอ:** นับทุกสถานะ pending (รอคอนเฟิร์ม/รอแจกเลข/รอแพ็ค/รอแจ้ง) · 2 อันเป็น "งานคน" (`human` flag ใน `ORDER_STATUS_META`) เน้นกรอบแดง
 - **harness:** `deriveOrderStatus` **ครบทุก combination** N/M/O/P+notified (6 สถานะ + cancelled precedence) · route: TRAIN กรอง default/toggle · สถานะถูกทุกแถว · sort ใหม่สุดก่อน · counts · shipped_pending vs notified · auth 401 · **462 passed** · build เขียว · v1 fidelity เดิมเขียว
 - **ไม่ทำในเฟสนี้:** ปุ่มกระทำ (คอนเฟิร์ม/ยกเลิก) จาก UI = อนาคต (write phase) · ลิงก์แถวชีต = T2-ค
+
+### D-57 · T2-ค · จัดการแถว Step/FAQ/OBJ/Vars จากเว็บ (add-row draft · live↔draft · lint H1 · 1 commit) — spec [docs/T2-STUDIO-SPEC.md](T2-STUDIO-SPEC.md)
+เจ้าของเพิ่ม/ปิด/เปิดแถวคลังความรู้จากหน้าเว็บ (แท็บ "📚 คลังความรู้" ใน /train) โดยไม่เปิดชีต · **ความปลอดภัยชีต > ความเร็ว** · เคาะ 3 ข้อ (overlay รายแถว · ครบ 4 แท็บ+validator · lint block คำสุขภาพ) + 3 เงื่อนไข
+- 🔴 **แถวใหม่ = draft เสมอ (`appendRow` บังคับ `สถานะ=draft`)** · **แท็บไม่มีคอลัมน์สถานะ = ปฏิเสธ** (`no_status_col`) — กัน KI-08 (ช่องว่าง=live) · dedup key (block) · key/funnel validate
+- 🔴 **H1 trigger-aware (`lintHealthH1`):** ถ้าแถว "เกี่ยวสุขภาพ/แพ้อาหาร" (คำใน trigger=คำถาม/สิ่งที่ลูกค้าพูด **หรือ** คำตอบ) → คำตอบ **ต้องเป็นการส่งต่อแอดมิน** ไม่งั้น block · เคสถูก (FAQ แพ้อาหาร→handoff) ผ่าน+เตือนเหลือง · 🔴 จับ "แพ้กุ้งทานได้ไหม→ทานได้ค่ะ" (คำสุขภาพอยู่ในคำถาม คำตอบดูปกติ = คดี) · reuse ทั้ง preview+writeCell+appendRow
+- **funnel validator (Step):** `funnel_stage` ต้องอยู่ใน `VALID_FUNNEL_STAGES` (ตาข่าย handoff H1) ไม่งั้น `funnel` block
+- **soft delete:** live↔draft ผ่าน `setRowStatus` (ไม่มีลบถาวร) · **เขียนผ่านกลไก v1 เดิมทั้งชุด** (hard guard BotLibrary-only · conflict · lint gate) · TRAIN_LOG +คอลัมน์ที่ 7 `ประเภท` (edit/add-row/status-change)
+- 🔴 **ทดสอบ draft ในห้องซ้อม (เคาะ):** ปุ่ม "▶ ทดสอบ" ใส่ overlay `{สถานะ:live}` รายแถว → sandbox เห็น draft เป็น live · **prod กรอง draft ทิ้งเหมือนเดิม (ไม่มี sandbox context)** · reuse overlay เฟส ข · FAQ pre-fill คำถามในช่องแชทให้เลย
+- ไฟล์: `lib/train/write.ts`(appendRow/setRowStatus/listTabRows/suggestNextKey) · `lib/train/lint.ts`(lintHealthH1+trigger) · `lib/train/preview.ts`(triggerTextForTab) · `lib/agent/inject.ts`(export isActiveStatus) · `app/train/api/{rows,write}` · `TrainStudio.tsx`(แผงคลังความรู้)
+- **harness:** H1 block/warn/none · appendRow บังคับ draft · no_status_col ปฏิเสธ · dup · key_invalid · funnel · **🔴 prod ทิ้ง draft (buildFaqInjection) · sandbox overlay→live เสิร์ฟ (matcher prod จริง)** · setRowStatus + TRAIN_LOG action · list ข้ามแถวว่าง · suggestNextKey · **476 passed** · build เขียว · phase b/c เดิมเขียว
+- **ขอบเขต:** เขียนเฉพาะ 4 แท็บนี้ (Products/Promo/Config ยังห้าม = T2-ง) · แก้เนื้อหาแถว = ผ่าน editor บอลลูนเดิม (แตะบอลลูนหลังทดสอบ) · **KI-08 บันทึกกับดัก ช่องว่าง=live + ข้อความเตือนเจ้าของวางในชีต**
 
 ### D-54 · หน้า Privacy Policy (ปลดล็อก M-3 App Review · 1 commit)
 `app/privacy/page.tsx` static — ไทย (8 ข้อครบ) + อังกฤษสรุปความเดียวกัน · placeholder อีเมล `sakbinofficial@gmail.com` (เจ้าของแจ้งจริงทีหลัง) · วันที่อัปเดตคงที่ (ไม่ใช้ new Date) · 🔴 ไม่มี tracking/analytics/external
