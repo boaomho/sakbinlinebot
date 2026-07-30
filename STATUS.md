@@ -30,7 +30,8 @@
 - **M-2 Meta Messenger webhook เสร็จ ✅** บน `main` — `lib/channel/{pages,meta,meta-webhook}.ts` + `MessengerTransport` + `app/api/meta-webhook` · webhook (GET challenge + POST verify HMAC) → `processMessage` เดิม ผ่าน Send API (PSID) · id `fb:<pageId>:<psid>` · echo filter (META_APP_ID · fallback+เตือน) · สลิป `meta/<pageId>/` · Orders `source_channel=messenger` · cron D-50 ข้าม `fb:` (รอ M-4) · **417 passed** (405 คงเดิม + 12) · **เจ้าของ:** ENV 5 ตัว META_* เข้า Vercel + ตั้ง webhook + เทส Dev Mode
 - **D-52 ป้ายช่องทาง เสร็จ ✅** — `channelLabel` (`[FB]`/`[ซ้อม]`/`[LINE]`) หน้าชื่อลูกค้าในข้อความแอดมินทุกจุด
 - **M-4 cron route ตาม channel เสร็จ ✅** บน `main` — D-50 push ตาม prefix R: LINE→pushMessages เดิม · `fb:`→gate 24 ชม.→MessengerTransport (เกิน→แจ้งแอดมิน [FB] แจ้งเอง) · แจกเลข ทุกช่องเหมือนเดิม · **422 passed**
-- **ต่อไป:** D-53 (สวิตช์บอทราย channel · เสนอ schema แล้วรอเคาะ) · M-3 (App Review) งานมือ · Utility Template (Messenger นอก 24 ชม.) เฟสหลัง
+- **D-53 สวิตช์บอทราย channel เสร็จ ✅** บน `main` — คำสั่งกลุ่ม "ปิด/เปิดบอท line|fb" → `channel_switches` (ไม่มีแถว=เปิด) · เช็คต้นทางทั้ง 2 ฝั่ง (LINE/Messenger) → ช่องปิดบอทเงียบ · `ปิดบอท`เฉยๆ/รายคน เดิม · รายคนทับรายช่อง · **430 passed**
+- **ต่อไป:** M-3 (App Review + Business Verification) งานมือเจ้าของ · Utility Template (Messenger นอก 24 ชม.) เฟสหลัง · Follow/CRM ก้อน B ส่วนหลัง
 
 - เทสล่าสุด: **405 passed | 3 expected-fail | 34 skipped** (scripted) · tsc + build เขียว
 - known-tuning (ยอมรับแล้ว · ปิดได้ทีหลังด้วยการจูนชีต): **G12** (S2 vs S2_DIRECT · "ขอลองถ้วยเดียว") · **G29** stage (S4A/S4B)

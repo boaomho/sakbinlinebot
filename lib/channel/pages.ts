@@ -31,6 +31,16 @@ export function resolveAppContext(): AppContext | null {
   return { appSecret, verifyToken, appId: process.env.META_APP_ID ?? null };
 }
 
+/**
+ * รายการ page_id ที่ระบบรู้จัก (D-53 · ใช้ resolve คำสั่ง "ปิดบอท fb" → key "fb:<pageId>")
+ * วันนี้: env 1 เพจ · 🔴 อนาคตหลายเพจ (อ่านจากตาราง channel_pages) → "ปิดบอท fb" (ไม่ระบุเพจ)
+ * ควรตอบรายชื่อเพจให้แอดมินเลือก แทนการเดา (ยังไม่ build)
+ */
+export function messengerPageIds(): string[] {
+  const id = process.env.META_PAGE_ID;
+  return id ? [id] : [];
+}
+
 /** map page_id → context · วันนี้: env 1 เพจ (pageId ไม่ตรง/ENV ขาด = null → ข้าม+log) */
 export async function resolvePageContext(pageId: string): Promise<PageContext | null> {
   const envPageId = process.env.META_PAGE_ID;

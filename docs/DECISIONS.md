@@ -823,6 +823,15 @@ handoff ทุก path (edit/AI-semantic/keyword) ตั้งแค่ `human_m
 **ไม่แตะ:** cron แจกเลข/idempotency D-29/O semantics เดิม (เพิ่ม loop ต่อท้าย) · **harness:** cron (push+ขนส่ง+เลข · idempotent ไม่ซ้ำ · P ว่าง/R ว่าง ข้าม · human_mode→แอดมิน · greeting · ""=ปิด) + train sim + formatShippingMessage · **405 passed | 3 expected-fail** · build เขียว
 **จบเคส CRM/Follow (ลูกค้าตอบได้รับ→ถามรีวิว) = ก้อน B ส่วนหลัง · ยังไม่ทำ**
 
+### D-53 · สวิตช์บอทราย channel (ต่อยอด D-52 · 1 commit)
+คำสั่งกลุ่มแอดมิน "ปิด/เปิดบอท line|fb" → บอทเงียบทั้งช่องที่ต้นทาง
+- **schema (เคาะแล้ว):** `channel_switches(channel PK "line"|"fb:<pageId>", enabled bool default true, updated_at)` · **ไม่มีแถว = เปิด** (เพิ่มช่องไม่ต้อง migrate) · `setChannelEnabled`/`isChannelEnabled` (default true) · +harness resetDb
+- **คำสั่ง (`resolveChannelArg`):** `line`→key `"line"` · `fb`→resolve `fb:<META_PAGE_ID>` ผ่าน `messengerPageIds()` (🔴 key ต้องเป็น identifier จริงเสมอ ห้าม alias "fb" ลอยในข้อมูล · "fb" = shortcut ชั้นภาษา · หลายเพจ=ตอบรายชื่อให้เลือก · ยังไม่ build) · `fb:<pageId>`→ตรงๆ · **arg อื่น = ชื่อลูกค้า (เดิม)**
+- **ตอบยืนยันทุกครั้ง** สถานะครบทุกช่อง: `ปิดบอทช่อง [FB] แล้ว\n[LINE] เปิด · [FB] ปิด` (`channelStatusLine` + reuse `channelLabel(key)`)
+- **เช็คต้นทาง:** `handleEvent` สาย user → `isChannelEnabled("line")` false → เงียบ+log (**คำสั่ง group คนละสาย → เปิดคืนได้**) · `handleMetaMessaging` (หลัง echo) → `isChannelEnabled("fb:<pageId>")` false → เงียบ+log
+- **ห้ามเปลี่ยน (ยืนยัน):** `ปิดบอท`เฉยๆ (arg="")→help เดิม (`resolveChannelArg`คืน null) · `ปิดบอททั้งหมด`→close_all เดิม · `ปิดบอท <ชื่อ>` รายคนเดิม · **รายคนปิด+ช่องเปิด=ยังปิด** (ช่องเปิด→เข้า processMessage→human_mode→เงียบ กลไกเดิม)
+- **harness:** ปิด/เปิด line&fb + fb:<pageId> ตรง · ยืนยันสถานะทุกช่อง · ช่องปิด→ลูกค้าเงียบ · ช่องเปิด→ตอบปกติ · รายคนปิด+ช่องเปิด=ยังปิด · `ปิดบอท`เฉยๆ ไม่แตะ switch · คำสั่ง group ทำงานแม้ช่องปิด · **430 passed** · build เขียว
+
 ### M-4 · cron/D-50 route push ตาม channel (1 commit)
 notifyShipping เลิกข้าม `fb:` → route ตาม prefix ของ R:
 - **LINE (raw/TRAIN:)** → `pushMessages` เดิม (sandbox guard → collector)

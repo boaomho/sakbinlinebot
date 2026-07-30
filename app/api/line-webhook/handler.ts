@@ -15,6 +15,8 @@ import {
   updateCustomerAfterTurn,
   setHumanMode,
   setHumanModeAll,
+  isChannelEnabled,
+  setChannelEnabled,
   clearResumeNotice,
   updateDisplayName,
   setLastSlipPathname,
@@ -58,6 +60,7 @@ import {
 } from "@/lib/line";
 import { ChannelTransport, LineTransport } from "@/lib/channel/transport";
 import { channelLabel } from "@/lib/channel/label";
+import { messengerPageIds } from "@/lib/channel/pages";
 import { checkHandoffKeywords } from "@/lib/handoff";
 import {
   parseAdminCommand,
@@ -1151,6 +1154,31 @@ function buildNotFoundMessage(query: string): string {
   );
 }
 
+/**
+ * D-53: แปลง arg คำสั่ง → channel key จริง ("line" | "fb:<pageId>") · null = ไม่ใช่ channel (→ รายคนเดิม)
+ * "fb" (ไม่ระบุเพจ) = shortcut ชั้นภาษา → resolver แปลงเป็น key จริงตอนเขียน (ห้ามเก็บ alias "fb" ลอยๆ ในข้อมูล)
+ */
+function resolveChannelArg(arg: string): { key?: string; error?: string } | null {
+  const a = arg.trim().toLowerCase();
+  if (a === "line") return { key: "line" };
+  if (a.startsWith("fb:")) return { key: a }; // ระบุเพจตรงๆ
+  if (a === "fb") {
+    const pages = messengerPageIds();
+    if (pages.length === 0) return { error: "ยังไม่ได้ผูกเพจ Messenger (ตั้ง META_PAGE_ID ก่อน)" };
+    if (pages.length === 1) return { key: `fb:${pages[0]}` };
+    // 🔴 อนาคตหลายเพจ: ตอบรายชื่อให้เลือก แทนการเดา (วันนี้ env 1 เพจ ไม่เข้าเคสนี้)
+    return { error: `มีหลายเพจ — ระบุ "${arg.includes("ปิด") ? "ปิด" : "เปิด"}บอท fb:<pageId>" (${pages.join(", ")})` };
+  }
+  return null;
+}
+
+/** D-53: รายงานสถานะบอทครบทุก channel เช่น "[LINE] เปิด · [FB] ปิด" */
+async function channelStatusLine(): Promise<string> {
+  const keys = ["line", ...messengerPageIds().map((p) => `fb:${p}`)];
+  const parts = await Promise.all(keys.map(async (k) => `${channelLabel(k)} ${(await isChannelEnabled(k)) ? "เปิด" : "ปิด"}`));
+  return parts.join(" · ");
+}
+
 async function handleCloseOpenCommand(
   arg: string,
   verb: string,
@@ -1159,6 +1187,18 @@ async function handleCloseOpenCommand(
   groupId: string,
   config: AppConfig,
 ): Promise<void> {
+  // D-53: ดัก channel keyword (line/fb/fb:<pageId>) ก่อน logic รายคนเดิม
+  const ch = resolveChannelArg(arg);
+  if (ch) {
+    if (ch.error) {
+      await replyToAdmin(replyToken, groupId, `⚠️ ${ch.error}`);
+      return;
+    }
+    await setChannelEnabled(ch.key!, !close);
+    await replyToAdmin(replyToken, groupId, `${close ? "🔴 ปิด" : "🟢 เปิด"}บอทช่อง ${channelLabel(ch.key!)} แล้ว\n${await channelStatusLine()}`);
+    return;
+  }
+
   if (!arg) {
     await replyToAdmin(replyToken, groupId, `พิมพ์: ${verb} <ชื่อลูกค้า>\nหรือดูรายชื่อก่อน: รายชื่อล่าสุด`);
     return;
@@ -1318,6 +1358,12 @@ export async function handleEvent(event: webhook.Event, config: AppConfig, switc
     if (event.source.type !== "user") return;
     const userId = event.source.userId;
     if (!userId) return;
+
+    // D-53: ช่อง LINE ถูกปิด → เงียบ (log · คำสั่งกลุ่มไม่โดน เพราะ source=group คนละสาย → เปิดคืนได้)
+    if (switches.memory && !(await isChannelEnabled("line"))) {
+      console.log(JSON.stringify({ scope: "channel-switch", channel: "line", event: "inbound-silenced" }));
+      return;
+    }
 
     if (event.message.type === "text" && config.testCommandsEnabled && isResetCommand(event.message.text)) {
       await handleResetCommand(userId, replyToken, switches);

@@ -45,6 +45,8 @@ lib/channel/          # M-1/M-2 · adapter หลายช่องทาง
   meta.ts             Send API client (text/image/sender_action · getProfileName · downloadFromUrl) + verifyMetaSignature (HMAC-SHA256)
   meta-webhook.ts     processMetaWebhook (verify sig → parse entry/messaging → กรอง echo → runInboundText/Image เดิม) · metaVerifyChallenge (GET) · metaUserId(fb:<pageId>:<psid>)
   label.ts            D-52 · channelLabel(id[,pageName]) → [FB]/[ซ้อม]/[LINE] · วางหน้าชื่อลูกค้าในข้อความแอดมินทุกจุด (ห้ามฝั่งลูกค้า)
+  pages.ts messengerPageIds()  D-53 · list page_id (env 1 เพจ) — resolve คำสั่ง "ปิดบอท fb"→key fb:<pageId>
+> D-53 สวิตช์บอทราย channel: คำสั่งกลุ่ม "ปิด/เปิดบอท line|fb[:<pageId>]" → Neon `channel_switches`(channel PK,enabled default true) · เช็คต้นทาง handleEvent(LINE)/handleMetaMessaging(fb) → ช่องปิด=เงียบ · `ปิดบอท`เฉยๆ/รายคน/ทั้งหมด เดิม
 app/api/meta-webhook/route.ts  # GET challenge + POST event (M-2)
 tests/
   harness/        replay(webhook+HMAC จริง) · setup(mock) · state · db · sheet · assert · fixtures

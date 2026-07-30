@@ -3,7 +3,7 @@ import { MessengerTransport } from "./transport";
 import { verifyMetaSignature, sendMessengerAction, downloadFromUrl } from "./meta";
 import { runInboundText, runInboundImage } from "@/app/api/line-webhook/handler";
 import { resolveFeatureSwitches, FeatureSwitches } from "@/lib/config";
-import { setHumanMode } from "@/lib/db";
+import { setHumanMode, isChannelEnabled } from "@/lib/db";
 
 /**
  * lib/channel/meta-webhook.ts — M-2 · แปลง Messenger event → pipeline เดิม
@@ -66,6 +66,12 @@ async function handleMetaMessaging(m: MetaMessaging, page: PageContext, switches
     console.warn(JSON.stringify({ scope: "meta", warning: "META_APP_ID ไม่ตั้ง — echo filter ทำงานแบบเดา (heuristic)", hasAppId: echoAppId != null }));
     if (echoAppId != null) return; // มี app_id = สมมติบอทเรา → ทิ้ง
     if (switches.handoff) await setHumanMode(userId, true); // ไม่มี app_id = แอดมินพิมพ์ในกล่องเพจ → human_mode
+    return;
+  }
+
+  // D-53: ช่อง fb:<pageId> ถูกปิด → เงียบ (log)
+  if (switches.memory && !(await isChannelEnabled(`fb:${page.pageId}`))) {
+    console.log(JSON.stringify({ scope: "channel-switch", channel: `fb:${page.pageId}`, event: "inbound-silenced" }));
     return;
   }
 

@@ -143,6 +143,15 @@ export async function ensureSchema(): Promise<void> {
     )
   `;
 
+  // D-53: สวิตช์บอทราย channel — key "line" | "fb:<pageId>" · ไม่มีแถว = เปิด (default true)
+  await sql`
+    CREATE TABLE IF NOT EXISTS channel_switches (
+      channel TEXT PRIMARY KEY,
+      enabled BOOLEAN NOT NULL DEFAULT true,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+
   // T-STUDIO: state ของ session ห้องซ้อม (fake grid ออเดอร์ ฯลฯ) — ใช้จริงเฉพาะ train branch
   // สร้างทั้ง 2 DB (schema เหมือนกัน 100% กัน drift) · บน prod = ตารางว่างเฉยๆ ไม่มีใครเขียน
   await sql`
@@ -711,6 +720,27 @@ export async function markShippingNotified(orderId: string): Promise<boolean> {
     RETURNING order_id
   `;
   return rows.length > 0;
+}
+
+// ---- D-53: สวิตช์บอทราย channel ----
+
+/** เปิด/ปิดบอทของ channel (key "line" | "fb:<pageId>") · upsert */
+export async function setChannelEnabled(channel: string, enabled: boolean): Promise<void> {
+  await ensureSchema();
+  const sql = getSql();
+  await sql`
+    INSERT INTO channel_switches (channel, enabled, updated_at) VALUES (${channel}, ${enabled}, now())
+    ON CONFLICT (channel) DO UPDATE SET enabled = ${enabled}, updated_at = now()
+  `;
+}
+
+/** channel เปิดอยู่ไหม · ไม่มีแถว = เปิด (default true) */
+export async function isChannelEnabled(channel: string): Promise<boolean> {
+  await ensureSchema();
+  const sql = getSql();
+  const rows = await sql`SELECT enabled FROM channel_switches WHERE channel = ${channel}`;
+  if (rows.length === 0) return true;
+  return Boolean((rows[0] as { enabled: boolean }).enabled);
 }
 
 // ---- order counter (atomic) ----
