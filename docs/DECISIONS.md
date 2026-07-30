@@ -823,6 +823,12 @@ handoff ทุก path (edit/AI-semantic/keyword) ตั้งแค่ `human_m
 **ไม่แตะ:** cron แจกเลข/idempotency D-29/O semantics เดิม (เพิ่ม loop ต่อท้าย) · **harness:** cron (push+ขนส่ง+เลข · idempotent ไม่ซ้ำ · P ว่าง/R ว่าง ข้าม · human_mode→แอดมิน · greeting · ""=ปิด) + train sim + formatShippingMessage · **405 passed | 3 expected-fail** · build เขียว
 **จบเคส CRM/Follow (ลูกค้าตอบได้รับ→ถามรีวิว) = ก้อน B ส่วนหลัง · ยังไม่ทำ**
 
+### D-54 · หน้า Privacy Policy (ปลดล็อก M-3 App Review · 1 commit)
+`app/privacy/page.tsx` static — ไทย (8 ข้อครบ) + อังกฤษสรุปความเดียวกัน · placeholder อีเมล `sakbinofficial@gmail.com` (เจ้าของแจ้งจริงทีหลัง) · วันที่อัปเดตคงที่ (ไม่ใช้ new Date) · 🔴 ไม่มี tracking/analytics/external
+- เขียนด้วย `createElement` (ไม่ใช่ JSX) — tsconfig `jsx:preserve` ทำให้ vitest transform JSX import ไม่ได้ (เหมือน EditorBoundary) → หน้าจริง import+render ทดสอบได้
+- **harness:** หัวข้อไทย+อังกฤษ · สาระครบ (LINE userId/PSID/สลิป/AI/ไม่ขายข้อมูル/สิทธิ/ขนส่ง) · อีเมล+วันที่ · **ไม่มี `<script>`/analytics** · build prerender `/privacy` (static 200) · **434 passed**
+- **ใช้:** URL `https://<domain>/privacy` ยื่น App Review (M-3)
+
 ### D-53 · สวิตช์บอทราย channel (ต่อยอด D-52 · 1 commit)
 คำสั่งกลุ่มแอดมิน "ปิด/เปิดบอท line|fb" → บอทเงียบทั้งช่องที่ต้นทาง
 - **schema (เคาะแล้ว):** `channel_switches(channel PK "line"|"fb:<pageId>", enabled bool default true, updated_at)` · **ไม่มีแถว = เปิด** (เพิ่มช่องไม่ต้อง migrate) · `setChannelEnabled`/`isChannelEnabled` (default true) · +harness resetDb
