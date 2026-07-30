@@ -54,9 +54,9 @@ import {
   pushRawMessages,
   startLoadingIndicator,
   downloadMessageContent,
-  getProfileName,
   DownloadedContent,
 } from "@/lib/line";
+import { ChannelTransport, LineTransport } from "@/lib/channel/transport";
 import { checkHandoffKeywords } from "@/lib/handoff";
 import {
   parseAdminCommand,
@@ -92,10 +92,10 @@ function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T
 
 /** ส่งข้อความถึงลูกค้า: reply ก่อน · ล้มเหลว (token หมดอายุ) → push */
 /** ส่งข้อความถึงลูกค้า (reply → fallback push) · คืน true เมื่อส่งสำเร็จจริง (D-45b: ใช้ตัดสินตั้งธง delivered_steps) */
-async function deliverReply(replyToken: string, userId: string, text: string, quotaSaver: boolean): Promise<boolean> {
-  const sent = await replyMessages(replyToken, text, quotaSaver);
+async function deliverReply(transport: ChannelTransport, text: string, quotaSaver: boolean): Promise<boolean> {
+  const sent = await transport.reply(text, quotaSaver);
   if (sent) return true;
-  return pushMessages(userId, text, quotaSaver);
+  return transport.push(text, quotaSaver);
 }
 
 const EMPTY_VARS: RuntimeVarContext = { summary: null, total: null, payment: null, breakdown: null, nextTierOffer: null };
@@ -152,6 +152,7 @@ async function handoff(
   userId: string,
   switches: FeatureSwitches,
   opts: { reason: string; userMessage?: string; attachImage?: { url: string; note?: string } },
+  transport: ChannelTransport,
 ): Promise<void> {
   // ปิดบอท (จุดเดียวในระบบที่เรียก setHumanMode(userId, true))
   if (switches.memory) await setHumanMode(userId, true);
@@ -162,7 +163,7 @@ async function handoff(
     return;
   }
   try {
-    const name = await getProfileName(userId);
+    const name = await transport.getProfileName();
     if (name && name !== userId) await updateDisplayName(userId, name); // ให้คำสั่ง เปิดบอท <ชื่อ> หาเจอ
     const footer = `🔴 บอทปิดการทำงานกับลูกค้ารายนี้แล้ว · รอแอดมินรับช่วง (เปิดคืน: เปิดบอท ${name})`;
     const text = [
@@ -193,7 +194,7 @@ async function handoff(
 async function runHandoffFlow(
   userId: string,
   userMessage: string,
-  replyToken: string,
+  transport: ChannelTransport,
   config: AppConfig,
   switches: FeatureSwitches,
   reason: string,
@@ -206,10 +207,10 @@ async function runHandoffFlow(
     await addMessage(userId, "assistant", finalReply);
   }
 
-  const sent = await replyMessages(replyToken, finalReply, config.quotaSaver);
-  if (!sent) await pushMessages(userId, finalReply, config.quotaSaver);
+  const sent = await transport.reply(finalReply, config.quotaSaver);
+  if (!sent) await transport.push(finalReply, config.quotaSaver);
 
-  await handoff(userId, switches, { reason, userMessage }); // ปิดบอท + แจ้งแอดมิน + footer (จุดเดียว)
+  await handoff(userId, switches, { reason, userMessage }, transport); // ปิดบอท + แจ้งแอดมิน + footer (จุดเดียว)
 }
 
 /** ข้อความสบายใจตอน AI อ่านรูปไม่สำเร็จ — รับรูปแล้ว กำลังตรวจสอบ (ไม่ทำให้ลูกค้ากังวล) */
@@ -233,6 +234,7 @@ async function handleImageIntent(
   content: DownloadedContent,
   config: AppConfig,
   switches: FeatureSwitches,
+  transport: ChannelTransport,
 ): Promise<string | null> {
   if (intent === "other" || intent === "address") return null;
 
@@ -246,7 +248,7 @@ async function handleImageIntent(
       await setLastSlipPathname(userId, uploaded.pathname); // จำไว้ผูกออเดอร์ตอน gate
     }
     if (adminGroupId) {
-      const name = await getProfileName(userId);
+      const name = await transport.getProfileName();
       const text = `💰 มีลูกค้าส่งสลิปมาค่ะ${noteLine}\n\nLineOA: ${name}`;
       const signedUrl = uploaded ? await getSlipSignedUrl(uploaded.pathname, config.slipUrlExpiryDays) : null;
       if (signedUrl) {
@@ -269,7 +271,7 @@ async function handleImageIntent(
     await handoff(userId, switches, {
       reason: "ลูกค้าแจ้งปัญหา/เคลม",
       attachImage: signedUrl ? { url: signedUrl, note: imageNote ? `หลักฐาน:${noteLine}` : undefined } : undefined,
-    });
+    }, transport);
   }
   return null;
 }
@@ -290,6 +292,7 @@ async function runOrderGate(
   nameMap: Map<string, string>,
   replyText: string,
   allowedNumbers: Set<string>,
+  transport: ChannelTransport,
 ): Promise<void> {
   const slipPathname = slipThisTurn ?? customer.lastSlipPathname ?? null;
   const priceOk = price !== null && price.error === null && !price.needsHandoff;
@@ -328,7 +331,7 @@ async function runOrderGate(
   // guard 2 mismatch: บอทพูดยอดที่ Core ไม่รู้จัก ทั้งที่ข้อมูลครบ → ไม่ปิด + แจ้งแอดมินยืนยัน (ไม่บล็อกคำพูด)
   if (gate.complete && !priceSpeechOk) {
     if (adminGroupId) {
-      const name = await getProfileName(userId);
+      const name = await transport.getProfileName();
       await pushRawText(
         adminGroupId,
         `⚠️ ยอดไม่ตรง — บอทแจ้งลูกค้า ${guard2Off.join("/")} บาท · ระบบคำนวณ ${price ? price.total : "?"} บาท ขอยืนยัน\nรายการ: ${itemsToNames(pending.items, nameMap)}\n———\nLineOA: ${name}`,
@@ -347,7 +350,7 @@ async function runOrderGate(
       await setPaidNoAddressNotified(userId, false);
       return;
     }
-    const name = await getProfileName(userId);
+    const name = await transport.getProfileName();
     try {
       await appendOrderRow({
         lineDisplayName: name,
@@ -414,7 +417,7 @@ async function runOrderGate(
   const priceStuckReady = gate.readyExceptPrice && priceFailed;
   if ((gate.brokenOrder || priceStuckReady) && !customer.paidNoAddressNotified) {
     if (adminGroupId) {
-      const name = await getProfileName(userId);
+      const name = await transport.getProfileName();
       const text = priceStuckReady
         ? buildPriceStuckAdminText(pending, price?.error ?? "เกินเพดาน/ต้องมีคนดู", name, itemsToNames(pending.items, nameMap))
         : buildBrokenOrderAdminText(pending, gate.missing, name);
@@ -429,7 +432,7 @@ async function runOrderGate(
 export async function processMessage(
   userId: string,
   userMessage: string,
-  replyToken: string,
+  transport: ChannelTransport,
   config: AppConfig,
   switches: FeatureSwitches,
   imageContent?: DownloadedContent,
@@ -446,7 +449,7 @@ export async function processMessage(
 
     // เก็บชื่อ LINE ไว้ค้นในคำสั่งแอดมิน (ครั้งแรกที่ยังไม่มีชื่อ) — getProfile ไม่คิดค่า push
     if (!customer.displayName) {
-      const name = await getProfileName(userId);
+      const name = await transport.getProfileName();
       if (name && name !== userId) {
         await updateDisplayName(userId, name);
         customer = { ...customer, displayName: name };
@@ -482,7 +485,7 @@ export async function processMessage(
   if (switches.handoff) {
     const preCheck = checkHandoffKeywords(userMessage, config.handoffKeywords);
     if (preCheck.matched) {
-      await runHandoffFlow(userId, userMessage, replyToken, config, switches, `เจอคำสำคัญ: ${preCheck.keyword}`);
+      await runHandoffFlow(userId, userMessage, transport, config, switches, `เจอคำสำคัญ: ${preCheck.keyword}`);
       return;
     }
   }
@@ -657,7 +660,7 @@ export async function processMessage(
     editHandled = true; // ข้าม order flow (ห้ามเขียนแถวใหม่) + ข้าม AI-semantic handoff ท้ายเทิร์น
     const adminGroupId = process.env.ADMIN_GROUP_ID;
     const orderId = customer.lastOrderId ?? "";
-    const name = await getProfileName(userId);
+    const name = await transport.getProfileName();
 
     // ค่าใหม่ที่ลูกค้าแก้เทิร์นนี้ (เฉพาะที่ AI ส่งมา) → keyed ด้วยชื่อคอลัมน์ Orders
     const { items: aiEditItems, ...editReceiver } = geminiOutput.orderData;
@@ -683,10 +686,10 @@ export async function processMessage(
     } else if (result.status === "confirmed") {
       // แอดมินคอนเฟิร์มแล้ว (M=TRUE · ของไปแพ็ค) → ล็อก + ส่งต่อคน (X2) ผ่านประตูรวม
       if (switches.memory) await setLastOrderLocked(userId);
-      await handoff(userId, switches, { reason: `ขอแก้ออเดอร์ที่คอนเฟิร์มแล้ว ${orderId} (ของอาจแพ็คแล้ว)`, userMessage });
+      await handoff(userId, switches, { reason: `ขอแก้ออเดอร์ที่คอนเฟิร์มแล้ว ${orderId} (ของอาจแพ็คแล้ว)`, userMessage }, transport);
     } else if (result.status === "not_found") {
       console.error(JSON.stringify({ scope: "orders", event: "order-edit-not-found", orderId }));
-      await handoff(userId, switches, { reason: `ขอแก้ออเดอร์ ${orderId || "(ไม่มี id)"} แต่หาแถวในชีตไม่เจอ`, userMessage });
+      await handoff(userId, switches, { reason: `ขอแก้ออเดอร์ ${orderId || "(ไม่มี id)"} แต่หาแถวในชีตไม่เจอ`, userMessage }, transport);
     }
     // 🔴 ที่อยู่ใหม่สั้นผิดปกติ → ไม่ทับ (กันเขียนที่อยู่ผิด) + แจ้งแอดมิน (บอทควรถามลูกค้ายืนยันที่อยู่เต็ม — เทรนใน S_EDIT)
     if ((result.suspect?.length ?? 0) > 0 && adminGroupId) {
@@ -839,7 +842,7 @@ export async function processMessage(
     console.error(JSON.stringify({ scope: "orders", event: "transfer-vars-unresolved", tokens: unresolvedTransfer, hint: "ตรวจ CSV_Config: เลขที่บัญชี/ชื่อบัญชี/ธนาคาร" }));
     const adminGroupId = process.env.ADMIN_GROUP_ID;
     if (adminGroupId) {
-      const name = await getProfileName(userId);
+      const name = await transport.getProfileName();
       await pushRawText(
         adminGroupId,
         `⚠️ ข้อมูลโอนเงิน resolve ไม่ได้: ${unresolvedTransfer.join(" ")} — บอทงดส่งข้อความโอนให้ลูกค้า\nตรวจ CSV_Config: เลขที่บัญชี / ชื่อบัญชี / ธนาคาร\n———\nLineOA: ${name}`,
@@ -861,7 +864,7 @@ export async function processMessage(
     console.warn(JSON.stringify({ scope: "claims", event: "banned-claim", mode: claimsMode, blocked: blockClaim, phrases: bannedClaims, reply: outReply }));
     const adminGroupId = process.env.ADMIN_GROUP_ID;
     if (adminGroupId) {
-      const name = await getProfileName(userId);
+      const name = await transport.getProfileName();
       await pushRawText(
         adminGroupId,
         `⚠️ พบคำโฆษณาต้องห้าม (พ.ร.บ.อาหาร) · โหมด: ${claimsMode}\nวลีที่ชน: ${bannedClaims.join(", ")}\nข้อความบอท: ${outReply}\n———\nLineOA: ${name}`,
@@ -888,7 +891,7 @@ export async function processMessage(
       console.warn(JSON.stringify({ scope: "price-guard", event: "price-outside-catalog", mode: priceMode, blocked: blockPrice, bad: badPrices, reply: outReply, allowedSample: [...priceAllowed].slice(0, 40) }));
       const adminGroupId = process.env.ADMIN_GROUP_ID;
       if (adminGroupId) {
-        const name = await getProfileName(userId);
+        const name = await transport.getProfileName();
         await pushRawText(adminGroupId, `⚠️ บอทพูดราคานอกระบบ · โหมด: ${priceMode}\nเลขที่ชน: ${badPrices.join(", ")} บาท\nข้อความบอท: ${outReply}\n———\nLineOA: ${name}`);
       }
       if (blockPrice) {
@@ -932,7 +935,7 @@ export async function processMessage(
     }
   }
   const assistantSaved = outReply;
-  const deliveredOk = await deliverReply(replyToken, userId, withResume(outReply), config.quotaSaver);
+  const deliveredOk = await deliverReply(transport, withResume(outReply), config.quotaSaver);
   // D-45b: ตั้งธง "ส่งเนื้อหา step นี้แล้ว" เฉพาะเมื่อ deliver สำเร็จจริง + เทิร์นนี้มีเนื้อเต็มก้อนของ step อยู่ในข้อความ
   if (deliveredOk && deliverMarksStep && switches.memory && customer) {
     await addDeliveredStep(userId, geminiOutput.stage);
@@ -980,8 +983,8 @@ export async function processMessage(
   let slipThisTurn: string | null = null;
   if (imageContent) {
     slipThisTurn = imageFallback
-      ? await handleImageIntent(userId, "slip", "⚠️ AI อ่านรูปไม่สำเร็จ (timeout/error) ช่วยเช็คให้ด้วยค่ะ", imageContent, config, switches)
-      : await handleImageIntent(userId, geminiOutput.imageIntent, geminiOutput.imageNote, imageContent, config, switches);
+      ? await handleImageIntent(userId, "slip", "⚠️ AI อ่านรูปไม่สำเร็จ (timeout/error) ช่วยเช็คให้ด้วยค่ะ", imageContent, config, switches, transport)
+      : await handleImageIntent(userId, geminiOutput.imageIntent, geminiOutput.imageNote, imageContent, config, switches, transport);
   }
 
   // order gate — โค้ดเป็นเจ้าของ: เขียนชีต/แจ้งแอดมิน (ยอดจาก Core) · guard 2 = ตรวจเลขในคำพูดบอท
@@ -992,7 +995,7 @@ export async function processMessage(
       const pr = postQuote.price;
       [pr.total, pr.subtotal, pr.shippingFee, ...pr.lines.map((l) => l.lineTotal)].forEach((n) => allowed.add(String(n)));
     }
-    await runOrderGate(userId, customer, pending, postQuote?.price ?? null, slipThisTurn, config, nameMap, outReply, allowed);
+    await runOrderGate(userId, customer, pending, postQuote?.price ?? null, slipThisTurn, config, nameMap, outReply, allowed, transport);
   }
 
   // handoff เกิดขึ้น (doHandoff คำนวณไว้ข้างบนแล้ว) · else = push-on-exit ถ้าเพิ่งออกจาก intake
@@ -1003,13 +1006,13 @@ export async function processMessage(
         : stageIsHandoff && !geminiOutput.handoff
           ? "อยู่ประตูส่งต่อ (funnel_stage=handoff · โค้ดการันตี)"
           : geminiOutput.handoffReason || "AI ประเมินว่าควรส่งต่อ";
-    await handoff(userId, switches, { reason, userMessage });
+    await handoff(userId, switches, { reason, userMessage }, transport);
   } else if (switches.memory && prevIntakeTurns > 0 && !stageIsIntake) {
     // 🔴 push-on-exit (D-34): เคยอยู่ intake แล้วย้ายประตูออก (ไม่ handoff) → แจ้งแอดมินรับรู้เรื่องค้าง
     //    ≠ handoff: ไม่ปิดบอท ไม่มี footer (บอทคุยขายต่อ) · reuse pushRawText · edge เดียว (intake_turns reset แล้ว = ไม่ push ซ้ำ)
     const adminGroupId = process.env.ADMIN_GROUP_ID;
     if (adminGroupId) {
-      const name = await getProfileName(userId);
+      const name = await transport.getProfileName();
       const prevDoor = (lib && customer?.stage ? stepNameOf(lib.CSV_Step, customer.stage) : null) ?? "เรื่องที่คุยค้าง";
       const newDoor = (lib ? stepNameOf(lib.CSV_Step, geminiOutput.stage) : null) ?? "ประตูอื่น";
       await pushRawText(adminGroupId, `⚠️ ลูกค้าเพิ่งคุยเรื่อง "${prevDoor}" แล้วเปลี่ยนไป "${newDoor}" · รบกวนตรวจสอบเรื่องค้าง (บอทยังดูแลต่ออยู่)\nข้อความล่าสุด: ${userMessage}\n———\nLineOA: ${name}`);
@@ -1025,7 +1028,7 @@ async function handleTextMessage(
   switches: FeatureSwitches,
 ): Promise<void> {
   if (!switches.humanLikeTiming) {
-    await processMessage(userId, text, replyToken, config, switches);
+    await processMessage(userId, text, new LineTransport(replyToken, userId), config, switches);
     return;
   }
 
@@ -1046,7 +1049,7 @@ async function handleTextMessage(
   const collected = await collectAndClearPendingMessages(userId);
   if (!collected.text) return; // ถูกอีก invocation เก็บไปประมวลผลแล้ว
 
-  await processMessage(userId, collected.text, collected.replyToken ?? replyToken, config, switches);
+  await processMessage(userId, collected.text, new LineTransport(collected.replyToken ?? replyToken, userId), config, switches);
 }
 
 async function handleImageMessage(
@@ -1060,7 +1063,7 @@ async function handleImageMessage(
   // ไม่อัปโหลด/ยิงกลุ่มตรงนี้ — รอ AI ตัดสิน image_intent ก่อน (โค้ดค่อยลงมือเฉพาะ slip/damage)
   const content = await downloadMessageContent(messageId);
   const placeholderText = content ? "[ลูกค้าส่งรูปมา]" : "[ลูกค้าส่งรูปมาแต่โหลดรูปไม่สำเร็จ]";
-  await processMessage(userId, placeholderText, replyToken, config, switches, content ?? undefined);
+  await processMessage(userId, placeholderText, new LineTransport(replyToken, userId), config, switches, content ?? undefined);
 }
 
 // ---- คำสั่งในกลุ่มแอดมิน (ปิด/เปิดบอท ต่อคน · ทั้งหมด · รายชื่อล่าสุด) ----

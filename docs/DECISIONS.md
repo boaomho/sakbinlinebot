@@ -823,6 +823,14 @@ handoff ทุก path (edit/AI-semantic/keyword) ตั้งแค่ `human_m
 **ไม่แตะ:** cron แจกเลข/idempotency D-29/O semantics เดิม (เพิ่ม loop ต่อท้าย) · **harness:** cron (push+ขนส่ง+เลข · idempotent ไม่ซ้ำ · P ว่าง/R ว่าง ข้าม · human_mode→แอดมิน · greeting · ""=ปิด) + train sim + formatShippingMessage · **405 passed | 3 expected-fail** · build เขียว
 **จบเคส CRM/Follow (ลูกค้าตอบได้รับ→ถามรีวิว) = ก้อน B ส่วนหลัง · ยังไม่ทำ**
 
+### M-1 · refactor `ChannelTransport` (zero behavior change · 1 commit)
+สกัดช่องทางลูกค้าออกจาก `processMessage` เตรียมเสียบ Messenger (M-2) — LINE คงพฤติกรรมเดิมทุกบรรทัด
+- **ใหม่ `lib/channel/transport.ts`:** `interface ChannelTransport` (reply/push/typing/getProfileName/downloadInboundImage · "ช่องทางลูกค้า" เท่านั้น) + `class LineTransport` ห่อ `lib/line` เดิม (sandbox guard ใน line.ts ยังทำงาน → T-STUDIO ใช้ได้)
+- **`handler.ts`:** `processMessage`/`runHandoffFlow`/`deliverReply`/`handoff`/`handleImageIntent`/`runOrderGate` เปลี่ยน `replyToken` → `transport` (thread ผ่าน helper ลูกค้าทั้งสาย) · `getProfileName(userId)`→`transport.getProfileName()` · reply/push ลูกค้า→transport
+- **คงเดิม (ไม่ใช่ช่องทางลูกค้า):** admin-group `pushRawText`/`pushRawMessages` (กลุ่ม ops LINE) · คำสั่งกลุ่มแอดมิน (`replyToAdmin`/list/close) · `/reset` · typing/download ใน entry helper LINE
+- **entry helper** (`handleTextMessage`/`handleImageMessage`) คง `replyToken` + สร้าง `new LineTransport(token, userId)` ตอนเรียก processMessage (token ล่าสุดหลัง debounce) · `lib/train/turn.ts` สร้าง `LineTransport("TRAIN-REPLY-TOKEN", userId)`
+- **พิสูจน์:** 405 passed | 3 expected-fail **เท่าเดิม ไม่แก้ expectation** (แก้แค่วิธี inject) · build เขียว — บทพิสูจน์เดียวกับตอนแยก route.ts→handler.ts · **M-2** เพิ่ม `MessengerTransport` เสียบ interface เดิมได้เลย
+
 ### M-0 · Research Meta Messenger adapter (ไม่เขียนโค้ด · ค้นสด 2026-07-29)
 เอกสาร [docs/META-ADAPTER-SPEC.md](META-ADAPTER-SPEC.md) `[UNBUILT]` — สรุป onboarding/webhook/Send API + ร่างสถาปัตยกรรม adapter
 - 🔴 **`POST_PURCHASE_UPDATE` ตาย (27 เม.ย. 2026):** แจ้งพัสดุ/Follow **นอก 24 ชม.** บน Messenger ต้องใช้ **Utility Templates** (pre-approve + จ่ายเงิน) → **D-50 ยกมาเฉยๆ ไม่ได้** · แกนขาย (ก้อน A · ใน 24 ชม. `RESPONSE`) พอร์ตได้เต็ม

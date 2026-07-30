@@ -5,6 +5,7 @@ import { getConfig, resolveFeatureSwitches } from "@/lib/config";
 import { getCustomer, resetCustomerMemory, loadTrainSession, saveTrainSession, deleteTrainSession, CustomerState } from "@/lib/db";
 import { loadBotLibrary } from "@/lib/sheets/loader";
 import { funnelStageOf, stepNameOf } from "@/lib/agent/inject";
+import { LineTransport } from "@/lib/channel/transport";
 import { getSheets } from "@/lib/sheets/client";
 import { createSandbox, runInSandbox, trainUserId, TrainSandbox, OverlayEntry } from "./sandbox";
 import { buildReplySources, collectDroppedBubbles, renderPreview, ReplySource, RenderResult } from "./preview";
@@ -143,7 +144,7 @@ export async function runTrainTurn(
     ctx.overlay = overlay; // draft มีผลตั้งแต่ loadBotLibrary (bypass cache ใน sandbox)
     const config = await getConfig();
     const switches = resolveFeatureSwitches(config);
-    await processMessage(ctx.userId, text, "TRAIN-REPLY-TOKEN", config, switches, image);
+    await processMessage(ctx.userId, text, new LineTransport("TRAIN-REPLY-TOKEN", ctx.userId), config, switches, image);
     const customer = await getCustomer(ctx.userId);
     return buildResult(ctx, customer, text);
   });

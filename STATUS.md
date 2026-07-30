@@ -24,7 +24,12 @@
 - **D-50 (แจ้งเลขพัสดุ · ก้อน B ส่วนแรก) เสร็จ ✅** บน `main` — ทีมแพ็คกรอก Tracking(P) → cron push แจ้งลูกค้า (ขนส่ง+เลขพัสดุ) ผ่าน greeting D-51 · dedup Neon `shipping_notified` · human_mode→แจ้งแอดมิน · T-STUDIO ปุ่ม "📦 กรอกพัสดุ + cron" · 🔴 เจ้าของเพิ่ม Config keys (ล่าง)
 - **D-51 (ทักทายรายวัน) เสร็จ ✅** บน `main` — เทิร์นแรกของลูกค้าแต่ละวัน (เวลาไทย) เติม prefix หน้าบอลลูนข้อความแรก (delivery ล้วน · CSV_Config `ทักทายรายวัน` · ค่าเริ่ม `สวัสดีค่ะ ` · ว่าง=ปิด · ข้าม handoff/degraded/รูป)
 - 🔴 **เจ้าของต้องเพิ่มใน CSV_Config (ชีต):** `ทักทายรายวัน` (D-51 · ค่าเริ่ม `สวัสดีค่ะ ` · เว้นว่าง=ปิด) · `ข้อความแจ้งพัสดุ` (D-50 · มี `{ขนส่ง}{เลขพัสดุ}` · เว้นว่าง=ปิด) · `ขนส่ง_เริ่มต้น` (D-50 · `Shopee Express`) — ทั้งหมด "ไม่มี key = ใช้ค่าเริ่มในโค้ด" (ฟีเจอร์เปิดอยู่แล้ว) · เพิ่มเพื่อแก้สำนวนเองในชีต
-- **M-0 (research Meta Messenger adapter) เสร็จ ✅** — [docs/META-ADAPTER-SPEC.md](docs/META-ADAPTER-SPEC.md) `[UNBUILT]` · 🔴 คีย์: `POST_PURCHASE_UPDATE` ตาย (27 เม.ย. 2026) → แจ้งพัสดุนอก 24 ชม. บน Messenger ต้อง Utility Template · Dev Mode เทสได้ก่อนรีวิว · สถาปัตยกรรม `ChannelTransport` + `resolvePageContext(pageId)` (กันดีไซน์ตายทาง) · ยังไม่เขียนโค้ด · มี contract ต้องเคาะก่อน build
+## 🔵 Meta Messenger adapter — เริ่มแล้ว (§5 เคาะครบ · แผน M-1→M-4)
+- **M-0 research เสร็จ ✅** — [docs/META-ADAPTER-SPEC.md](docs/META-ADAPTER-SPEC.md) `[UNBUILT]` · 🔴 `POST_PURCHASE_UPDATE` ตาย (เม.ย. 2026) → แจ้งพัสดุนอก 24 ชม. ต้อง Utility Template · Dev Mode เทสได้ก่อนรีวิว
+- **M-1 refactor `ChannelTransport` เสร็จ ✅** บน `main` — `lib/channel/transport.ts` (interface + `LineTransport` ห่อ line.ts เดิม) · `processMessage`+helper รับ `transport` แทน `replyToken` · **405 passed เท่าเดิม ไม่แก้ expectation** · zero behavior change
+- **เคาะ §5:** id key = prefix (`fb:<pageId>:<psid>` · LINE=raw · `TRAIN:` เดิม) · Orders R = channel_user_id (header คงชื่อ) · D-50 นอก 24 ชม. = ยิงใน 24 ชม. + เกิน→แจ้งแอดมิน · echo→human_mode (subscribe message_echoes) · Blob `meta/<pageId>/...` · เพจแรก config/ชีตชุดเดียวกับ LINE
+- **ต่อไป:** M-2 (meta webhook + `MessengerTransport` + `resolvePageContext` env 1 เพจ + debounce key + กรอง echo + สลิป CDN) → M-4 (cron/D-50 route ตาม prefix R + 24ชม · ระหว่างนี้ cron ข้าม id ที่ไม่ใช่ LINE + log) · M-3 (App Review) = งานมือเจ้าของ ขนานไป
+
 - เทสล่าสุด: **405 passed | 3 expected-fail | 34 skipped** (scripted) · tsc + build เขียว
 - known-tuning (ยอมรับแล้ว · ปิดได้ทีหลังด้วยการจูนชีต): **G12** (S2 vs S2_DIRECT · "ขอลองถ้วยเดียว") · **G29** stage (S4A/S4B)
 

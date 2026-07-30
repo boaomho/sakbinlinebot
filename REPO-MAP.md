@@ -35,10 +35,11 @@ lib/
     auth.ts         TRAIN_PASSWORD + cookie HMAC · guardTrainRequest (All-or-nothing → 404)
 app/api/
   line-webhook/route.ts   webhook (POST บาง — Next ห้าม route.ts export อื่น)
-  line-webhook/handler.ts เครื่องยนต์ทั้งหมด (ย้ายเชิงกลไกจาก route.ts ตอน T-STUDIO ก · export handleEvent+processMessage)
-  cron/orders/route.ts    cron แจกเลขออเดอร์ + ยิงกลุ่มแพ็ค
+  line-webhook/handler.ts เครื่องยนต์ทั้งหมด (export handleEvent + processMessage) · M-1: processMessage รับ ChannelTransport แทน replyToken
+  cron/orders/route.ts    cron แจกเลขออเดอร์ + ยิงกลุ่มแพ็ค + D-50 แจ้งพัสดุ
   cron/follow/route.ts    cron ตามลูกค้า (Follow — dormant)
 app/train/        # T-STUDIO UI (page+TrainStudio client) + api/{login,turn,reset,cron,preview,write}
+lib/channel/transport.ts  # M-1 · ChannelTransport (interface ช่องทางลูกค้า) + LineTransport (ห่อ lib/line) · M-2 เพิ่ม MessengerTransport
 tests/
   harness/        replay(webhook+HMAC จริง) · setup(mock) · state · db · sheet · assert · fixtures
   scenarios/      *.test.ts (golden/order-core/inject/sheet-*/config-parse/gemini-guard/prompt-lint/image-url/expect-fail)
