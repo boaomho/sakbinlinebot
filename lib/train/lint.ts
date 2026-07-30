@@ -33,26 +33,42 @@ const HEALTH_TERMS = [
 ];
 /** คำที่บ่งว่าคำตอบ "ส่งต่อคน" (ไม่ใช่บอทตอบสุขภาพเอง) — เจอคู่กับคำสุขภาพ → เตือนเหลือง ไม่ block */
 const HANDOFF_TERMS = ["ส่งต่อ", "แอดมิน", "ทีมงาน", "เจ้าหน้าที่", "ผู้เชี่ยวชาญ", "ติดต่อกลับ", "admin"];
+/** D-58: วลี "รับรอง" สุขภาพ — ห้ามใช้แม้ในประตู notify (ให้ข้อมูลกลางๆ + ส่งต่อ ไม่ใช่รับประกันว่าปลอดภัย) */
+const H1_ASSURANCE_TERMS = ["ทานได้", "กินได้", "ปลอดภัย", "ไม่เป็นไร", "ไม่อันตราย", "หายห่วง"];
 
 /**
  * 🔴 H1 gate: ถ้า "แถวนี้เกี่ยวสุขภาพ/แพ้อาหาร" (คำสุขภาพอยู่ใน trigger=คำถาม/สิ่งที่ลูกค้าพูด หรือในคำตอบ)
  *    → คำตอบ "ต้องเป็นการส่งต่อแอดมิน" · ไม่งั้น block (เคส "แพ้กุ้งทานได้ไหม" → "ทานได้ค่ะ" = คดี)
  *    trigger สำคัญ: คำตอบอาจดูไม่มีคำสุขภาพ ("ทานได้ค่ะ") แต่ถ้า "คำถาม" เกี่ยวแพ้ = อันตราย
+ * opts (D-58): exempt = ประตู CSV_Step funnel=handoff/handoff_notify (คำตอบสุขภาพเป็นดีไซน์ที่เจ้าของคุม → ไม่ block)
+ *              notify = ประตู handoff_notify → เพิ่ม warn เหลืองถ้าใช้วลี "รับรอง" สุขภาพ (ควรให้ข้อมูลกลางๆ)
  */
-export function lintHealthH1(triggerText: string, answerText: string): LintFinding | null {
-  const hay = `${triggerText} ${answerText}`.toLowerCase();
-  const hits = [...new Set(HEALTH_TERMS.filter((t) => hay.includes(t)))];
-  if (hits.length === 0) return null;
-  const answerIsHandoff = HANDOFF_TERMS.some((t) => answerText.toLowerCase().includes(t));
-  return answerIsHandoff
-    ? { level: "warn", kind: "health-h1", hits, message: `⚠︎ แถวนี้เกี่ยวสุขภาพ/แพ้อาหาร (H1) — คำตอบเป็นการส่งต่อแอดมิน อนุญาตได้ แต่ตรวจให้แน่ใจว่าบอทไม่ได้ให้คำแนะนำสุขภาพเอง (คำที่พบ: ${hits.join(", ")})` }
-    : { level: "block", kind: "health-h1", hits, message: `🔴 แถวนี้เกี่ยวสุขภาพ/แพ้อาหาร (H1) — บอทห้ามตอบเอง เสี่ยง พ.ร.บ.อาหาร/คดี · คำตอบ "ต้องเป็นการส่งต่อแอดมิน" (เช่น "ขอส่งต่อให้แอดมินดูแลเรื่องนี้ให้นะคะ") แล้วจะเขียนได้ (คำที่พบ: ${hits.join(", ")})` };
+export function lintHealthH1(triggerText: string, answerText: string, opts: { exempt?: boolean; notify?: boolean } = {}): LintFinding[] {
+  const out: LintFinding[] = [];
+  const answerLower = answerText.toLowerCase();
+  if (!opts.exempt) {
+    const hits = [...new Set(HEALTH_TERMS.filter((t) => `${triggerText} ${answerText}`.toLowerCase().includes(t)))];
+    if (hits.length > 0) {
+      const answerIsHandoff = HANDOFF_TERMS.some((t) => answerLower.includes(t));
+      out.push(answerIsHandoff
+        ? { level: "warn", kind: "health-h1", hits, message: `⚠︎ แถวนี้เกี่ยวสุขภาพ/แพ้อาหาร (H1) — คำตอบเป็นการส่งต่อแอดมิน อนุญาตได้ แต่ตรวจให้แน่ใจว่าบอทไม่ได้ให้คำแนะนำสุขภาพเอง (คำที่พบ: ${hits.join(", ")})` }
+        : { level: "block", kind: "health-h1", hits, message: `🔴 แถวนี้เกี่ยวสุขภาพ/แพ้อาหาร (H1) — บอทห้ามตอบเอง เสี่ยง พ.ร.บ.อาหาร/คดี · คำตอบ "ต้องเป็นการส่งต่อแอดมิน" (เช่น "ขอส่งต่อให้แอดมินดูแลเรื่องนี้ให้นะคะ") แล้วจะเขียนได้ (คำที่พบ: ${hits.join(", ")})` });
+    }
+  }
+  // D-58: ประตู notify — ไม่ block คำสุขภาพ (เป็นดีไซน์) แต่เตือนเหลืองถ้า "รับรอง" ว่าปลอดภัย/ทานได้
+  if (opts.notify) {
+    const aHits = [...new Set(H1_ASSURANCE_TERMS.filter((t) => answerLower.includes(t)))];
+    if (aHits.length > 0) {
+      out.push({ level: "warn", kind: "health-h1", hits: aHits, message: `⚠︎ ประตู notify ไม่ควร "รับรอง" เรื่องสุขภาพ (${aHits.join(", ")}) — ให้ข้อมูลกลางๆ (ส่วนผสม/แนะนำปรึกษาแพทย์) + แจ้งว่าแอดมินจะช่วยดูแล` });
+    }
+  }
+  return out;
 }
 
 /** lint pattern ดิบ (ก่อน resolve) — จับตัวแปรผิด/claims/ราคานอกระบบ/บอลลูนเกิน */
 export function lintPattern(
   pattern: string,
-  opts: { config: AppConfig; lib: BotLibrary; payment: string; now: Date; trigger?: string },
+  opts: { config: AppConfig; lib: BotLibrary; payment: string; now: Date; trigger?: string; h1Exempt?: boolean; h1Notify?: boolean },
 ): LintFinding[] {
   const { config, lib, payment, now } = opts;
   const findings: LintFinding[] = [];
@@ -88,9 +104,8 @@ export function lintPattern(
     findings.push({ level: "warn", kind: "image-last", hits: [], message: "บอลลูนสุดท้ายเป็นรูป — โค้ดจะสลับ/เติมข้อความปิดท้ายให้ (กฎเหล็ก: ห้ามจบด้วยรูป)" });
   }
 
-  // 5) 🔴 H1 สุขภาพ/แพ้อาหาร (พ.ร.บ.อาหาร) — trigger-aware (คำถาม/สิ่งที่ลูกค้าพูด + คำตอบ) · gate: คำตอบต้องเป็น handoff
-  const h1 = lintHealthH1(opts.trigger ?? "", pattern);
-  if (h1) findings.push(h1);
+  // 5) 🔴 H1 สุขภาพ/แพ้อาหาร (พ.ร.บ.อาหาร) — trigger-aware · gate: คำตอบต้องเป็น handoff (ยกเว้นประตู handoff/notify · D-58)
+  findings.push(...lintHealthH1(opts.trigger ?? "", pattern, { exempt: opts.h1Exempt, notify: opts.h1Notify }));
 
   return findings;
 }

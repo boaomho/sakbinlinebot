@@ -138,6 +138,30 @@ describe("T2-ค · listTabRows + suggestNextKey", () => {
   });
 });
 
+// ---------- D-58 · lint H1 exempt สำหรับประตู CSV_Step handoff/handoff_notify ----------
+describe("D-58 · lint H1 ยกเว้นประตู handoff/handoff_notify", () => {
+  const STEP_H = ["step_id", "funnel_stage", "ชื่อประตู", "ตัวอย่างคำตอบ", "ตัวอย่างประโยคปิดท้าย", "สถานะ"];
+  function seedStep(): void {
+    seedBotLib();
+    sheetsCalls.botLibReturn.CSV_Step = [STEP_H, ["S1", "lead", "ทัก", "สวัสดีค่ะ", "", "live"]];
+  }
+  it("ประตู handoff_notify: คำสุขภาพในคำตอบ → ไม่ block (เขียนได้)", async () => {
+    seedStep();
+    const res = await appendRow("CSV_Step", { step_id: "H1", funnel_stage: "handoff_notify", ชื่อประตู: "สุขภาพ", ตัวอย่างคำตอบ: "สินค้ามีส่วนผสมปลาค่ะ หากแพ้อาหารแนะนำปรึกษาแพทย์", สถานะ: "" });
+    expect(res.status).toBe("ok");
+  });
+  it("ประตู handoff_notify: วลีรับรอง 'ทานได้' → warn (ไม่ block · ยังเขียนได้)", async () => {
+    seedStep();
+    const res = await appendRow("CSV_Step", { step_id: "H1", funnel_stage: "handoff_notify", ชื่อประตู: "สุขภาพ", ตัวอย่างคำตอบ: "แพ้กุ้งก็ทานได้ค่ะ", สถานะ: "" });
+    expect(res.status, "assurance = warn ไม่ block").toBe("ok");
+  });
+  it("🔴 ประตูปกติ (lead): คำสุขภาพในคำตอบไม่ handoff → block (ไม่ยกเว้น)", async () => {
+    seedStep();
+    const res = await appendRow("CSV_Step", { step_id: "S9", funnel_stage: "lead", ชื่อประตู: "x", ตัวอย่างคำตอบ: "แพ้กุ้งทานได้เลยค่ะ", สถานะ: "" });
+    expect(res.status).toBe("lint");
+  });
+});
+
 // ---------- 🔴 prod กรอง draft · ห้องซ้อมเห็น draft ผ่าน overlay (ใช้ matcher prod จริง) ----------
 describe("T2-ค · draft: prod ทิ้ง · sandbox เห็น (overlay สถานะ→live)", () => {
   const rows = [

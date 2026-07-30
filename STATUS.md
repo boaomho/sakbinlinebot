@@ -37,6 +37,8 @@
 - **T2-ฉ (แท็บออเดอร์ read-only · D-56) เสร็จ ✅** บน `main` — แท็บ "🧾 ออเดอร์" ในหน้า dashboard · ตารางจากชีต Orders (cache 60วิ · เรียงใหม่สุด) + สถานะ derive จากคอลัมน์จริง M/N/O/P+`shipping_notified` (`deriveOrderStatus` · cancelled ก่อนเสมอ) + headline คอขวด (งานคน=รอคอนเฟิร์ม/รอแพ็ค เน้นแดง) + TRAIN กรอง default · 🔴 read-only ล้วน (การกระทำจริงทำในชีต)
 - **T2-ค (จัดการแถวคลังความรู้จากเว็บ · D-57) เสร็จ ✅** บน `main` — แท็บ "📚 คลังความรู้" ใน /train · เพิ่มแถว (🔴 บังคับ draft · แท็บไร้สถานะ=ปฏิเสธ) · live↔draft (soft delete) · "▶ ทดสอบ draft ในห้องซ้อม" (overlay สถานะ→live รายแถว · prod ยังกรอง draft) · **lintHealthH1 trigger-aware** (แถวเกี่ยวสุขภาพ→คำตอบต้อง handoff ไม่งั้น block) · funnel validator · เขียนผ่านกลไก v1 (hard guard/conflict/lint) · TRAIN_LOG +action · **476 passed**
 - 🔴 **เจ้าของต้องวางข้อความเตือนในแท็บวิธีใช้ของชีต (KI-08):** `เพิ่มแถวมือ ต้องใส่ "สถานะ=draft" ก่อนเสมอ — ช่องว่าง=บอทถือ live ทันที (ลูกค้าเห็นเลย)` — เพิ่มผ่านเว็บ (📚) กันให้แล้ว แต่แก้ชีตมือยังเสี่ยง
+- **D-58 handoff_notify เสร็จ ✅** บน `main` — funnel ใหม่ `handoff_notify` (ตอบ pattern + แจ้งแอดมิน 🔔 + ไม่ปิดบอท) + pre-check ชั้นสอง `คำ_notify` (fail-safe → handoff ถ้าชีตตั้งผิด) · 🔴 **ไม่แตะ DEFAULT_HANDOFF_KEYWORDS** (notifyKeywords ว่าง=พฤติกรรมเดิม 100%) · **486 passed**
+- 🔴 **เปิดใช้ D-58 = งานชีตเจ้าของ:** ย้ายคำสุขภาพ `คำ_handoff`→`คำ_notify` + ประตู H1 `funnel_stage=handoff_notify` + เขียน pattern ปลอดภัย (ข้อมูล+ปรึกษาแพทย์ ไม่รับรอง "ทานได้")
 - **ต่อไป T2-ง** (หน้า Config แบบฟอร์ม · validation ตัวเลข) → แล้ว T2-จ (Brief AI)
 - **ต่อไป (งานมือเจ้าของ):** M-3 (App Review + Business Verification · ใช้ URL `/privacy` ในการยื่น) · Utility Template (Messenger นอก 24 ชม.) เฟสหลัง · Follow/CRM ก้อน B ส่วนหลัง
 

@@ -218,10 +218,11 @@ describe("validateStepFunnelStages — จับ typo funnel_stage (Step 6 · vi
     expect(out, "H5 ยังอยู่ในสารบัญ (ไม่ auto-skip)").toContain("H5");
   });
 
-  it("VALID_FUNNEL_STAGES ครบ 9 (region 7 + handoff 2)", () => {
+  it("VALID_FUNNEL_STAGES ครบ 10 (region 7 + handoff 3 · D-58 +handoff_notify)", () => {
     expect(VALID_FUNNEL_STAGES).toContain("handoff");
     expect(VALID_FUNNEL_STAGES).toContain("handoff_after_intake");
-    expect(VALID_FUNNEL_STAGES.length).toBe(9);
+    expect(VALID_FUNNEL_STAGES).toContain("handoff_notify");
+    expect(VALID_FUNNEL_STAGES.length).toBe(10);
   });
 });
 

@@ -143,6 +143,7 @@ scripts/sheet-lint.mjs  D-45 · lint keyword ชีตจริง (คำโด
 **objections (D-27):** `จำนวนข้อโต้แย้งที่ยัดเข้า prompt`(2) · ~~`จำนวนตัวอย่างที่ยัดเข้า prompt`~~ (ลบ v2.0 D-41 · เลิก Examples)
 **order_id (D-29):** `รหัสนำหน้าออเดอร์`(default `SKB`) · `เลขออเดอร์_รีเซ็ตทุกวัน`(ลำดับ col A)
 **handoff_after_intake (D-34/D-35):** `เพดานเทิร์นก่อนส่งแอดมิน`(default 3 · คุยมากสุด) · `เทิร์นขั้นต่ำก่อนส่งแอดมิน`(default 1 · ถามก่อน · เพิกเฉย AI flag จนเทิร์น min+1) · 🔴 คำ trigger ห้ามซ้ำ `คำ_handoff` (keyword pre-check ปิดก่อนเข้า intake)
+**handoff_notify (D-58):** `คำ_notify`(default ว่าง=ปิด · alias `คำ_แจ้งแอดมิน`) — pre-check ชั้นสอง (หลัง `คำ_handoff`) → บังคับประตู `NOTIFY_DOOR="H1"` (funnel=`handoff_notify`): ตอบ pattern verbatim + push 🔔 (dedup delivered_steps) + **ไม่ปิดบอท** · fail-safe: H1 funnel≠handoff_notify/pattern ว่าง → `runHandoffFlow` ปิดเงียบ+log · 🔴 ไม่แตะ DEFAULT_HANDOFF_KEYWORDS · funnel enum: region 7 + handoff 3 (handoff/handoff_after_intake/handoff_notify)
 **สวิตช์:** `เปิด_ติดแท็ก` · `เปิด_ส่งต่อแอดมิน` · `เปิด_ระบบออเดอร์` · `เปิด_ระบบติดตาม` · `เปิด_การ์ด_flex` · `เปิด_จังหวะหน่วงเหมือนคน`
 > ค่าสวิตช์ที่รับ: `เปิด/true/on/1/ใช่/yes` = true · `ปิด/false/off/0/ไม่/no/ว่าง` = false
 

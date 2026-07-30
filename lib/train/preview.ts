@@ -108,6 +108,13 @@ export function triggerTextForTab(tab: string, cols: Record<string, string>): st
   return (H1_TRIGGER_COLS[tab] ?? []).map((c) => cols[c] ?? "").filter(Boolean).join(" ");
 }
 
+/** D-58: ประตู CSV_Step funnel=handoff/handoff_notify → ยกเว้น H1 block (คำตอบสุขภาพเป็นดีไซน์) · notify → +warn วลีรับรอง */
+export function h1FlagsForRow(tab: string, cols: Record<string, string>): { h1Exempt: boolean; h1Notify: boolean } {
+  if (tab !== "CSV_Step") return { h1Exempt: false, h1Notify: false };
+  const f = (cols["funnel_stage"] ?? "").toLowerCase();
+  return { h1Exempt: f === "handoff" || f === "handoff_notify", h1Notify: f === "handoff_notify" };
+}
+
 /** สร้างแพตเทิร์นจากคอลัมน์ (draft ทับแล้ว) ตามแท็บ — reuse โดย write.ts (lint gate) */
 export function patternFromColumns(tab: string, cols: Record<string, string>): string {
   if (tab === "CSV_Step") return joinVerbatimParts(cols["ตัวอย่างคำตอบ"] ?? "", cols["ตัวอย่างประโยคปิดท้าย"] ?? "");
@@ -155,7 +162,7 @@ export function renderPreview(
   });
 
   const payment = customer?.pendingOrder["การชำระเงิน"] ?? "";
-  const lint = lintPattern(rawPattern, { config, lib, payment, now, trigger: triggerTextForTab(tab, cols) });
+  const lint = lintPattern(rawPattern, { config, lib, payment, now, trigger: triggerTextForTab(tab, cols), ...h1FlagsForRow(tab, cols) });
 
   return { rawPattern, columns: Object.entries(cols).filter(([k]) => (EDITABLE_COLS[tab] ?? []).includes(k)).map(([name, value]) => ({ name, value })), segments, vars, lint };
 }

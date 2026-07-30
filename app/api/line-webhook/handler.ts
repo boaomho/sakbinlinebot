@@ -148,6 +148,9 @@ function buildStateText(customer: CustomerState | null, orderWarning: string | n
   return lines.join("\n");
 }
 
+/** 🔴 D-58: ประตูเป้าหมายของ pre-check `คำ_notify` — ตายตัว (ยังไม่ config ประตู · ขยายทีหลังถ้ามีเคสจริง) */
+const NOTIFY_DOOR = "H1";
+
 /**
  * 🔴 ประตู handoff รวมศูนย์ (D-33) — "ปิดบอท + แจ้งแอดมิน + footer" ที่เดียว
  * ทุกทางที่ต้องส่งต่อคน **ต้องเรียกฟังก์ชันนี้** (guard: setHumanMode(userId,true) ห้ามอยู่ที่อื่น)
@@ -503,6 +506,27 @@ export async function processMessage(
   //   quoted = pending มี items แล้ว (= สรุปยอดไปแล้ว → S4) · ยังไม่มี = S1-S3 (สรุปยอดเข้าถึงได้)
   // FAQ: สารบัญทุกข้อ + เต็มเฉพาะที่ keyword ตรง
   const lib = await loadBotLibrary();
+
+  // 🔴 D-58: pre-check ชั้นสอง (คำ_notify) — หลัง คำ_handoff (ปิดเงียบ) · reuse checkHandoffKeywords (ไม่ fork · KI-01)
+  //    match → บังคับเข้าประตู notify: ตอบ pattern verbatim + push 🔔 + ไม่ปิดบอท (ไหลผ่าน pipeline เดิม ด้วย forced stage)
+  //    fail-safe: ประตู NOTIFY_DOOR funnel ต้อง=handoff_notify + มี pattern · ไม่งั้น → ปิดบอทเงียบ + log (ห้ามบอทตอบสุขภาพเงียบ/หายเงียบ)
+  let notifyForcedStage: string | null = null;
+  if (switches.handoff && config.notifyKeywords.length > 0) {
+    const notifyCheck = checkHandoffKeywords(userMessage, config.notifyKeywords);
+    if (notifyCheck.matched) {
+      const doorFunnel = lib ? funnelStageOf(lib.CSV_Step, NOTIFY_DOOR) : null;
+      const sv = lib ? stepVerbatim(lib.CSV_Step, NOTIFY_DOOR) : null;
+      if (doorFunnel === "handoff_notify" && sv && sv.pattern.trim() !== "") {
+        notifyForcedStage = NOTIFY_DOOR;
+        console.log(JSON.stringify({ scope: "notify-precheck", keyword: notifyCheck.keyword, stage: NOTIFY_DOOR }));
+      } else {
+        console.warn(JSON.stringify({ scope: "notify-precheck", event: "misconfigured", door: NOTIFY_DOOR, funnel: doorFunnel, hasPattern: Boolean(sv && sv.pattern.trim()), action: "fallback-handoff" }));
+        await runHandoffFlow(userId, userMessage, transport, config, switches, `คำ_notify แต่ประตู ${NOTIFY_DOOR} funnel=${doorFunnel ?? "ไม่พบ"}/pattern ว่าง — ปิดบอทเพื่อความปลอดภัย`);
+        return;
+      }
+    }
+  }
+
   const preItems = normalizeItems(customer?.pendingOrder.items);
 
   // D-32: ออเดอร์ที่เขียนแล้ว (last_order) → สัญญาณ routing + บรรทัดสถานะ + ตัวแปรทวน (แยกจาก pending)
@@ -593,6 +617,14 @@ export async function processMessage(
       imageIntent: "other", imageNote: "", objectionDetected: "none", degraded: false,
     };
     console.log(JSON.stringify({ scope: "payment-precheck", payment: prePayment, stage: preCheckStep, skippedAI: true }));
+  } else if (notifyForcedStage) {
+    // 🔴 D-58: บังคับประตู notify (ข้าม AI/FAQ/OBJ) → pipeline เดิมส่ง pattern verbatim + 🔔 + ไม่ปิดบอท (funnel=handoff_notify)
+    geminiOutput = {
+      reply: "", stage: notifyForcedStage, tagsAdd: [], handoff: false, handoffReason: "",
+      orderData: {}, paymentMethod: "" as const, orderEditRequest: false,
+      imageIntent: "other", imageNote: "", objectionDetected: "none", degraded: false,
+    };
+    console.log(JSON.stringify({ scope: "notify-precheck", forced: true, stage: notifyForcedStage, skippedAI: true }));
   } else {
     geminiOutput = await withTimeout(
       runSalesTurn({
@@ -778,7 +810,8 @@ export async function processMessage(
   // 🔴 เทิร์น handoff (AI flag / ประตู funnel=handoff|intake) → ห้ามแทรก objection/FAQ answer (ปล่อย step pattern = ข้อความประตูส่งต่อ/intake)
   // D-45b ธงต่อ step: step ที่เคย "ส่งเนื้อหา" แล้ว → ส่งเฉพาะปิดท้าย (กันโชว์ตารางโปรซ้ำ) · FAQ/OBJ = ทางแยก ต้อง "กลับบ้าน" เสมอ
   const stageFunnelReply = lib ? funnelStageOf(lib.CSV_Step, geminiOutput.stage) : null;
-  const isHandoffTurn = geminiOutput.handoff || stageFunnelReply === "handoff" || stageFunnelReply === "handoff_after_intake";
+  // 🔴 handoff_notify (D-58): ปฏิบัติเหมือน handoff ตอน "เลือกที่มาข้อความ" — ส่ง pattern ประตูตามชีต ไม่ให้ OBJ/FAQ ทับ (แต่ไม่ปิดบอท ดูบล็อก handoff-decision)
+  const isHandoffTurn = geminiOutput.handoff || stageFunnelReply === "handoff" || stageFunnelReply === "handoff_after_intake" || stageFunnelReply === "handoff_notify";
   const sv = lib ? stepVerbatim(lib.CSV_Step, geminiOutput.stage) : null;
   const stepFull = sv?.mode === "ปิด" ? sv.pattern : ""; // เนื้อเต็มก้อน (คำตอบ+ปิดท้าย) — เฉพาะโหมดปิด
   const stepClose = lib ? stepClosing(lib.CSV_Step, geminiOutput.stage) : "";
@@ -946,12 +979,22 @@ export async function processMessage(
   // D-45b: ตั้งธง "ส่งเนื้อหา step นี้แล้ว" เฉพาะเมื่อ deliver สำเร็จจริง + เทิร์นนี้มีเนื้อเต็มก้อนของ step อยู่ในข้อความ
   if (deliveredOk && deliverMarksStep && switches.memory && customer) {
     await addDeliveredStep(userId, geminiOutput.stage);
+    // 🔴 D-58: ประตู handoff_notify → แจ้งแอดมิน "บอทตอบข้อมูลแล้ว ยังคุยต่อ" · ไม่ปิดบอท
+    //    dedup: push ตรงจังหวะเดียวกับ mark delivered_steps (ครั้งแรกที่ส่งประตูนี้เท่านั้น) — reuse ธงเดิม ไม่มี state ใหม่
+    if (stageFunnelReply === "handoff_notify") {
+      const adminGroupId = process.env.ADMIN_GROUP_ID;
+      if (adminGroupId) {
+        const name = await transport.getProfileName();
+        await pushRawText(adminGroupId, `🔔 ${channelLabel(userId)} ${name} ถามเรื่องสุขภาพ/แพ้อาหาร — บอทตอบข้อมูลตามชีตแล้ว ยังคุยต่อ (ไม่ได้ปิดบอท) รบกวนช่วยดูให้ด้วยค่ะ\nข้อความ: ${userMessage}`);
+      }
+    }
   }
 
   // D-34/D-35: handoff_after_intake — คุยก่อนค่อยส่งคน · นับเทิร์น + reset (ออกประตู/handoff/เงียบนาน) + เพดาน/ขั้นต่ำ
   const stageFunnel = lib ? funnelStageOf(lib.CSV_Step, geminiOutput.stage) : null;
   const stageIsHandoff = stageFunnel === "handoff"; // ส่งต่อทันที (D-33)
   const stageIsIntake = stageFunnel === "handoff_after_intake";
+  const stageIsNotify = stageFunnel === "handoff_notify"; // D-58: ตอบ+แจ้งแอดมิน แต่ห้ามปิดบอท
   const intakeCap = numFromRaw(config, "เพดานเทิร์นก่อนส่งแอดมิน", 3); // คุยได้มากสุด → handoff แน่นอน
   const intakeMin = numFromRaw(config, "เทิร์นขั้นต่ำก่อนส่งแอดมิน", 1); // ต้องถามอย่างน้อย N เทิร์น (1..N=ถาม) → handoff เทิร์นที่ N+1
   // 🔴 D-35 timeout: เงียบเกิน adminSilenceReturnMinutes → เริ่มนับ intake ใหม่ (เคสเข้า intake แล้วหายกลางคัน ไม่ handoff ไม่ออก)
@@ -964,7 +1007,7 @@ export async function processMessage(
   // handoff: funnel_stage=handoff (D-33 ทันที) · AI flag · intake (ถามครบขั้นต่ำ/เกินเพดาน) · "ขอคุยแอดมิน"=keyword pre-check (ก่อน Gemini)
   const intakeHandoff = stageIsIntake && (intakeCapReached || (geminiOutput.handoff && intakeMinReached));
   const doHandoff =
-    switches.handoff && !damageHandled && !editHandled &&
+    switches.handoff && !damageHandled && !editHandled && !stageIsNotify && // 🔴 D-58: ประตู notify ห้ามปิดบอทเด็ดขาด (แม้ AI ตั้ง flag)
     (intakeHandoff || (!stageIsIntake && (geminiOutput.handoff || stageIsHandoff)));
   // 🔴 D-35 reset ตอน handoff จาก intake: เคลมจบ → ครั้งหน้าเริ่มนับใหม่ (กัน counter ค้างข้ามเซสชัน = handoff เทิร์นแรก)
   const persistIntakeTurns = doHandoff && stageIsIntake ? 0 : newIntakeTurns;

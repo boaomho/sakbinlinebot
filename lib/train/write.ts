@@ -6,7 +6,7 @@ import { cleanHeader, cleanCell } from "@/lib/sheets/clean";
 import { bangkokDateTime } from "@/lib/core/time";
 import { getConfig } from "@/lib/config";
 import { lintPattern } from "./lint";
-import { patternFromColumns, triggerTextForTab, EDITABLE_COLS } from "./preview";
+import { patternFromColumns, triggerTextForTab, h1FlagsForRow, EDITABLE_COLS } from "./preview";
 import { tabKeyColumn } from "./sandbox";
 import { VALID_FUNNEL_STAGES, isActiveStatus } from "@/lib/agent/inject";
 
@@ -97,7 +97,7 @@ export async function writeCell(tab: string, key: string, column: string, newVal
   // lint gate ฝั่ง server (ไม่เชื่อ client) — lint full-row pattern ที่ทับ draft แล้ว
   const config = await getConfig();
   const merged = { ...loc.rowCols, [column]: newValue };
-  const findings = lintPattern(patternFromColumns(tab, merged), { config, lib, payment: "", now: new Date(), trigger: triggerTextForTab(tab, merged) });
+  const findings = lintPattern(patternFromColumns(tab, merged), { config, lib, payment: "", now: new Date(), trigger: triggerTextForTab(tab, merged), ...h1FlagsForRow(tab, merged) });
   if (findings.some((f) => f.level === "block")) return { status: "lint", lint: findings };
 
   const spreadsheetId = botlibId(); // hard guard: BotLibrary เท่านั้น
@@ -210,7 +210,7 @@ export async function appendRow(tab: string, cols: Record<string, string>): Prom
 
   // lint คำตอบ (รวม H1 trigger-aware block) — ไม่เชื่อ client
   const config = await getConfig();
-  const findings = lintPattern(patternFromColumns(tab, cols), { config, lib, payment: "", now: new Date(), trigger: triggerTextForTab(tab, cols) });
+  const findings = lintPattern(patternFromColumns(tab, cols), { config, lib, payment: "", now: new Date(), trigger: triggerTextForTab(tab, cols), ...h1FlagsForRow(tab, cols) });
   if (findings.some((f) => f.level === "block")) return { status: "lint", lint: findings };
 
   // สร้างแถวตามลำดับ header · บังคับ status=draft · key ช่องหลัก

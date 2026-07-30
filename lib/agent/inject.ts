@@ -43,6 +43,8 @@ const AMBIGUOUS_STAGES = ["lead", "qualified", "quoted"];
 const HANDOFF = "handoff";
 /** D-34: ประตูที่บอท "คุยเก็บข้อมูลก่อน" แล้วค่อย handoff (ต่างจาก handoff ทันที) — inject เนื้อเต็มเหมือนประตูขาย */
 const HANDOFF_AFTER_INTAKE = "handoff_after_intake";
+/** D-58: ประตูที่บอท "ตอบข้อมูลตาม pattern ชีต + แจ้งแอดมิน แต่ไม่ปิดบอท" (สุขภาพทั่วไป — คำตอบปลอดภัยที่เจ้าของคุมเอง) */
+const HANDOFF_NOTIFY = "handoff_notify";
 
 interface StepRow {
   stepId: string;
@@ -138,8 +140,8 @@ export function funnelStageOf(rows: string[][], stepId: string): string | null {
   return parsed?.steps.find((s) => s.stepId === stepId)?.funnelStage ?? null;
 }
 
-/** funnel_stage ที่ถูกต้องทั้งหมด (region 7 + handoff 2) — โค้ดใช้จริงเท่านี้ (Step 6) */
-export const VALID_FUNNEL_STAGES = [...FUNNEL_ORDER, HANDOFF, HANDOFF_AFTER_INTAKE] as const;
+/** funnel_stage ที่ถูกต้องทั้งหมด (region 7 + handoff 3) — โค้ดใช้จริงเท่านี้ (Step 6 · D-58 +notify) */
+export const VALID_FUNNEL_STAGES = [...FUNNEL_ORDER, HANDOFF, HANDOFF_AFTER_INTAKE, HANDOFF_NOTIFY] as const;
 
 export interface BadFunnelStage {
   stepId: string;

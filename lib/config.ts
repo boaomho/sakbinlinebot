@@ -40,6 +40,8 @@ export interface AppConfig {
   orderCutoffTime: string;
   orderNumberResetDaily: boolean;
   handoffKeywords: string[];
+  /** D-58: คำ_notify — pre-check ชั้นสอง (หลัง คำ_handoff) → บังคับเข้าประตู H1 (ตอบ+แจ้งแอดมิน ไม่ปิดบอท) · default [] = ปิดฟีเจอร์ */
+  notifyKeywords: string[];
   /** คืนสิทธิ์บอท_หลังแชทเงียบ (นาที) — ถ้าลูกค้าเงียบเกินเวลานี้ในโหมดแอดมิน บอทคืนมาดูแลเอง */
   adminSilenceReturnMinutes: number;
   /** ประโยคเปลี่ยนมือ_บอทรับต่อ — ข้อความบอกลูกค้าตอนบอทรับช่วงต่อจากแอดมิน */
@@ -222,6 +224,11 @@ export async function getConfig(): Promise<AppConfig> {
     orderCutoffTime: strOf("12:00", "เวลาตัดรอบออเดอร์", "เวลารอบตัดออเดอร์"),
     orderNumberResetDaily: boolOf(true, "เลขออเดอร์_รีเซ็ตทุกวัน", "เลขออเดอร์รีเซ็ตทุกวัน"),
     handoffKeywords: (pick("คำ_handoff", "คำ_ส่งต่อแอดมิน", "keyword_handoff") ?? "")
+      .split(",")
+      .map((s) => cleanCell(s))
+      .filter(Boolean),
+    // D-58: default ว่าง = ปิด (ไม่มี key/ว่าง → notify pre-check ไม่ทำงาน · พฤติกรรมเดิม 100%)
+    notifyKeywords: (pick("คำ_notify", "คำ_แจ้งแอดมิน") ?? "")
       .split(",")
       .map((s) => cleanCell(s))
       .filter(Boolean),

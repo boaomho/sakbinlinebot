@@ -861,6 +861,18 @@ Dashboard คุมบอทได้จริง: สวิตช์ราย�
 - **harness:** `deriveOrderStatus` **ครบทุก combination** N/M/O/P+notified (6 สถานะ + cancelled precedence) · route: TRAIN กรอง default/toggle · สถานะถูกทุกแถว · sort ใหม่สุดก่อน · counts · shipped_pending vs notified · auth 401 · **462 passed** · build เขียว · v1 fidelity เดิมเขียว
 - **ไม่ทำในเฟสนี้:** ปุ่มกระทำ (คอนเฟิร์ม/ยกเลิก) จาก UI = อนาคต (write phase) · ลิงก์แถวชีต = T2-ค
 
+### D-58 · funnel_stage ใหม่ `handoff_notify` — ตอบ pattern + แจ้งแอดมิน + ไม่ปิดบอท (1 commit)
+ประตูสุขภาพทั่วไป (ไม่รุนแรง): บอทตอบข้อมูลปลอดภัยตาม pattern ชีต + push แจ้งแอดมิน 🔔 + **ไม่ตั้ง human_mode** (ต่างจาก `handoff` ที่ปิดบอทเงียบ)
+- **Q ที่เจ้าของถาม:** pre-check `คำ_handoff` = **บังคับ handoff ตรง (silent)** ก่อน Gemini ([handler.ts](../app/api/line-webhook/handler.ts)) — ไม่ route เข้าประตู · `DEFAULT_HANDOFF_KEYWORDS` มีคำ H1 ครบ (แพ้/ท้อง/เบาหวาน/กินยา…)
+- 🔴 **ไม่แตะ `DEFAULT_HANDOFF_KEYWORDS`** (safety net deploy ใหม่คงเดิม) · เปิด notify ผ่าน **pre-check ชั้นสอง**: config key ใหม่ **`คำ_notify`** (default `[]`)
+- **ลำดับ pre-check:** `คำ_handoff` match → ปิดเงียบ (เดิมเป๊ะ) · ไม่ match → `คำ_notify` match → **บังคับเข้าประตู `NOTIFY_DOOR="H1"`** (force stage · ข้าม AI/FAQ/OBJ · reuse `checkHandoffKeywords` ไม่ fork · KI-01)
+- 🔴 **fail-safe:** `คำ_notify` match แต่ประตู H1 `funnel_stage ≠ handoff_notify` **หรือ pattern ว่าง** → ตกกลับ `runHandoffFlow` ปิดบอทเงียบ + log เตือน (ชีตตั้งผิด ห้ามบอทตอบสุขภาพเงียบ/หายเงียบ)
+- **กลไก funnel (ไหลผ่าน pipeline เดิม):** enum `handoff_notify` เข้า `VALID_FUNNEL_STAGES` (10 · validate D-38 รับ) · `isHandoffTurn` +notify (ส่ง step pattern verbatim ไม่ให้ OBJ/FAQ ทับ) · `doHandoff && !stageIsNotify` (ห้ามปิดบอทแม้ AI flag) · push 🔔 co-locate กับ `addDeliveredStep` = **dedup ผ่าน delivered_steps เดิม** (ถามซ้ำประตูเดิม = ไม่ push ซ้ำ) · channelLabel D-52
+- **lint studio (D-57 ต่อยอด):** `lintHealthH1(trigger, answer, {exempt, notify})` → ประตู CSV_Step funnel=handoff/handoff_notify = **ยกเว้น H1 block** (คำตอบสุขภาพเป็นดีไซน์) · notify = +warn เหลืองวลี "รับรอง" (ทานได้/ปลอดภัย/ไม่เป็นไร) · `h1FlagsForRow` (preview+writeCell+appendRow)
+- **harness:** notify→ตอบ pattern+🔔+human_mode=false · fail-safe (funnel ผิด/pattern ว่าง)→ปิดเงียบ · precedence คำ_handoff>คำ_notify · "แพ้กุ้งมั้ย"→notify ไม่โดน FAQ · dedup 🔔 ครั้งเดียว · **notifyKeywords ว่าง=พฤติกรรมเดิม 100%** · lint exempt/assurance · golden H1→handoff_notify (skip-gated) · **486 passed** · build เขียว
+- 🔴 **เปิดใช้จริง = งานชีตเจ้าของ:** ย้ายคำสุขภาพจาก `คำ_handoff` → `คำ_notify` + ตั้งประตู H1 `funnel_stage=handoff_notify` + เขียน pattern ปลอดภัย (ข้อมูล+ปรึกษาแพทย์ ไม่รับรอง) · ไม่ทำ = safety net เดิม (H1 ปิดเงียบ)
+- **ไม่แตะ:** gate/pricing/precedence D-42/invariants · DEFAULT_HANDOFF_KEYWORDS
+
 ### D-57 · T2-ค · จัดการแถว Step/FAQ/OBJ/Vars จากเว็บ (add-row draft · live↔draft · lint H1 · 1 commit) — spec [docs/T2-STUDIO-SPEC.md](T2-STUDIO-SPEC.md)
 เจ้าของเพิ่ม/ปิด/เปิดแถวคลังความรู้จากหน้าเว็บ (แท็บ "📚 คลังความรู้" ใน /train) โดยไม่เปิดชีต · **ความปลอดภัยชีต > ความเร็ว** · เคาะ 3 ข้อ (overlay รายแถว · ครบ 4 แท็บ+validator · lint block คำสุขภาพ) + 3 เงื่อนไข
 - 🔴 **แถวใหม่ = draft เสมอ (`appendRow` บังคับ `สถานะ=draft`)** · **แท็บไม่มีคอลัมน์สถานะ = ปฏิเสธ** (`no_status_col`) — กัน KI-08 (ช่องว่าง=live) · dedup key (block) · key/funnel validate
