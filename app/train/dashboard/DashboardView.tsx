@@ -11,11 +11,13 @@ interface Cust {
   userId: string; channel: Channel; displayName: string | null; stage: string | null;
   funnelStage: string | null; lastSeen: string; turns: number; humanMode: boolean; status: CustomerStatus;
 }
+interface ChannelState { key: string; label: string; enabled: boolean }
 interface Data {
   range: string;
   counts: { newLine: number; newFb: number; returning: number; handoffPending: number };
   sales: { lineTotal: number; lineCount: number; fbTotal: number; fbCount: number };
   customers: Cust[];
+  channels: ChannelState[];
   capped: boolean;
 }
 interface Detail {
@@ -48,6 +50,9 @@ const S: Record<string, React.CSSProperties> = {
   bubbleB: { alignSelf: "flex-start", background: "#f0f0f0", borderRadius: 12, padding: "6px 10px", maxWidth: "85%", whiteSpace: "pre-wrap", fontSize: 14 },
   pre: { background: "#f6f8fa", borderRadius: 8, padding: 8, overflowX: "auto", fontSize: 11, whiteSpace: "pre-wrap", wordBreak: "break-word" },
   login: { margin: "80px auto", background: "#fff", padding: 24, borderRadius: 12, width: 300, display: "flex", flexDirection: "column", gap: 12 },
+  switchBox: { background: "#fff", border: `1px solid ${C.border}`, borderRadius: 12, padding: "10px 14px", marginBottom: 16, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" },
+  swBtn: { padding: "6px 12px", borderRadius: 999, border: "1px solid", cursor: "pointer", fontSize: 13, fontWeight: 600 },
+  rowBotBtn: { fontSize: 11, padding: "2px 8px", borderRadius: 8, border: `1px solid ${C.border}`, background: "#fff", cursor: "pointer", whiteSpace: "nowrap" },
 };
 
 function thaiTime(iso: string): string {
@@ -92,6 +97,30 @@ export default function DashboardView() {
     if (r.ok) setDetail((await r.json()) as Detail);
   }
 
+  // T2-ข · เปิด/ปิดบอทรายช่องทาง — confirm ภาษาผลลัพธ์ → เขียน → refresh → แจ้งกลุ่ม (จาก Dashboard)
+  async function toggleChannel(ch: ChannelState) {
+    const willEnable = !ch.enabled;
+    const msg = willEnable
+      ? `เปิดบอทช่อง ${ch.label} — ลูกค้าที่ทักช่องนี้จะได้รับการตอบอัตโนมัติอีกครั้ง ยืนยัน?`
+      : `ปิดบอทช่อง ${ch.label} — ลูกค้าที่ทักช่องนี้จะไม่ได้รับการตอบจนกว่าจะเปิดคืน ยืนยัน?`;
+    if (!window.confirm(msg)) return;
+    const r = await fetch("/train/api/dashboard/switch", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ target: "channel", key: ch.key, enabled: willEnable }) });
+    if (r.ok) load(); else alert("สั่งไม่สำเร็จ ลองใหม่อีกครั้ง");
+  }
+
+  // T2-ข · ปิดบอทรายคน (human_mode เดิม · fn เดียวกับคำสั่ง เปิด/ปิดบอท <ชื่อ>) · currentlyHuman = บอทปิดอยู่
+  async function toggleCustomer(userId: string, name: string, currentlyHuman: boolean) {
+    const willClose = !currentlyHuman;
+    const msg = willClose
+      ? `ปิดบอทให้ "${name}" — ปลาทูจะหยุดตอบแชทนี้จนกว่าจะเปิดคืน (หรือลูกค้าเงียบครบเวลา) ยืนยัน?`
+      : `เปิดบอทให้ "${name}" — ปลาทูจะกลับมาดูแลแชทนี้อีกครั้ง ยืนยัน?`;
+    if (!window.confirm(msg)) return;
+    const r = await fetch("/train/api/dashboard/switch", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ target: "customer", userId, close: willClose }) });
+    if (!r.ok) { alert("สั่งไม่สำเร็จ ลองใหม่อีกครั้ง"); return; }
+    if (detail?.userId === userId) setDetail({ ...detail, humanMode: willClose });
+    load();
+  }
+
   if (authed === null) return <main style={S.page} />;
   if (!authed) {
     return (
@@ -132,6 +161,23 @@ export default function DashboardView() {
           </div>
         )}
 
+        {data && data.channels.length > 0 && (
+          <div style={S.switchBox}>
+            <span style={{ fontSize: 13, fontWeight: 700 }}>สวิตช์บอทรายช่องทาง</span>
+            {data.channels.map((ch) => (
+              <button
+                key={ch.key}
+                style={{ ...S.swBtn, ...(ch.enabled ? { borderColor: "#1e9e50", background: "#eafaf0", color: "#1e7e42" } : { borderColor: C.prod, background: C.prodBg, color: C.prod }) }}
+                onClick={() => toggleChannel(ch)}
+                title={ch.enabled ? "กดเพื่อปิดบอทช่องนี้" : "กดเพื่อเปิดบอทช่องนี้"}
+              >
+                {ch.enabled ? "🟢" : "🔴"} {ch.label} · บอท{ch.enabled ? "เปิด" : "ปิด"}
+              </button>
+            ))}
+            <span style={{ fontSize: 11, color: C.sub }}>กด = สลับสถานะ (มีถามยืนยัน)</span>
+          </div>
+        )}
+
         <div style={S.controls}>
           {(["all", "active", "stuck", "handoff", "won", "idle"] as const).map((s) => (
             <button key={s} style={{ ...S.btn, ...(statusF === s ? S.btnOn : {}) }} onClick={() => setStatusF(s)}>{s === "all" ? "ทุกสถานะ" : `${STATUS_META[s].icon} ${STATUS_META[s].label}`}</button>
@@ -155,6 +201,13 @@ export default function DashboardView() {
               <span style={{ fontSize: 12, color: C.sub, width: 70, textAlign: "right" }}>{c.turns} เทิร์น</span>
               <span style={{ fontSize: 12, color: C.sub, width: 90, textAlign: "right" }}>{thaiTime(c.lastSeen)}</span>
               <span title={STATUS_META[c.status].label}>{STATUS_META[c.status].icon}</span>
+              <button
+                style={{ ...S.rowBotBtn, ...(c.humanMode ? { borderColor: C.prod, color: C.prod } : {}) }}
+                onClick={(e) => { e.stopPropagation(); toggleCustomer(c.userId, c.displayName || "(ไม่มีชื่อ)", c.humanMode); }}
+                title={c.humanMode ? "บอทปิดอยู่ — กดเพื่อเปิด" : "บอทดูแลอยู่ — กดเพื่อปิด"}
+              >
+                {c.humanMode ? "🔴 เปิดบอท" : "ปิดบอท"}
+              </button>
             </div>
           ))}
           {shown.length === 0 && <div style={{ padding: 20, textAlign: "center", color: C.sub }}>ไม่มีลูกค้าตามตัวกรอง</div>}
@@ -171,6 +224,12 @@ export default function DashboardView() {
             <div style={{ fontSize: 13, color: C.sub, margin: "8px 0" }}>
               {STATUS_META[detail.status].icon} {STATUS_META[detail.status].label} · step {detail.stage ?? "-"} ({detail.funnelStage ?? "-"}) {detail.humanMode ? "· 🔴 human_mode" : ""}
             </div>
+            <button
+              style={{ ...S.btn, ...(detail.humanMode ? {} : { ...S.btnOn }), marginBottom: 6 }}
+              onClick={() => toggleCustomer(detail.userId, detail.displayName || "(ไม่มีชื่อ)", detail.humanMode)}
+            >
+              {detail.humanMode ? "🟢 เปิดบอทให้ลูกค้าคนนี้" : "🔴 ปิดบอทให้ลูกค้าคนนี้"}
+            </button>
 
             {detail.pendingSummary.length > 0 && <><div style={{ fontWeight: 700, marginTop: 10 }}>ออเดอร์ที่กำลังคุย (pending)</div><div style={{ fontSize: 14 }}>{detail.pendingSummary.map((l, i) => <div key={i}>{l}</div>)}</div></>}
             {detail.lastOrderSummary.length > 0 && <><div style={{ fontWeight: 700, marginTop: 10 }}>ออเดอร์ล่าสุดที่ปิด</div><div style={{ fontSize: 14 }}>{detail.lastOrderSummary.map((l, i) => <div key={i}>{l}</div>)}</div></>}

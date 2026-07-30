@@ -1,6 +1,6 @@
 # STATUS — SakbinAdvBot ("ปลาทู")
 
-> สแนปช็อตสำหรับคนรับช่วงต่อ (ไม่เห็นแชทก็ทำต่อได้) · อัปเดต 2026-07-23
+> สแนปช็อตสำหรับคนรับช่วงต่อ (ไม่เห็นแชทก็ทำต่อได้) · อัปเดต 2026-07-30
 > รายละเอียด → [docs/DECISIONS.md](docs/DECISIONS.md) · แผนที่โค้ด → [REPO-MAP.md](REPO-MAP.md) · brief → [docs/P2-REBUILD-BRIEF.md](docs/P2-REBUILD-BRIEF.md)
 
 ## 🟢 T-STUDIO ห้องซ้อมเทรน (/train) — ครบ 4 เฟส (ก-ง) ✅ บน `main`
@@ -32,8 +32,10 @@
 - **M-4 cron route ตาม channel เสร็จ ✅** บน `main` — D-50 push ตาม prefix R: LINE→pushMessages เดิม · `fb:`→gate 24 ชม.→MessengerTransport (เกิน→แจ้งแอดมิน [FB] แจ้งเอง) · แจกเลข ทุกช่องเหมือนเดิม · **422 passed**
 - **D-53 สวิตช์บอทราย channel เสร็จ ✅** บน `main` — คำสั่งกลุ่ม "ปิด/เปิดบอท line|fb" → `channel_switches` (ไม่มีแถว=เปิด) · เช็คต้นทางทั้ง 2 ฝั่ง (LINE/Messenger) → ช่องปิดบอทเงียบ · `ปิดบอท`เฉยๆ/รายคน เดิม · รายคนทับรายช่อง · **430 passed**
 - **D-54 หน้า Privacy Policy เสร็จ ✅** — `/privacy` (static · ไทย+อังกฤษ · ไม่มี tracking) ปลดล็อก M-3 · 🔴 เจ้าของแจ้งอีเมลจริง (placeholder `sakbinofficial@gmail.com`)
-- **T2-STUDIO v2 เริ่มแล้ว · เฟส ก (Dashboard ร้านจริง) เสร็จ ✅** บน `main` — spec [docs/T2-STUDIO-SPEC.md](docs/T2-STUDIO-SPEC.md) · `/train/dashboard` (โซนแดง อ่าน PROD Neon แยกจากห้องซ้อม) · สรุป (ลูกค้าใหม่/กลับมา/ยอดขายแยกช่อง/handoff ค้าง) + ตารางลูกค้า (สถานะ🟢🟡🔴✅ · TRAIN ซ่อน default) + หน้าลูกค้า read-only · ไม่เพิ่ม data ใหม่ · **444 passed** · ต่อไปเฟส ข (สวิตช์บอทใน UI ต่อยอด D-53)
-- **ต่อไป:** M-3 (App Review + Business Verification · ใช้ URL `/privacy` ในการยื่น) งานมือเจ้าของ · Utility Template (Messenger นอก 24 ชม.) เฟสหลัง · Follow/CRM ก้อน B ส่วนหลัง
+- **T2-STUDIO v2 · เฟส ก (Dashboard ร้านจริง อ่านอย่างเดียว) เสร็จ ✅** บน `main` — spec [docs/T2-STUDIO-SPEC.md](docs/T2-STUDIO-SPEC.md) · `/train/dashboard` (โซนแดง อ่าน PROD Neon แยกจากห้องซ้อม) · สรุป (ลูกค้าใหม่/กลับมา/ยอดขายแยกช่อง/handoff ค้าง) + ตารางลูกค้า (สถานะ🟢🟡🔴✅ · TRAIN ซ่อน default) + หน้าลูกค้า read-only · ไม่เพิ่ม data ใหม่
+- **T2-ข (สวิตช์เปิด-ปิดบอทใน UI · D-55) เสร็จ ✅** บน `main` — สวิตช์รายช่อง [LINE]/[FB] + toggle รายคน (row+detail) · confirm→เขียน→refresh→แจ้งกลุ่ม `(จาก Dashboard)` · reuse `setChannelEnabled`/`setHumanMode` เดิม (ไม่มี SQL ใหม่) · builder ข้อความแยก `lib/train/bot-switch.ts` handler เดิม import ร่วม (คำสั่งพิมพ์เท่าเดิม) · route `api/dashboard/switch` (guard เดิม) · **452 passed**
+- **ต่อไป T2-ฉ** (แท็บออเดอร์ · อ่านอย่างเดียวจากชีต Orders · derive สถานะจากคอลัมน์จริง · แทรกก่อน T2-ค) → แล้ว T2-ค/ง/จ
+- **ต่อไป (งานมือเจ้าของ):** M-3 (App Review + Business Verification · ใช้ URL `/privacy` ในการยื่น) · Utility Template (Messenger นอก 24 ชม.) เฟสหลัง · Follow/CRM ก้อน B ส่วนหลัง
 
 - เทสล่าสุด: **405 passed | 3 expected-fail | 34 skipped** (scripted) · tsc + build เขียว
 - known-tuning (ยอมรับแล้ว · ปิดได้ทีหลังด้วยการจูนชีต): **G12** (S2 vs S2_DIRECT · "ขอลองถ้วยเดียว") · **G29** stage (S4A/S4B)

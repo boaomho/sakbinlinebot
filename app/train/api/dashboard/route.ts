@@ -5,6 +5,7 @@ import { orderAmountMap } from "@/lib/orders";
 import { loadBotLibrary } from "@/lib/sheets/loader";
 import { funnelStageOf } from "@/lib/agent/inject";
 import { channelOf, deriveStatus } from "@/lib/train/dashboard";
+import { listChannelStates } from "@/lib/train/bot-switch";
 import { bangkokDayStart } from "@/lib/core/time";
 
 export const maxDuration = 20;
@@ -26,11 +27,12 @@ export async function POST(req: NextRequest) {
     const lib = await loadBotLibrary(); // funnel map + (ถ้า null → funnelStage=null, status ยังทำงาน)
     const stepRows = lib?.CSV_Step ?? [];
 
-    const [counts, won, amounts, rows] = await Promise.all([
+    const [counts, won, amounts, rows, channels] = await Promise.all([
       dashboardSummaryCounts(start),
       wonOrdersSince(start),
       orderAmountMap(),
       dashboardCustomerRows(includeTrain),
+      listChannelStates(),
     ]);
 
     // ยอดขายแยกช่อง: won (Neon range+channel) join ยอด (ชีต) — ข้ามที่ยกเลิก/หายอดไม่เจอ
@@ -58,7 +60,7 @@ export async function POST(req: NextRequest) {
       };
     });
 
-    return NextResponse.json({ range: body.range ?? "today", counts, sales, customers, generatedAt: now.toISOString(), capped: rows.length >= 300 });
+    return NextResponse.json({ range: body.range ?? "today", counts, sales, customers, channels, generatedAt: now.toISOString(), capped: rows.length >= 300 });
   } catch (error) {
     console.error(JSON.stringify({ scope: "dashboard", warning: "load failed", error: String(error).slice(0, 200) }));
     return NextResponse.json({ error: "โหลด dashboard ไม่ได้" }, { status: 500 });

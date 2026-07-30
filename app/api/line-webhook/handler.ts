@@ -61,6 +61,7 @@ import {
 import { ChannelTransport, LineTransport } from "@/lib/channel/transport";
 import { channelLabel } from "@/lib/channel/label";
 import { messengerPageIds } from "@/lib/channel/pages";
+import { botModeMsg, channelSwitchMsg, channelStatusLine } from "@/lib/train/bot-switch";
 import { checkHandoffKeywords } from "@/lib/handoff";
 import {
   parseAdminCommand,
@@ -1123,15 +1124,7 @@ async function applyBotMode(
   config: AppConfig,
 ): Promise<void> {
   await setHumanMode(userId, close);
-  if (close) {
-    await replyToAdmin(
-      replyToken,
-      groupId,
-      `🔴 ปิดบอทให้ "${name}" แล้ว\nบอทจะกลับมาเองเมื่อลูกค้าเงียบครบ ${config.adminSilenceReturnMinutes} นาที หรือพิมพ์: เปิดบอท ${name}`,
-    );
-  } else {
-    await replyToAdmin(replyToken, groupId, `🟢 เปิดบอทให้ "${name}" แล้ว`);
-  }
+  await replyToAdmin(replyToken, groupId, botModeMsg(name, close, config.adminSilenceReturnMinutes));
 }
 
 function buildDisambigMessage(query: string, matches: CustomerBrief[], verb: string): string {
@@ -1172,13 +1165,6 @@ function resolveChannelArg(arg: string): { key?: string; error?: string } | null
   return null;
 }
 
-/** D-53: รายงานสถานะบอทครบทุก channel เช่น "[LINE] เปิด · [FB] ปิด" */
-async function channelStatusLine(): Promise<string> {
-  const keys = ["line", ...messengerPageIds().map((p) => `fb:${p}`)];
-  const parts = await Promise.all(keys.map(async (k) => `${channelLabel(k)} ${(await isChannelEnabled(k)) ? "เปิด" : "ปิด"}`));
-  return parts.join(" · ");
-}
-
 async function handleCloseOpenCommand(
   arg: string,
   verb: string,
@@ -1195,7 +1181,7 @@ async function handleCloseOpenCommand(
       return;
     }
     await setChannelEnabled(ch.key!, !close);
-    await replyToAdmin(replyToken, groupId, `${close ? "🔴 ปิด" : "🟢 เปิด"}บอทช่อง ${channelLabel(ch.key!)} แล้ว\n${await channelStatusLine()}`);
+    await replyToAdmin(replyToken, groupId, channelSwitchMsg(ch.key!, close, await channelStatusLine()));
     return;
   }
 

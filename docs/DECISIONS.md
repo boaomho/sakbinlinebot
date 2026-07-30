@@ -833,6 +833,15 @@ handoff ทุก path (edit/AI-semantic/keyword) ตั้งแค่ `human_m
 - **harness:** channelOf/deriveStatus/formatOrderSummary/bangkokDayStart · summary แยกช่อง+TRAIN ตัด · returning · turn count aggregate+includeTrain · sales won∩ยอด(ข้ามยกเลิก) · route auth 401+assemble(TRAIN ตัด·won status) · **444 passed** · build เขียว · v1 fidelity เดิมเขียว
 - **ไม่ทำในเฟสนี้ (ตามเคาะ):** ปุ่มเปิด/ปิดบอทในหน้าลูกค้า=T2-ข · ลิงก์แถวชีต Orders=T2-ค
 
+### D-55 · T2-ข · สวิตช์เปิด-ปิดบอทใน UI (ต่อยอด D-53 ตรงๆ · 1 commit) — spec [docs/T2-STUDIO-SPEC.md](T2-STUDIO-SPEC.md)
+Dashboard คุมบอทได้จริง: สวิตช์รายช่องทาง [LINE]/[FB] + toggle ปิดบอทรายคน — reuse fn เดิมทั้งหมด ไม่มี SQL ใหม่ · สถานะอยู่ Neon ที่เดียว (คำสั่งพิมพ์ในกลุ่มยังทำงานเหมือนเดิม)
+- **สถาปัตย์กันโค้ดซ้ำ (หัวใจ):** ข้อความแจ้งกลุ่มเดิมฝังใน handler ผูก `replyToken` — แยก builder pure (`botModeMsg`/`channelSwitchMsg`) + `channelStatusLine`/`listChannelStates` + orchestrator (`applyChannelSwitch`/`applyCustomerBotMode`) ออกมา `lib/train/bot-switch.ts` · **handler เดิม import ตัวเดียวกัน → คำสั่งพิมพ์พฤติกรรมเท่าเดิมเป๊ะ** · Dashboard ใช้ builder เดียวกัน + push ตรง (ไม่มี reply token) ต่อท้าย `(จาก Dashboard)` — คนดูกลุ่มรู้ว่าสั่งจาก UI
+- **เขียน:** ช่อง = `setChannelEnabled(key,enabled)` เดิม (D-53) · รายคน = `setHumanMode(userId,close)` เดิม (fn เดียวกับ `เปิด/ปิดบอท <ชื่อ>`) · ชื่อ+returnMinutes ดึงจาก Neon/`getConfig` เดิม
+- **route:** `app/train/api/dashboard/switch` (POST · discriminator `target: channel｜customer` · **guardTrainRequest เดิมครอบ** — write PROD Neon นอก sandbox) · main route `/dashboard` +`channels[]` (label+enabled ให้ UI วาดสวิตช์) · graceful เมื่อ `ADMIN_GROUP_ID` ขาด (เขียนสำเร็จ แค่ไม่ push)
+- **UI:** แผงสวิตช์ pill (เขียว=เปิด/แดง=ปิด) ใต้ banner · toggle รายคนในแถว (stopPropagation กันเปิด detail) + ปุ่มในหน้ารายละเอียด · ทุกกด = `window.confirm()` ภาษาผลลัพธ์ → เขียน → `load()` refresh ทันที
+- **harness:** builder text (ปิด/เปิด · ช่อง/รายคน) · /switch channel เขียนถูก key (`isChannelEnabled` หลังกด) + push กลุ่มมี `(จาก Dashboard)` · key เพี้ยน→400 · customer setHumanMode + push มีชื่อ+suffix · auth 401 · main route คืน channels(line+fb) · **452 passed** · build เขียว · v1 fidelity + คำสั่งพิมพ์เดิมเขียว
+- **ไม่ทำในเฟสนี้:** แท็บออเดอร์=T2-ฉ (เพิ่มในลำดับ · อ่านอย่างเดียว ก่อน T2-ค)
+
 ### D-54 · หน้า Privacy Policy (ปลดล็อก M-3 App Review · 1 commit)
 `app/privacy/page.tsx` static — ไทย (8 ข้อครบ) + อังกฤษสรุปความเดียวกัน · placeholder อีเมล `sakbinofficial@gmail.com` (เจ้าของแจ้งจริงทีหลัง) · วันที่อัปเดตคงที่ (ไม่ใช้ new Date) · 🔴 ไม่มี tracking/analytics/external
 - เขียนด้วย `createElement` (ไม่ใช่ JSX) — tsconfig `jsx:preserve` ทำให้ vitest transform JSX import ไม่ได้ (เหมือน EditorBoundary) → หน้าจริง import+render ทดสอบได้

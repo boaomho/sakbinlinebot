@@ -1,12 +1,13 @@
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import crypto from "node:crypto";
 import { NextRequest } from "next/server";
-import { sheetsCalls } from "../harness/state";
+import { sheetsCalls, adminPushes } from "../harness/state";
 import { seedBotLib } from "../harness/botlib-fixture";
 import { setCreatedAtAgo } from "../harness/db";
-import { ensureCustomer, addMessage, setHumanMode, markOrderWritten, setLastOrder, dashboardSummaryCounts, dashboardCustomerRows, wonOrdersSince } from "@/lib/db";
+import { ensureCustomer, addMessage, setHumanMode, markOrderWritten, setLastOrder, getCustomer, isChannelEnabled, dashboardSummaryCounts, dashboardCustomerRows, wonOrdersSince } from "@/lib/db";
 import { orderAmountMap, __resetOrderAmountCache, ORDERS_HEADER } from "@/lib/orders";
 import { channelOf, deriveStatus, formatOrderSummary } from "@/lib/train/dashboard";
+import { botModeMsg, channelSwitchMsg } from "@/lib/train/bot-switch";
 import { bangkokDayStart } from "@/lib/core/time";
 
 const LINE = "Udashtestcustomer000000000000line1";
@@ -16,6 +17,7 @@ const TRAIN = "TRAIN:dash-sess-1";
 beforeAll(() => {
   process.env.TRAIN_PASSWORD = "test-train-pass";
   process.env.DATABASE_URL_TRAIN = process.env.DATABASE_URL;
+  process.env.META_PAGE_ID = "999888"; // T2-ข: ให้มีช่อง fb ในรายการสวิตช์
 });
 beforeEach(() => { __resetOrderAmountCache(); seedBotLib(); });
 
@@ -149,5 +151,69 @@ describe("T2-ก · dashboard route (auth + assembly)", () => {
     expect(d.customers.some((c: { userId: string }) => c.userId === LINE)).toBe(true);
     expect(d.customers.some((c: { userId: string }) => c.userId === TRAIN), "TRAIN ตัดออก").toBe(false);
     expect(d.customers.find((c: { userId: string }) => c.userId === LINE).status).toBe("won");
+  });
+
+  it("main route คืน channels (มี line + fb)", async () => {
+    const { POST } = await import("@/app/train/api/dashboard/route");
+    const res = await POST(req({ range: "today" }));
+    const d = await res.json();
+    expect(d.channels.some((c: { key: string }) => c.key === "line")).toBe(true);
+    expect(d.channels.some((c: { key: string }) => c.key === "fb:999888")).toBe(true);
+    expect(d.channels.find((c: { key: string }) => c.key === "line").enabled, "default เปิด").toBe(true);
+  });
+});
+
+// ---------- T2-ข · สวิตช์เปิด-ปิดบอทใน UI ----------
+describe("T2-ข · message builders (ตรงกับคำสั่งพิมพ์)", () => {
+  it("botModeMsg — ปิด/เปิด", () => {
+    expect(botModeMsg("บี", true, 45)).toContain('🔴 ปิดบอทให้ "บี" แล้ว');
+    expect(botModeMsg("บี", true, 45)).toContain("45 นาที");
+    expect(botModeMsg("บี", false, 45)).toBe('🟢 เปิดบอทให้ "บี" แล้ว');
+  });
+  it("channelSwitchMsg — ปิด/เปิด + ป้ายช่อง", () => {
+    expect(channelSwitchMsg("line", true, "[LINE] ปิด")).toContain("🔴 ปิดบอทช่อง [LINE] แล้ว");
+    expect(channelSwitchMsg("fb:999888", false, "[FB] เปิด")).toContain("🟢 เปิดบอทช่อง [FB] แล้ว");
+  });
+});
+
+describe("T2-ข · /switch route", () => {
+  async function switchReq(body: unknown, authed = true) {
+    const { POST } = await import("@/app/train/api/dashboard/switch/route");
+    return POST(req(body, authed));
+  }
+
+  it("ไม่มี cookie → 401", async () => {
+    expect((await switchReq({ target: "channel", key: "line", enabled: false }, false)).status).toBe(401);
+  });
+
+  it("🔴 channel: ปิด [LINE] → เขียนถูก key + แจ้งกลุ่ม (จาก Dashboard)", async () => {
+    const res = await switchReq({ target: "channel", key: "line", enabled: false });
+    expect(res.status).toBe(200);
+    expect(await isChannelEnabled("line"), "เขียนผ่าน setChannelEnabled").toBe(false);
+    const pushes = adminPushes();
+    const text = pushes.map((p) => (p.messages[0] as { text?: string }).text ?? "").join("\n");
+    expect(text).toContain("🔴 ปิดบอทช่อง [LINE] แล้ว");
+    expect(text, "ระบุที่มา UI").toContain("(จาก Dashboard)");
+  });
+
+  it("channel: key เพี้ยน → 400 (ไม่เขียน)", async () => {
+    expect((await switchReq({ target: "channel", key: "line-typo", enabled: false })).status).toBe(400);
+  });
+
+  it("🔴 customer: ปิดบอทรายคน → setHumanMode + แจ้งกลุ่มมีชื่อ + (จาก Dashboard)", async () => {
+    await ensureCustomer(LINE);
+    const res = await switchReq({ target: "customer", userId: LINE, close: true });
+    expect(res.status).toBe(200);
+    expect((await getCustomer(LINE))!.humanMode, "human_mode เดิม").toBe(true);
+    const text = adminPushes().map((p) => (p.messages[0] as { text?: string }).text ?? "").join("\n");
+    expect(text).toContain("🔴 ปิดบอทให้");
+    expect(text).toContain("(จาก Dashboard)");
+  });
+
+  it("customer: เปิดบอทคืน → human_mode=false", async () => {
+    await ensureCustomer(LINE);
+    await setHumanMode(LINE, true);
+    await switchReq({ target: "customer", userId: LINE, close: false });
+    expect((await getCustomer(LINE))!.humanMode).toBe(false);
   });
 });
