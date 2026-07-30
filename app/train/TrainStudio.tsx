@@ -294,8 +294,11 @@ export default function TrainStudio() {
       {/* มือถือ: แชทเต็มจอเสมอ (bottom sheet editor ลอยทับ · ไม่ซ่อนแชท) — ซ่อนเฉพาะตอนเปิด X-ray เต็มจอ */}
       <div style={{ ...S.chatCol, display: isMobile && showX ? "none" : "flex" }}>
         <header style={S.header}>
-          <span>🐟 ปลาทู (ห้องซ้อม)</span>
-          <span style={{ fontSize: 12, fontWeight: 400 }}>{busy ? "กำลังคิด…" : overlay.length > 0 ? `draft ${overlay.length}` : "sandbox"}</span>
+          <span>🐟 ปลาทู · 🧪 ห้องซ้อม</span>
+          <span style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <a href="/train/dashboard" style={{ color: "#fff", textDecoration: "none", background: "rgba(0,0,0,.18)", padding: "4px 10px", borderRadius: 8, fontSize: 12 }}>🔴 ร้านจริง →</a>
+            <span style={{ fontSize: 12, fontWeight: 400 }}>{busy ? "กำลังคิด…" : overlay.length > 0 ? `draft ${overlay.length}` : "sandbox"}</span>
+          </span>
         </header>
         <div ref={chatRef} style={S.chat}>
           {turns.length === 0 && sys.length === 0 && <div style={S.sysB}>ทักปลาทูได้เลย · แตะบอลลูนบอทเพื่อดูที่มา + แก้ (draft)</div>}

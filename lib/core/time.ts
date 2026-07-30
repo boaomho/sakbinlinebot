@@ -12,6 +12,13 @@ export function bangkokShift(now: Date = new Date()): Date {
   return new Date(now.getTime() + BANGKOK_OFFSET_MS);
 }
 
+/** T2-ก · จุดเริ่มของวัน (เที่ยงคืนไทย) ย้อนหลัง daysAgo วัน คืนเป็น UTC Date — ใช้กรองช่วง dashboard */
+export function bangkokDayStart(now: Date, daysAgo = 0): Date {
+  const b = bangkokShift(now); // getUTC* = เวลาไทยตามหน้าปัด
+  const midnightThaiAsUtc = Date.UTC(b.getUTCFullYear(), b.getUTCMonth(), b.getUTCDate() - daysAgo, 0, 0, 0);
+  return new Date(midnightThaiAsUtc - BANGKOK_OFFSET_MS); // เที่ยงคืนไทย = UTC−7h
+}
+
 function p2(n: number): string {
   return String(n).padStart(2, "0");
 }

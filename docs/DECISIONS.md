@@ -823,6 +823,16 @@ handoff ทุก path (edit/AI-semantic/keyword) ตั้งแค่ `human_m
 **ไม่แตะ:** cron แจกเลข/idempotency D-29/O semantics เดิม (เพิ่ม loop ต่อท้าย) · **harness:** cron (push+ขนส่ง+เลข · idempotent ไม่ซ้ำ · P ว่าง/R ว่าง ข้าม · human_mode→แอดมิน · greeting · ""=ปิด) + train sim + formatShippingMessage · **405 passed | 3 expected-fail** · build เขียว
 **จบเคส CRM/Follow (ลูกค้าตอบได้รับ→ถามรีวิว) = ก้อน B ส่วนหลัง · ยังไม่ทำ**
 
+### T2-ก · Dashboard ร้านจริง (อ่านอย่างเดียว · 1 commit) — spec [docs/T2-STUDIO-SPEC.md](T2-STUDIO-SPEC.md)
+หน้าเดียวดูสถานะร้านจริง แยกโซนจากห้องซ้อมชัด (แถบแดง "ร้านจริง" · อ่าน PROD Neon นอก sandbox → แยกจาก train DB โดยธรรมชาติ)
+- **field จริงที่ใช้ (ยืนยันแล้ว · ตัด 0 เมตริก):** `customers`(created_at/last_seen/human_mode/stage/last_order) · turn count = `count(messages WHERE role='user')` · won+ช่อง+ช่วง = `orders_written`(written_at,user_id · มี timestamp+channel จริง) · ยอด = ชีต Orders (order_id→ยอดเงิน · cache 60วิ) · 🔴 **ไม่เพิ่ม data ใหม่**
+- **3 จุดที่เจ้าของสั่งเพิ่ม:** (1) TRAIN: ตัดจากสรุป+ตาราง default (toggle "แสดงห้องซ้อม") — สรุปเป็นของจริงล้วน (2) turn count = aggregate join ครั้งเดียว (กัน N+1) + LIMIT 300 ทุก query (3) หน้าลูกค้า format คนอ่าน (`formatOrderSummary`) · JSON ดิบใน `<details>` collapse
+- **สถานะ:** `deriveStatus` 🟢active/🟡stuck(qualified·quoted เงียบ>24ชม=กลุ่มทอง follow)/🔴handoff/✅won/⚪idle · funnel จาก `funnelStageOf(CSV_Step)`
+- **แยกโซน UI:** `/train/dashboard` (แดง · nav "🧪 ห้องซ้อม") vs `/train` (เขียว · nav "🔴 ร้านจริง") · auth เดิม (TRAIN_PASSWORD cookie) · mobile-first
+- ไฟล์: `lib/train/dashboard.ts`(pure) · `lib/db.ts`(3 read fn · read-only) · `lib/orders.ts orderAmountMap` · `lib/core/time.ts bangkokDayStart` · `app/train/dashboard/*` + `api/dashboard/{route,customer}`
+- **harness:** channelOf/deriveStatus/formatOrderSummary/bangkokDayStart · summary แยกช่อง+TRAIN ตัด · returning · turn count aggregate+includeTrain · sales won∩ยอด(ข้ามยกเลิก) · route auth 401+assemble(TRAIN ตัด·won status) · **444 passed** · build เขียว · v1 fidelity เดิมเขียว
+- **ไม่ทำในเฟสนี้ (ตามเคาะ):** ปุ่มเปิด/ปิดบอทในหน้าลูกค้า=T2-ข · ลิงก์แถวชีต Orders=T2-ค
+
 ### D-54 · หน้า Privacy Policy (ปลดล็อก M-3 App Review · 1 commit)
 `app/privacy/page.tsx` static — ไทย (8 ข้อครบ) + อังกฤษสรุปความเดียวกัน · placeholder อีเมล `sakbinofficial@gmail.com` (เจ้าของแจ้งจริงทีหลัง) · วันที่อัปเดตคงที่ (ไม่ใช้ new Date) · 🔴 ไม่มี tracking/analytics/external
 - เขียนด้วย `createElement` (ไม่ใช่ JSX) — tsconfig `jsx:preserve` ทำให้ vitest transform JSX import ไม่ได้ (เหมือน EditorBoundary) → หน้าจริง import+render ทดสอบได้

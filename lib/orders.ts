@@ -253,6 +253,28 @@ export async function listOrdersToNotifyShipping(): Promise<OrderRow[]> {
   return (await readAllOrderRows()).filter((o) => o.sent && !o.cancelled && o.trackingNumber.trim() !== "");
 }
 
+// ---- T2-ก: ยอดขาย dashboard — map order_id → ยอด (อ่านชีต · cache 60วิ · read-only) ----
+let amountCache: { map: Map<string, { total: number; cancelled: boolean }>; at: number } | null = null;
+const AMOUNT_TTL_MS = 60_000;
+
+/** map order_id → { ยอดเงิน(J), ยกเลิก(N) } จากชีต Orders (join กับ wonOrdersSince เพื่อรวมยอดตามช่วง/ช่องทาง) */
+export async function orderAmountMap(): Promise<Map<string, { total: number; cancelled: boolean }>> {
+  if (amountCache && Date.now() - amountCache.at < AMOUNT_TTL_MS) return amountCache.map;
+  const map = new Map<string, { total: number; cancelled: boolean }>();
+  for (const o of await readAllOrderRows()) {
+    if (!o.orderId) continue;
+    const total = Number(String(o.total).replace(/[^\d.]/g, "")) || 0;
+    map.set(o.orderId, { total, cancelled: o.cancelled });
+  }
+  amountCache = { map, at: Date.now() };
+  return map;
+}
+
+/** เทสเท่านั้น — ล้าง cache ยอด (กัน stale ข้ามเคส) */
+export function __resetOrderAmountCache(): void {
+  amountCache = null;
+}
+
 // ---- แก้ออเดอร์ที่เขียนแล้ว (D-31 · Plan B) — แก้แถวเดิมด้วย order_id ห้ามเขียนแถวใหม่ ----
 
 export interface OrderEditResult {

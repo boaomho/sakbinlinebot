@@ -57,6 +57,12 @@ export async function setLastSeenAgo(userId: string, minutes: number): Promise<v
   await sql("UPDATE customers SET last_seen = now() - ($2 || ' minutes')::interval WHERE user_id = $1", [userId, String(minutes)]);
 }
 
+export async function setCreatedAtAgo(userId: string, days: number): Promise<void> {
+  const url = assertHarnessDb();
+  const sql = neon(url);
+  await sql("UPDATE customers SET created_at = now() - ($2 || ' days')::interval WHERE user_id = $1", [userId, String(days)]);
+}
+
 /** order_id ที่บันทึกว่า "เขียนสำเร็จ" ใน Neon (idempotency source of truth · D-29) */
 export async function readWrittenOrderIds(): Promise<string[]> {
   const url = assertHarnessDb();

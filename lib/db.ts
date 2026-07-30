@@ -722,6 +722,67 @@ export async function markShippingNotified(orderId: string): Promise<boolean> {
   return rows.length > 0;
 }
 
+// ---- T2-ก: Dashboard reads (อ่าน PROD อย่างเดียว · ไม่มี write/คอลัมน์ใหม่ · TRAIN: ตัดออกจากสรุป) ----
+
+export interface DashboardCounts { newLine: number; newFb: number; returning: number; handoffPending: number }
+
+/** ตัวเลขสรุปแถวบน (ช่วง start→now) · 🔴 ไม่นับ TRAIN: (ต้องเป็นของจริงล้วน) */
+export async function dashboardSummaryCounts(start: Date): Promise<DashboardCounts> {
+  await ensureSchema();
+  const sql = getSql();
+  const rows = await sql`
+    SELECT
+      count(*) FILTER (WHERE created_at >= ${start} AND user_id LIKE 'fb:%')      AS new_fb,
+      count(*) FILTER (WHERE created_at >= ${start} AND user_id NOT LIKE 'fb:%')  AS new_line,
+      count(*) FILTER (WHERE last_seen >= ${start} AND created_at < ${start})     AS returning_c,
+      count(*) FILTER (WHERE human_mode)                                          AS handoff_pending
+    FROM customers
+    WHERE user_id NOT LIKE 'TRAIN:%'
+  `;
+  const r = (rows[0] ?? {}) as Record<string, unknown>;
+  return { newLine: Number(r.new_line ?? 0), newFb: Number(r.new_fb ?? 0), returning: Number(r.returning_c ?? 0), handoffPending: Number(r.handoff_pending ?? 0) };
+}
+
+export interface DashboardCustomerRow {
+  userId: string; displayName: string | null; stage: string | null;
+  lastSeen: Date; humanMode: boolean; createdAt: Date; hasOrder: boolean; turns: number;
+}
+
+/** แถวตารางลูกค้า — 🔴 aggregate turn count ครั้งเดียว (กัน N+1) + LIMIT เสมอ */
+export async function dashboardCustomerRows(includeTrain: boolean, limit = 300): Promise<DashboardCustomerRow[]> {
+  await ensureSchema();
+  const sql = getSql();
+  const rows = await sql`
+    SELECT c.user_id, c.display_name, c.stage, c.last_seen, c.human_mode, c.created_at,
+           (c.last_order IS NOT NULL OR c.last_order_id IS NOT NULL) AS has_order,
+           COALESCE(m.turns, 0) AS turns
+    FROM customers c
+    LEFT JOIN (SELECT user_id, count(*) AS turns FROM messages WHERE role = 'user' GROUP BY user_id) m
+      ON m.user_id = c.user_id
+    WHERE ${includeTrain} OR c.user_id NOT LIKE 'TRAIN:%'
+    ORDER BY c.last_seen DESC
+    LIMIT ${limit}
+  `;
+  return (rows as Array<Record<string, unknown>>).map((r) => ({
+    userId: r.user_id as string,
+    displayName: (r.display_name as string | null) ?? null,
+    stage: (r.stage as string | null) ?? null,
+    lastSeen: r.last_seen as Date,
+    humanMode: Boolean(r.human_mode),
+    createdAt: r.created_at as Date,
+    hasOrder: Boolean(r.has_order),
+    turns: Number(r.turns ?? 0),
+  }));
+}
+
+/** ออเดอร์ที่ปิด (won · เขียนชีตสำเร็จ) ตั้งแต่ start — ใช้ join กับยอดในชีตเพื่อรวมยอดขาย · 🔴 ไม่นับ TRAIN: */
+export async function wonOrdersSince(start: Date): Promise<{ orderId: string; userId: string }[]> {
+  await ensureSchema();
+  const sql = getSql();
+  const rows = await sql`SELECT order_id, user_id FROM orders_written WHERE written_at >= ${start} AND user_id NOT LIKE 'TRAIN:%'`;
+  return (rows as Array<Record<string, unknown>>).map((r) => ({ orderId: r.order_id as string, userId: (r.user_id as string | null) ?? "" }));
+}
+
 // ---- D-53: สวิตช์บอทราย channel ----
 
 /** เปิด/ปิดบอทของ channel (key "line" | "fb:<pageId>") · upsert */
