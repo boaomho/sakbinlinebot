@@ -275,6 +275,22 @@ export function __resetOrderAmountCache(): void {
   amountCache = null;
 }
 
+// ---- T2-ฉ: แท็บออเดอร์ dashboard — คืนทุกแถว (read-only · cache 60วิ · ไม่เขียน/ไม่เพิ่มคอลัมน์) ----
+let ordersDashCache: { rows: OrderRow[]; at: number } | null = null;
+
+/** ทุกแถวออเดอร์จากชีต (read-only · cache 60วิ) — ให้แท็บออเดอร์ derive สถานะจากคอลัมน์จริง */
+export async function listOrdersForDashboard(): Promise<OrderRow[]> {
+  if (ordersDashCache && Date.now() - ordersDashCache.at < AMOUNT_TTL_MS) return ordersDashCache.rows;
+  const rows = await readAllOrderRows();
+  ordersDashCache = { rows, at: Date.now() };
+  return rows;
+}
+
+/** เทสเท่านั้น — ล้าง cache แท็บออเดอร์ (กัน stale ข้ามเคส) */
+export function __resetOrdersDashboardCache(): void {
+  ordersDashCache = null;
+}
+
 // ---- แก้ออเดอร์ที่เขียนแล้ว (D-31 · Plan B) — แก้แถวเดิมด้วย order_id ห้ามเขียนแถวใหม่ ----
 
 export interface OrderEditResult {

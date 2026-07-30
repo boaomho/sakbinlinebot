@@ -722,6 +722,15 @@ export async function markShippingNotified(orderId: string): Promise<boolean> {
   return rows.length > 0;
 }
 
+/** T2-ฉ: order_id ที่แจ้งพัสดุลูกค้าแล้ว (read-only · filter ตามชุดที่ส่งมา · ว่าง→Set ว่าง) */
+export async function listNotifiedOrderIds(orderIds: string[]): Promise<Set<string>> {
+  if (orderIds.length === 0) return new Set();
+  await ensureSchema();
+  const sql = getSql();
+  const rows = await sql`SELECT order_id FROM shipping_notified WHERE order_id = ANY(${orderIds}::text[])`;
+  return new Set(rows.map((r) => (r as { order_id: string }).order_id));
+}
+
 // ---- T2-ก: Dashboard reads (อ่าน PROD อย่างเดียว · ไม่มี write/คอลัมน์ใหม่ · TRAIN: ตัดออกจากสรุป) ----
 
 export interface DashboardCounts { newLine: number; newFb: number; returning: number; handoffPending: number }

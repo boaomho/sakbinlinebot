@@ -1,4 +1,4 @@
-# T2-STUDIO-SPEC — T-STUDIO v2: ศูนย์บัญชาการปลาทู `[ก·ข ✅ · ค-ง-จ-ฉ UNBUILT]`
+# T2-STUDIO-SPEC — T-STUDIO v2: ศูนย์บัญชาการปลาทู `[ก·ข·ฉ ✅ · ค-ง-จ UNBUILT]`
 
 > **สถานะ:** spec จากแชทภาพรวม (สถาปนิก) · ยังไม่เขียนโค้ด · ทำทีละเฟส 1 เฟส 1 commit · report แผน+จุดแตะไฟล์ก่อนลงมือทุกเฟส
 > **ฐาน:** ต่อยอด T-STUDIO v1 (เฟส ก-ง เสร็จแล้ว: simulator sandbox · แตะบอลลูนแก้ · เขียนกลับชีต diff/conflict/TRAIN_LOG · mobile) — **ห้ามรื้อของ v1** ทุกฟีเจอร์เดิมต้องทำงานเหมือนเดิม
@@ -67,7 +67,14 @@ v1 ทั้งหมดคือ **โลกซ้อม (sandbox)** — v2 เ
 
 ---
 
-## เฟส T2-ฉ · แท็บ "ออเดอร์" ใน dashboard ร้านจริง (อ่านอย่างเดียวแบบ T2-ก · คิวถัดจาก T2-ข ก่อน T2-ค)
+## เฟส T2-ฉ · แท็บ "ออเดอร์" ใน dashboard ร้านจริง (อ่านอย่างเดียวแบบ T2-ก) ✅ เสร็จ (D-56)
+
+> **build แล้ว:** แท็บ "👥 ลูกค้า ｜ 🧾 ออเดอร์" ใน `/train/dashboard` · ตารางออเดอร์จากชีต (cache 60วิ · เรียง rowIndex ใหม่สุดก่อน): เลข·ป้ายช่อง·ชื่อ·รายการ+ยอด·สถานะ · headline chips (รอคอนเฟิร์ม/รอแพ็ค=งานคน เน้นแดง · รอแจกเลข/รอแจ้ง=cron) · filter สถานะ+ช่อง · TRAIN กรอง default (toggle) · จิ้ม→รายละเอียด format คนอ่าน (ไม่มี JSON ดิบ) · 🔴 read-only ล้วน
+> **สถานะ pure (`deriveOrderStatus`):** cancelled(N) > awaiting_confirm(ไม่M) > awaiting_number(M·ไม่O·cron) > awaiting_pack(O·P ว่าง·งานคน) > shipped_notified(P·notified) / shipped_pending_notify(P·ยังไม่·cron) · **cancelled precedence สูงสุดเสมอ**
+> ไฟล์: `lib/orders.ts listOrdersForDashboard`(cache 60วิ · wrap readAllOrderRows) · `lib/db.ts listNotifiedOrderIds`(read-only ANY::text[]) · `lib/train/dashboard.ts deriveOrderStatus`+`ORDER_STATUS_META` · `app/train/api/dashboard/orders`(NEW) · `DashboardView.tsx`(แท็บ+ตาราง+detail)
+> **เทส:** deriveOrderStatus ครบทุก combination N/M/O/P+notified (6 + precedence) · route TRAIN กรอง default/toggle · counts · sort · auth 401 · **462 passed**
+
+**สเปกเดิม (อ้างอิง):**
 
 **โจทย์:** เห็นออเดอร์ทั้งหมดจากชีต Orders ในหน้าเดียว โดยไม่ต้องเปิดชีต — รู้ทันทีว่าออเดอร์ไหนค้างขั้นไหน
 

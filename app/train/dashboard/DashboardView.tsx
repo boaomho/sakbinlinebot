@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { channelLabel } from "@/lib/channel/label";
-import { STATUS_META, type CustomerStatus, type Channel } from "@/lib/train/dashboard";
+import { STATUS_META, ORDER_STATUS_META, type CustomerStatus, type Channel, type OrderStatus } from "@/lib/train/dashboard";
 
 /**
  * T2-ก · Dashboard "ร้านจริง" (อ่าน PROD อย่างเดียว) — แยกโซนจากห้องซ้อมชัด (แถบแดง = ของจริง)
@@ -26,6 +26,12 @@ interface Detail {
   pendingSummary: string[]; lastOrderSummary: string[]; pendingRaw: unknown; lastOrderRaw: unknown;
   messages: { role: string; text: string; at: string }[];
 }
+interface Ord {
+  rowIndex: number; orderNumber: string; orderId: string; channel: Channel; lineUserId: string;
+  name: string; productAndQty: string; total: string; paymentMethod: string; trackingNumber: string;
+  phone: string; address: string; status: OrderStatus;
+}
+interface OrdData { orders: Ord[]; counts: Record<OrderStatus, number>; total: number }
 
 const C = { prod: "#c0392b", prodBg: "#fdecea", card: "#fff", border: "#e2e2e2", ink: "#1a1a1a", sub: "#666" };
 const S: Record<string, React.CSSProperties> = {
@@ -74,6 +80,10 @@ export default function DashboardView() {
   const [statusF, setStatusF] = useState<CustomerStatus | "all">("all");
   const [channelF, setChannelF] = useState<Channel | "all">("all");
   const [detail, setDetail] = useState<Detail | null>(null);
+  const [tab, setTab] = useState<"customers" | "orders">("customers");
+  const [ordData, setOrdData] = useState<OrdData | null>(null);
+  const [ordStatusF, setOrdStatusF] = useState<OrderStatus | "all">("all");
+  const [ordDetail, setOrdDetail] = useState<Ord | null>(null);
 
   const load = useCallback(async () => {
     setBusy(true);
@@ -87,6 +97,17 @@ export default function DashboardView() {
   }, [range, includeTrain]);
 
   useEffect(() => { load(); }, [load]);
+
+  const loadOrders = useCallback(async () => {
+    setBusy(true);
+    try {
+      const r = await fetch("/train/api/dashboard/orders", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ includeTrain }) });
+      if (r.status === 401 || r.status === 404) { setAuthed(false); return; }
+      if (r.ok) setOrdData((await r.json()) as OrdData);
+    } finally { setBusy(false); }
+  }, [includeTrain]);
+
+  useEffect(() => { if (tab === "orders") loadOrders(); }, [tab, loadOrders]);
 
   async function login() {
     const r = await fetch("/train/api/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password }) });
@@ -145,11 +166,18 @@ export default function DashboardView() {
 
       <div style={S.wrap}>
         <div style={S.controls}>
-          <button style={{ ...S.btn, ...(range === "today" ? S.btnOn : {}) }} onClick={() => setRange("today")}>วันนี้</button>
-          <button style={{ ...S.btn, ...(range === "7d" ? S.btnOn : {}) }} onClick={() => setRange("7d")}>7 วัน</button>
+          <button style={{ ...S.btn, ...(tab === "customers" ? S.btnOn : {}) }} onClick={() => setTab("customers")}>👥 ลูกค้า</button>
+          <button style={{ ...S.btn, ...(tab === "orders" ? S.btnOn : {}) }} onClick={() => setTab("orders")}>🧾 ออเดอร์</button>
           <span style={{ flex: 1 }} />
           {busy && <span style={{ fontSize: 12, color: C.sub }}>กำลังโหลด…</span>}
-          <button style={S.btn} onClick={load}>↻ รีเฟรช</button>
+          <button style={S.btn} onClick={() => (tab === "orders" ? loadOrders() : load())}>↻ รีเฟรช</button>
+        </div>
+
+        {tab === "customers" && (
+        <>
+        <div style={S.controls}>
+          <button style={{ ...S.btn, ...(range === "today" ? S.btnOn : {}) }} onClick={() => setRange("today")}>วันนี้</button>
+          <button style={{ ...S.btn, ...(range === "7d" ? S.btnOn : {}) }} onClick={() => setRange("7d")}>7 วัน</button>
         </div>
 
         {data && (
@@ -212,7 +240,77 @@ export default function DashboardView() {
           ))}
           {shown.length === 0 && <div style={{ padding: 20, textAlign: "center", color: C.sub }}>ไม่มีลูกค้าตามตัวกรอง</div>}
         </div>
+        </>
+        )}
+
+        {tab === "orders" && (
+        <>
+          <div style={S.cards}>
+            {(["awaiting_confirm", "awaiting_pack", "awaiting_number", "shipped_pending_notify"] as const).map((k) => (
+              <div key={k} style={{ ...S.card, ...(ordData && ordData.counts[k] > 0 && ORDER_STATUS_META[k].human ? { borderColor: C.prod, background: C.prodBg } : {}) }}>
+                <div style={S.cardLabel}>{ORDER_STATUS_META[k].icon} {ORDER_STATUS_META[k].label}</div>
+                <div style={S.cardBig}>{ordData ? ordData.counts[k] : "–"}</div>
+                {ORDER_STATUS_META[k].human && <div style={S.cardSub}>งานที่ทีมต้องทำ</div>}
+              </div>
+            ))}
+          </div>
+
+          <div style={S.controls}>
+            {(["all", "awaiting_confirm", "awaiting_number", "awaiting_pack", "shipped_pending_notify", "shipped_notified", "cancelled"] as const).map((s) => (
+              <button key={s} style={{ ...S.btn, ...(ordStatusF === s ? S.btnOn : {}) }} onClick={() => setOrdStatusF(s)}>{s === "all" ? "ทุกสถานะ" : `${ORDER_STATUS_META[s].icon} ${ORDER_STATUS_META[s].label}`}</button>
+            ))}
+            <span style={{ flex: 1 }} />
+            {(["all", "line", "fb"] as const).map((c) => (
+              <button key={c} style={{ ...S.btn, ...(channelF === c ? S.btnOn : {}) }} onClick={() => setChannelF(c)}>{c === "all" ? "ทุกช่อง" : c === "line" ? "[LINE]" : "[FB]"}</button>
+            ))}
+            <label style={{ ...S.btn, display: "flex", gap: 6, alignItems: "center" }}>
+              <input type="checkbox" checked={includeTrain} onChange={(e) => setIncludeTrain(e.target.checked)} /> แสดงห้องซ้อม
+            </label>
+          </div>
+
+          {(() => {
+            const shownOrd = (ordData?.orders ?? []).filter((o) => (ordStatusF === "all" || o.status === ordStatusF) && (channelF === "all" || o.channel === channelF));
+            return (
+              <div style={S.table}>
+                <div style={{ padding: "8px 12px", fontSize: 12, color: C.sub }}>{shownOrd.length} ออเดอร์ · เรียงใหม่สุดก่อน · อ่านอย่างเดียว (การกระทำจริงทำในชีต)</div>
+                {shownOrd.map((o) => (
+                  <div key={o.rowIndex} style={S.row} onClick={() => setOrdDetail(o)}>
+                    <span style={S.chip}>{channelLabel(o.lineUserId)}</span>
+                    <span style={{ fontSize: 12, color: C.sub, width: 46 }}>{o.orderNumber || "—"}</span>
+                    <b style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{o.name}</b>
+                    <span style={{ fontSize: 12, color: C.sub, minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{o.productAndQty}</span>
+                    <span style={{ fontSize: 12, width: 64, textAlign: "right" }}>{o.total || "-"}</span>
+                    <span style={{ fontSize: 12, whiteSpace: "nowrap" }} title={ORDER_STATUS_META[o.status].label}>{ORDER_STATUS_META[o.status].icon} {ORDER_STATUS_META[o.status].label}</span>
+                  </div>
+                ))}
+                {shownOrd.length === 0 && <div style={{ padding: 20, textAlign: "center", color: C.sub }}>ไม่มีออเดอร์ตามตัวกรอง</div>}
+              </div>
+            );
+          })()}
+        </>
+        )}
       </div>
+
+      {ordDetail && (
+        <div style={S.overlay} onClick={() => setOrdDetail(null)}>
+          <div style={S.panel} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <b>{channelLabel(ordDetail.lineUserId)} ออเดอร์ {ordDetail.orderNumber || ordDetail.orderId || "(ยังไม่แจกเลข)"}</b>
+              <button style={S.btn} onClick={() => setOrdDetail(null)}>ปิด</button>
+            </div>
+            <div style={{ fontSize: 13, margin: "8px 0", color: C.sub }}>{ORDER_STATUS_META[ordDetail.status].icon} {ORDER_STATUS_META[ordDetail.status].label}</div>
+            <div style={{ fontSize: 14, display: "flex", flexDirection: "column", gap: 4 }}>
+              <div><b>ลูกค้า:</b> {ordDetail.name}{ordDetail.phone ? ` · ${ordDetail.phone}` : ""}</div>
+              {ordDetail.address && <div><b>ที่อยู่:</b> {ordDetail.address}</div>}
+              <div><b>รายการ:</b> {ordDetail.productAndQty || "-"}</div>
+              <div><b>ยอดเงิน:</b> {ordDetail.total || "-"} บาท · <b>ชำระ:</b> {ordDetail.paymentMethod || "-"}</div>
+              {ordDetail.trackingNumber && <div><b>เลขแทรค:</b> {ordDetail.trackingNumber}</div>}
+              <div style={{ fontSize: 12, color: C.sub, marginTop: 4 }}>order_id: {ordDetail.orderId || "-"} · แถวชีต {ordDetail.rowIndex}</div>
+            </div>
+            <div style={{ fontSize: 12, color: C.sub, marginTop: 12, padding: 8, background: "#f6f8fa", borderRadius: 8 }}>อ่านอย่างเดียว — คอนเฟิร์ม/กรอกเลข/ยกเลิก ทำในชีต Orders (แท็บนี้เป็นกระจกสะท้อนสถานะ)</div>
+          </div>
+        </div>
+      )}
 
       {detail && (
         <div style={S.overlay} onClick={() => setDetail(null)}>

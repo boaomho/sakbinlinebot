@@ -842,6 +842,16 @@ Dashboard คุมบอทได้จริง: สวิตช์ราย�
 - **harness:** builder text (ปิด/เปิด · ช่อง/รายคน) · /switch channel เขียนถูก key (`isChannelEnabled` หลังกด) + push กลุ่มมี `(จาก Dashboard)` · key เพี้ยน→400 · customer setHumanMode + push มีชื่อ+suffix · auth 401 · main route คืน channels(line+fb) · **452 passed** · build เขียว · v1 fidelity + คำสั่งพิมพ์เดิมเขียว
 - **ไม่ทำในเฟสนี้:** แท็บออเดอร์=T2-ฉ (เพิ่มในลำดับ · อ่านอย่างเดียว ก่อน T2-ค)
 
+### D-56 · T2-ฉ · แท็บออเดอร์ใน dashboard ร้านจริง (อ่านอย่างเดียว · 1 commit) — spec [docs/T2-STUDIO-SPEC.md](T2-STUDIO-SPEC.md)
+แท็บ "🧾 ออเดอร์" ข้างแท็บ "👥 ลูกค้า" — เห็นออเดอร์ทั้งหมดจากชีต Orders + สถานะแต่ละขั้น โดยไม่เปิดชีต (ทีมแพ็คเปิดเช้าเห็นคอขวด)
+- 🔴 **read-only ล้วน — ไม่เขียนกลับชีต ไม่เพิ่มคอลัมน์** · derive สถานะจากคอลัมน์จริงเท่านั้น · การกระทำจริง (คอนเฟิร์ม/กรอกเลข/ยกเลิก) ยังทำในชีต แท็บนี้เป็น "กระจก"
+- **สถานะ pure (`deriveOrderStatus` · precedence สำคัญกว่าสวย):** `cancelled`(N=TRUE · **มาก่อนเสมอ**) > `awaiting_confirm`(ไม่ M) > `awaiting_number`(M·ไม่ O=ส่งออเดอร์แล้ว · รอ cron แจกเลข) > `awaiting_pack`(O·P=เลขTracking ว่าง · งานคน) > `shipped_notified`(P มี · `shipping_notified`) / `shipped_pending_notify`(P มี · ยังไม่ notified · รอ cron)
+- **map คอลัมน์จริง:** M=คอนเฟิร์ม · N=ยกเลิก · O=ส่งออเดอร์แล้ว(cron แจกเลข) · P=เลขTracking · R=line_user_id (→ `channelOf` แยก fb/line/train · ป้ายช่อง = `channelLabel` เดิม · **ไม่พึ่ง source_channel** · salepage เผื่ออนาคต)
+- **อ่าน:** `lib/orders.ts listOrdersForDashboard` (wrap `readAllOrderRows` เดิม · cache 60วิ mirror `amountCache`) · `lib/db.ts listNotifiedOrderIds(ids)` (read-only `WHERE order_id = ANY(::text[])` · กัน N+1) · route `app/train/api/dashboard/orders` (guard เดิม · TRAIN กรอง default+toggle · sort rowIndex desc = ใหม่สุดก่อน)
+- **หัวจอ:** นับทุกสถานะ pending (รอคอนเฟิร์ม/รอแจกเลข/รอแพ็ค/รอแจ้ง) · 2 อันเป็น "งานคน" (`human` flag ใน `ORDER_STATUS_META`) เน้นกรอบแดง
+- **harness:** `deriveOrderStatus` **ครบทุก combination** N/M/O/P+notified (6 สถานะ + cancelled precedence) · route: TRAIN กรอง default/toggle · สถานะถูกทุกแถว · sort ใหม่สุดก่อน · counts · shipped_pending vs notified · auth 401 · **462 passed** · build เขียว · v1 fidelity เดิมเขียว
+- **ไม่ทำในเฟสนี้:** ปุ่มกระทำ (คอนเฟิร์ม/ยกเลิก) จาก UI = อนาคต (write phase) · ลิงก์แถวชีต = T2-ค
+
 ### D-54 · หน้า Privacy Policy (ปลดล็อก M-3 App Review · 1 commit)
 `app/privacy/page.tsx` static — ไทย (8 ข้อครบ) + อังกฤษสรุปความเดียวกัน · placeholder อีเมล `sakbinofficial@gmail.com` (เจ้าของแจ้งจริงทีหลัง) · วันที่อัปเดตคงที่ (ไม่ใช้ new Date) · 🔴 ไม่มี tracking/analytics/external
 - เขียนด้วย `createElement` (ไม่ใช่ JSX) — tsconfig `jsx:preserve` ทำให้ vitest transform JSX import ไม่ได้ (เหมือน EditorBoundary) → หน้าจริง import+render ทดสอบได้

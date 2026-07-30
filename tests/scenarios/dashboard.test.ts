@@ -4,9 +4,9 @@ import { NextRequest } from "next/server";
 import { sheetsCalls, adminPushes } from "../harness/state";
 import { seedBotLib } from "../harness/botlib-fixture";
 import { setCreatedAtAgo } from "../harness/db";
-import { ensureCustomer, addMessage, setHumanMode, markOrderWritten, setLastOrder, getCustomer, isChannelEnabled, dashboardSummaryCounts, dashboardCustomerRows, wonOrdersSince } from "@/lib/db";
-import { orderAmountMap, __resetOrderAmountCache, ORDERS_HEADER } from "@/lib/orders";
-import { channelOf, deriveStatus, formatOrderSummary } from "@/lib/train/dashboard";
+import { ensureCustomer, addMessage, setHumanMode, markOrderWritten, markShippingNotified, setLastOrder, getCustomer, isChannelEnabled, dashboardSummaryCounts, dashboardCustomerRows, wonOrdersSince } from "@/lib/db";
+import { orderAmountMap, __resetOrderAmountCache, __resetOrdersDashboardCache, ORDERS_HEADER } from "@/lib/orders";
+import { channelOf, deriveStatus, deriveOrderStatus, formatOrderSummary } from "@/lib/train/dashboard";
 import { botModeMsg, channelSwitchMsg } from "@/lib/train/bot-switch";
 import { bangkokDayStart } from "@/lib/core/time";
 
@@ -19,7 +19,7 @@ beforeAll(() => {
   process.env.DATABASE_URL_TRAIN = process.env.DATABASE_URL;
   process.env.META_PAGE_ID = "999888"; // T2-ข: ให้มีช่อง fb ในรายการสวิตช์
 });
-beforeEach(() => { __resetOrderAmountCache(); seedBotLib(); });
+beforeEach(() => { __resetOrderAmountCache(); __resetOrdersDashboardCache(); seedBotLib(); });
 
 // ---------- pure helpers ----------
 describe("T2-ก · helper pure", () => {
@@ -215,5 +215,91 @@ describe("T2-ข · /switch route", () => {
     await setHumanMode(LINE, true);
     await switchReq({ target: "customer", userId: LINE, close: false });
     expect((await getCustomer(LINE))!.humanMode).toBe(false);
+  });
+});
+
+// ---------- T2-ฉ · แท็บออเดอร์ (read-only · derive จากคอลัมน์จริง) ----------
+function fullRow(o: { orderId: string; userId: string; name?: string; orderNumber?: string; product?: string; total?: string; confirmed?: boolean; sent?: boolean; tracking?: string; cancelled?: boolean }): string[] {
+  const row = ORDERS_HEADER.map(() => "");
+  const set = (h: string, v: string) => { row[ORDERS_HEADER.indexOf(h)] = v; };
+  set("order_id", o.orderId);
+  set("line_user_id", o.userId);
+  set("ชื่อ-นามสกุล", o.name ?? "");
+  set("ลำดับ", o.orderNumber ?? "");
+  set("สินค้า+จำนวน", o.product ?? "");
+  set("ยอดเงิน", o.total ?? "");
+  set("คอนเฟิร์ม", o.confirmed ? "TRUE" : "FALSE");
+  set("ส่งออเดอร์แล้ว", o.sent ? "TRUE" : "FALSE");
+  set("เลขTracking", o.tracking ?? "");
+  set("ยกเลิก", o.cancelled ? "TRUE" : "FALSE");
+  return row;
+}
+
+describe("T2-ฉ · deriveOrderStatus (ครบทุก combination N/M/O/P + notified)", () => {
+  const base = { cancelled: false, confirmed: false, sent: false, hasTracking: false, notified: false };
+  it("N=TRUE → cancelled (precedence สูงสุด แม้คอลัมน์อื่นครบ)", () => {
+    expect(deriveOrderStatus({ cancelled: true, confirmed: true, sent: true, hasTracking: true, notified: true })).toBe("cancelled");
+  });
+  it("ไม่ M → awaiting_confirm", () => {
+    expect(deriveOrderStatus({ ...base })).toBe("awaiting_confirm");
+  });
+  it("M · ไม่ O → awaiting_number (รอ cron แจกเลข)", () => {
+    expect(deriveOrderStatus({ ...base, confirmed: true })).toBe("awaiting_number");
+  });
+  it("M · O · P ว่าง → awaiting_pack (งานแพ็ค/เลขแทรค)", () => {
+    expect(deriveOrderStatus({ ...base, confirmed: true, sent: true })).toBe("awaiting_pack");
+  });
+  it("P มี · ยังไม่ notified → shipped_pending_notify", () => {
+    expect(deriveOrderStatus({ ...base, confirmed: true, sent: true, hasTracking: true, notified: false })).toBe("shipped_pending_notify");
+  });
+  it("P มี · notified → shipped_notified", () => {
+    expect(deriveOrderStatus({ ...base, confirmed: true, sent: true, hasTracking: true, notified: true })).toBe("shipped_notified");
+  });
+});
+
+describe("T2-ฉ · /orders route", () => {
+  async function ordReq(body: unknown, authed = true) {
+    const { POST } = await import("@/app/train/api/dashboard/orders/route");
+    return POST(req(body, authed));
+  }
+
+  it("ไม่มี cookie → 401", async () => {
+    expect((await ordReq({}, false)).status).toBe(401);
+  });
+
+  it("🔴 assemble: สถานะถูกทุกแถว + TRAIN กรอง default + sort ใหม่สุดก่อน + counts", async () => {
+    // A(idx2) LINE รอคอนเฟิร์ม · B(idx3) LINE ส่งแล้วแจ้งแล้ว · C(idx4) FB รอแพ็ค · D(idx5) TRAIN (กรองออก)
+    sheetsCalls.getReturn = [
+      fullRow({ orderId: "A", userId: LINE, name: "เอ", confirmed: false }),
+      fullRow({ orderId: "B", userId: LINE, name: "บี", orderNumber: "0724-1", confirmed: true, sent: true, tracking: "TH123" }),
+      fullRow({ orderId: "C", userId: FB, name: "ซี", confirmed: true, sent: true, tracking: "" }),
+      fullRow({ orderId: "D", userId: TRAIN, name: "ดี", confirmed: false }),
+    ];
+    await markShippingNotified("B"); // B แจ้งแล้ว → shipped_notified
+
+    const res = await ordReq({ includeTrain: false });
+    expect(res.status).toBe(200);
+    const d = await res.json();
+    expect(d.orders.map((o: { orderId: string }) => o.orderId), "TRAIN ตัด + sort desc").toEqual(["C", "B", "A"]);
+    const byId = Object.fromEntries(d.orders.map((o: { orderId: string; status: string; channel: string }) => [o.orderId, o]));
+    expect(byId.A.status).toBe("awaiting_confirm");
+    expect(byId.B.status, "tracking + notified").toBe("shipped_notified");
+    expect(byId.C.status, "sent ไม่มี tracking").toBe("awaiting_pack");
+    expect(byId.C.channel).toBe("fb");
+    expect(d.counts.awaiting_confirm).toBe(1);
+    expect(d.counts.awaiting_pack).toBe(1);
+    expect(d.counts.shipped_notified).toBe(1);
+  });
+
+  it("shipped_pending_notify เมื่อมี tracking แต่ยังไม่ mark", async () => {
+    sheetsCalls.getReturn = [fullRow({ orderId: "E", userId: LINE, confirmed: true, sent: true, tracking: "TH999" })];
+    const d = await (await ordReq({})).json();
+    expect(d.orders[0].status).toBe("shipped_pending_notify");
+  });
+
+  it("includeTrain=true → เห็น TRAIN", async () => {
+    sheetsCalls.getReturn = [fullRow({ orderId: "D", userId: TRAIN, confirmed: false })];
+    const d = await (await ordReq({ includeTrain: true })).json();
+    expect(d.orders.some((o: { orderId: string }) => o.orderId === "D")).toBe(true);
   });
 });
