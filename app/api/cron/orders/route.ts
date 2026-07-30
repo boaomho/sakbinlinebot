@@ -4,9 +4,11 @@ import { listPendingOrders, listOrdersToNotifyShipping, markOrderSent, OrderRow 
 import { nextOrderNumber, clearDeliveredStepsExceptCurrent, markShippingNotified, getCustomer, getRecentHistory } from "@/lib/db";
 import { bangkokShift } from "@/lib/core/time";
 import { pushRawText, pushMessages } from "@/lib/line";
-import { formatShippingMessage, DEFAULT_SHIPPING_TEMPLATE, DEFAULT_CARRIER } from "@/lib/shipping";
+import { formatShippingMessage, DEFAULT_SHIPPING_TEMPLATE, DEFAULT_CARRIER, withinMessengerWindow } from "@/lib/shipping";
 import { isFirstMessageOfDay, prependToFirstTextBubble, DEFAULT_DAILY_GREETING } from "@/lib/greeting";
 import { channelLabel } from "@/lib/channel/label";
+import { resolvePageContext } from "@/lib/channel/pages";
+import { MessengerTransport } from "@/lib/channel/transport";
 
 export const maxDuration = 30;
 
@@ -126,11 +128,6 @@ async function notifyShipping(
         console.warn(JSON.stringify({ scope: "cron-shipping", warning: "ข้าม: ไม่มี order_id (แถวเก่าก่อน D-29)", rowIndex: o.rowIndex }));
         continue;
       }
-      // M-2: ออเดอร์ช่องทาง Messenger (fb:) — cron LINE push ไม่ได้ → ข้าม (ไม่เคลม · M-4 ค่อย route ตาม prefix)
-      if (o.lineUserId.startsWith("fb:")) {
-        console.warn(JSON.stringify({ scope: "cron-shipping", warning: "ข้าม messenger (รอ M-4 route push ตาม channel)", orderId: o.orderId }));
-        continue;
-      }
       // เคลม atomic ก่อนแจ้ง (กัน cron รันซ้อน/ซ้ำ) — เคยเคลม = ข้าม
       if (!(await markShippingNotified(o.orderId))) continue;
 
@@ -153,15 +150,36 @@ async function notifyShipping(
         const hist = await getRecentHistory(o.lineUserId, 1);
         if (isFirstMessageOfDay(hist.length, customer.lastSeen, new Date())) msg = prependToFirstTextBubble(msg, greet);
       }
-      const ok = await pushMessages(o.lineUserId, msg);
+
+      // M-4: route push ตาม channel ของ R (raw/TRAIN → LINE · fb: → Messenger + gate 24 ชม.)
+      const label = channelLabel(o.lineUserId);
+      const orderTag = `${label} ${o.orderNumber || o.orderId} · ${carrier} ${o.trackingNumber}`;
+      let ok: boolean;
+      if (o.lineUserId.startsWith("fb:")) {
+        // 5.3: Messenger free-form ได้เฉพาะลูกค้า active ใน 24 ชม. · เกิน → แจ้งแอดมิน (เคลมแล้ว = ไม่ retry/สแปม)
+        if (!withinMessengerWindow(customer.lastSeen, new Date())) {
+          if (adminGroupId) await pushRawText(adminGroupId, `⚠️ ${label} เกินหน้าต่าง 24 ชม. — โปรดแจ้งเลขพัสดุเอง\nออเดอร์ ${orderTag}\n${o.customerName} ${o.phone}`);
+          continue;
+        }
+        const [, pageId, psid] = o.lineUserId.split(":");
+        const page = pageId ? await resolvePageContext(pageId) : null;
+        if (!page || !psid) {
+          if (adminGroupId) await pushRawText(adminGroupId, `⚠️ ${label} ส่งแจ้งพัสดุไม่ได้ (เพจไม่พร้อม) — โปรดแจ้งเอง\nออเดอร์ ${orderTag}`);
+          continue;
+        }
+        ok = await new MessengerTransport(page, psid).push(msg);
+      } else {
+        ok = await pushMessages(o.lineUserId, msg);
+      }
+
       if (ok) {
         shipped++;
-        // แจ้งกลุ่ม (ทีมแพ็คเห็นสถานะจากกลุ่ม — ทดแทนคอลัมน์สถานะในชีต)
-        if (adminGroupId) await pushRawText(adminGroupId, `แจ้งพัสดุลูกค้าแล้ว ✓ ${o.orderNumber || o.orderId} · ${carrier} ${o.trackingNumber}`);
+        // แจ้งกลุ่ม (ทีมแพ็คเห็นสถานะ+ช่องทางจากกลุ่ม — ทดแทนคอลัมน์สถานะในชีต)
+        if (adminGroupId) await pushRawText(adminGroupId, `แจ้งพัสดุลูกค้าแล้ว ✓ ${orderTag}`);
       } else {
         // push ล้ม (เคลมไปแล้ว) → แจ้งแอดมินให้แจ้งเอง กันลูกค้าไม่ได้เลข
         console.error(JSON.stringify({ scope: "cron-shipping", warning: "push ลูกค้าล้ม (เคลมแล้ว)", orderId: o.orderId }));
-        if (adminGroupId) await pushRawText(adminGroupId, `⚠️ แจ้งพัสดุลูกค้าไม่สำเร็จ (push ล้ม) — โปรดแจ้งเอง\nออเดอร์ ${o.orderNumber || o.orderId} · ${carrier} ${o.trackingNumber}`);
+        if (adminGroupId) await pushRawText(adminGroupId, `⚠️ ${label} แจ้งพัสดุลูกค้าไม่สำเร็จ (push ล้ม) — โปรดแจ้งเอง\nออเดอร์ ${orderTag}`);
       }
     } catch (error) {
       console.error(JSON.stringify({ scope: "cron-shipping", warning: "notify failed", orderId: o.orderId, error: String(error) }));

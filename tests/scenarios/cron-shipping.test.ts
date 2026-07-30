@@ -1,8 +1,34 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { sheetsCalls, lineCalls, adminPushes, harnessOverrides } from "../harness/state";
 import { ensureCustomer, setHumanMode } from "@/lib/db";
+import { setLastSeenAgo } from "../harness/db";
 import { ORDERS_HEADER } from "@/lib/orders";
-import { DEFAULT_CARRIER, formatShippingMessage } from "@/lib/shipping";
+import { DEFAULT_CARRIER, formatShippingMessage, withinMessengerWindow } from "@/lib/shipping";
+
+const FB_PAGE = "999888";
+const FB_USER = `fb:${FB_PAGE}:psid-1`;
+const graphSends: { url: string; body: Record<string, unknown> }[] = [];
+let realFetch: typeof fetch;
+beforeAll(() => {
+  realFetch = global.fetch;
+  process.env.META_PAGE_ID = FB_PAGE;
+  process.env.META_PAGE_ACCESS_TOKEN = "tok";
+  process.env.META_APP_SECRET = "sec";
+  process.env.META_VERIFY_TOKEN = "vt";
+});
+beforeEach(() => {
+  graphSends.length = 0;
+  vi.stubGlobal("fetch", async (url: unknown, opts?: { method?: string; body?: string }) => {
+    const u = String(url);
+    if (u.includes("graph.facebook.com")) {
+      if (opts?.method === "POST" && opts.body) graphSends.push({ url: u, body: JSON.parse(opts.body) });
+      return new Response(JSON.stringify({ message_id: "m" }), { status: 200 });
+    }
+    return realFetch(url as string, opts as RequestInit);
+  });
+});
+afterEach(() => vi.unstubAllGlobals());
+const fbTextSends = (): string[] => graphSends.map((c) => (c.body.message as { text?: string })?.text ?? "").filter(Boolean);
 
 /**
  * D-50 แจ้งเลขพัสดุ — cron push ลูกค้าเมื่อทีมแพ็คกรอก P (Tracking)
@@ -33,6 +59,14 @@ const custPushes = (): string[] =>
 describe("D-50 · formatShippingMessage (pure)", () => {
   it("แทน {ขนส่ง}/{เลขพัสดุ}", () => {
     expect(formatShippingMessage("ขนส่ง {ขนส่ง} เลข {เลขพัสดุ}", "Shopee Express", "TH1")).toBe("ขนส่ง Shopee Express เลข TH1");
+  });
+});
+
+describe("M-4 · withinMessengerWindow (pure · 24 ชม.)", () => {
+  it("ใน 24 ชม. → true · เกิน → false", () => {
+    const now = new Date("2026-07-30T12:00:00Z");
+    expect(withinMessengerWindow(new Date("2026-07-30T00:00:00Z"), now), "12 ชม.").toBe(true);
+    expect(withinMessengerWindow(new Date("2026-07-29T11:00:00Z"), now), "25 ชม.").toBe(false);
   });
 });
 
@@ -72,10 +106,25 @@ describe("D-50 · cron แจ้งเลขพัสดุ", () => {
     expect(custPushes().length).toBe(0);
   });
 
-  it("🔴 M-2: R เป็น fb: (messenger) → cron LINE ข้าม+ไม่ push (รอ M-4 route)", async () => {
-    sheetsCalls.getReturn = [buildRow({ "line_user_id": "fb:999888:psid-1" })];
+  it("🔴 M-4: R เป็น fb: + ลูกค้า active ใน 24 ชม. → push ผ่าน Messenger (ไม่ใช่ LINE) + แจ้งกลุ่ม ✓ [FB]", async () => {
+    await ensureCustomer(FB_USER); // lastSeen = now → ใน 24 ชม.
+    sheetsCalls.getReturn = [buildRow({ "line_user_id": FB_USER })];
+    const res = await runCron();
+    expect((await res.json()).shipped).toBe(1);
+    expect(fbTextSends().join(" "), "ยิงผ่าน Send API").toContain("TH999");
+    expect(lineCalls.pushes.filter((p) => p.to === FB_USER).length, "ไม่ push ทาง LINE").toBe(0);
+    expect(JSON.stringify(adminPushes())).toContain("แจ้งพัสดุลูกค้าแล้ว ✓ [FB]");
+  });
+
+  it("🔴 M-4: R เป็น fb: + เกิน 24 ชม. → ไม่ยิง Messenger · แจ้งกลุ่มแอดมิน [FB] โปรดแจ้งเอง", async () => {
+    await ensureCustomer(FB_USER);
+    await setLastSeenAgo(FB_USER, 25 * 60); // 25 ชม.
+    sheetsCalls.getReturn = [buildRow({ "line_user_id": FB_USER })];
     expect((await (await runCron()).json()).shipped).toBe(0);
-    expect(lineCalls.pushes.length, "ไม่ push ทาง LINE").toBe(0);
+    expect(graphSends.length, "ไม่ยิง Send API").toBe(0);
+    const admin = JSON.stringify(adminPushes());
+    expect(admin).toContain("[FB]");
+    expect(admin).toContain("เกินหน้าต่าง 24 ชม.");
   });
 
   it("🔴 human_mode → ไม่ push ลูกค้า · แจ้งกลุ่มแอดมินให้แจ้งเอง", async () => {

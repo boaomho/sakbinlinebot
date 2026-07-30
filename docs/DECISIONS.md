@@ -823,6 +823,14 @@ handoff ทุก path (edit/AI-semantic/keyword) ตั้งแค่ `human_m
 **ไม่แตะ:** cron แจกเลข/idempotency D-29/O semantics เดิม (เพิ่ม loop ต่อท้าย) · **harness:** cron (push+ขนส่ง+เลข · idempotent ไม่ซ้ำ · P ว่าง/R ว่าง ข้าม · human_mode→แอดมิน · greeting · ""=ปิด) + train sim + formatShippingMessage · **405 passed | 3 expected-fail** · build เขียว
 **จบเคส CRM/Follow (ลูกค้าตอบได้รับ→ถามรีวิว) = ก้อน B ส่วนหลัง · ยังไม่ทำ**
 
+### M-4 · cron/D-50 route push ตาม channel (1 commit)
+notifyShipping เลิกข้าม `fb:` → route ตาม prefix ของ R:
+- **LINE (raw/TRAIN:)** → `pushMessages` เดิม (sandbox guard → collector)
+- **Messenger (`fb:<pageId>:<psid>`)** → **gate 24 ชม.** (5.3 · `withinMessengerWindow(customer.lastSeen, now)`): ใน 24 ชม. → `MessengerTransport(resolvePageContext(pageId), psid).push` · เกิน/เพจไม่พร้อม → แจ้งกลุ่มแอดมิน `[FB] โปรดแจ้งพัสดุเอง <order> <tracking>` (เคลมแล้ว = ไม่ retry/สแปม)
+- แจกเลขออเดอร์ (push กลุ่มแพ็ค) ทำทุกช่องเหมือนเดิม (ไม่แตะ) · `✓`/fallback ทุกอันมี `channelLabel` (D-52)
+- **harness:** withinMessengerWindow (pure) · fb: ใน 24 ชม.→Send API push+✓[FB] · fb: เกิน 24 ชม.→admin [FB] เกินหน้าต่าง+ไม่ยิง · LINE/TRAIN เดิม · **422 passed** · build เขียว
+- **เหลือ:** Utility Template (แจ้ง Messenger เกิน 24 ชม. แบบไม่ต้องแอดมิน) = เฟสหลังเมื่อ volume คุ้ม
+
 ### D-52 · ป้ายช่องทางในข้อความฝั่งแอดมิน (ต่อยอด M-2 · 1 commit)
 `lib/channel/label.ts` `channelLabel(channelUserId, pageName?)`: `fb:`→`[FB]` (มีชื่อเพจ→`[FB·<ชื่อ>]` · โครงหลายเพจ) · `TRAIN:`→`[ซ้อม]` · อื่น→`[LINE]` · วางหน้าชื่อลูกค้า ตำแหน่งเดียวกันทุกที่ · **ห้ามแตะข้อความฝั่งลูกค้า**
 - **ใช้ทุกจุดที่โชว์ชื่อลูกค้าให้แอดมิน:** handoff (`ลูกค้า: [LINE] ชื่อ`) · ออเดอร์ใหม่/สลิป/ยอดไม่ตรง/ออเดอร์พัง/แก้ออเดอร์ (builders + `LineOA:`) · guard transfer/claims/price/door-change · list/รายชื่อ (matched+recent) · cron formatOrderMessage (แจ้งกลุ่มแพ็ค) + D-50 human_mode fallback

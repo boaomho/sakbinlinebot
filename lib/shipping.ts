@@ -14,3 +14,9 @@ export const DEFAULT_CARRIER = "Shopee Express";
 export function formatShippingMessage(template: string, carrier: string, tracking: string): string {
   return template.split("{ขนส่ง}").join(carrier).split("{เลขพัสดุ}").join(tracking);
 }
+
+/** M-4 (5.3) · Messenger ตอบ free-form ได้เฉพาะในหน้าต่าง 24 ชม. นับจากข้อความล่าสุดของลูกค้า */
+const MESSENGER_WINDOW_MS = 24 * 60 * 60 * 1000;
+export function withinMessengerWindow(lastSeen: Date, now: Date): boolean {
+  return now.getTime() - lastSeen.getTime() < MESSENGER_WINDOW_MS;
+}
