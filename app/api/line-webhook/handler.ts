@@ -364,7 +364,8 @@ async function runOrderGate(
         itemsJson: JSON.stringify(normItems), // S = items_json
         shippingFee: String(price.shippingFee), // T = ค่าส่ง
         orderId, // Q = idempotency key
-        lineUserId: userId, // R = join key — cron ล้างธง delivered_steps ตอนแจกเลข (KI-06)
+        lineUserId: userId, // R = join key — cron ล้างธง delivered_steps ตอนแจกเลข (KI-06) · M-2 = fb:... สำหรับ messenger
+        sourceChannel: transport.channel === "messenger" ? "messenger" : "", // U (M-2 · LINE ว่างเปล่าเดิม)
       });
     } catch (error) {
       // 🔴 append ล้มจริง (403/network/quota) = ยังไม่เขียน → ไม่ mark written ไม่ clear → retry เทิร์นหน้า "เขียนใหม่" (ออเดอร์ไม่หาย)
@@ -1020,22 +1021,28 @@ export async function processMessage(
   }
 }
 
-async function handleTextMessage(
+/**
+ * M-2: entry ข้อความ "ช่องทางกลาง" — debounce ร่วม (LINE/Messenger ใช้เส้นเดียวกัน)
+ * makeTransport(replyToken ล่าสุด) = สร้าง transport ต่อ channel · onTyping = loading indicator ต่อ channel
+ */
+export async function runInboundText(
   userId: string,
   text: string,
-  replyToken: string,
   config: AppConfig,
   switches: FeatureSwitches,
+  makeTransport: (replyToken: string | null) => ChannelTransport,
+  onTyping?: () => Promise<void>,
+  initialReplyToken: string | null = null,
 ): Promise<void> {
   if (!switches.humanLikeTiming) {
-    await processMessage(userId, text, new LineTransport(replyToken, userId), config, switches);
+    await processMessage(userId, text, makeTransport(initialReplyToken), config, switches);
     return;
   }
 
-  const insertedId = await insertPendingMessage(userId, text, replyToken);
+  const insertedId = await insertPendingMessage(userId, text, initialReplyToken);
 
-  if (config.showTyping) {
-    await startLoadingIndicator(userId, Math.ceil(config.debounceWaitMs / 1000) + 5);
+  if (config.showTyping && onTyping) {
+    await onTyping();
   }
 
   await new Promise((resolve) => setTimeout(resolve, config.debounceWaitMs));
@@ -1049,7 +1056,37 @@ async function handleTextMessage(
   const collected = await collectAndClearPendingMessages(userId);
   if (!collected.text) return; // ถูกอีก invocation เก็บไปประมวลผลแล้ว
 
-  await processMessage(userId, collected.text, new LineTransport(collected.replyToken ?? replyToken, userId), config, switches);
+  await processMessage(userId, collected.text, makeTransport(collected.replyToken ?? initialReplyToken), config, switches);
+}
+
+/** M-2: entry รูป "ช่องทางกลาง" — รูปโหลดที่ entry layer แล้ว (ต่าง channel ต่างแหล่ง) แล้วเข้า pipeline เดิม */
+export async function runInboundImage(
+  userId: string,
+  content: DownloadedContent | null,
+  config: AppConfig,
+  switches: FeatureSwitches,
+  transport: ChannelTransport,
+): Promise<void> {
+  const placeholderText = content ? "[ลูกค้าส่งรูปมา]" : "[ลูกค้าส่งรูปมาแต่โหลดรูปไม่สำเร็จ]";
+  await processMessage(userId, placeholderText, transport, config, switches, content ?? undefined);
+}
+
+async function handleTextMessage(
+  userId: string,
+  text: string,
+  replyToken: string,
+  config: AppConfig,
+  switches: FeatureSwitches,
+): Promise<void> {
+  await runInboundText(
+    userId,
+    text,
+    config,
+    switches,
+    (rt) => new LineTransport(rt ?? "", userId),
+    () => startLoadingIndicator(userId, Math.ceil(config.debounceWaitMs / 1000) + 5),
+    replyToken,
+  );
 }
 
 async function handleImageMessage(
@@ -1060,10 +1097,8 @@ async function handleImageMessage(
   switches: FeatureSwitches,
 ): Promise<void> {
   // รูปคือ "ข้อความอีกรูปแบบ" — โหลดเสมอ (ไม่ผูกกับสวิตช์ orders) แล้วส่งให้ Gemini พร้อมบริบทครบชุด
-  // ไม่อัปโหลด/ยิงกลุ่มตรงนี้ — รอ AI ตัดสิน image_intent ก่อน (โค้ดค่อยลงมือเฉพาะ slip/damage)
   const content = await downloadMessageContent(messageId);
-  const placeholderText = content ? "[ลูกค้าส่งรูปมา]" : "[ลูกค้าส่งรูปมาแต่โหลดรูปไม่สำเร็จ]";
-  await processMessage(userId, placeholderText, new LineTransport(replyToken, userId), config, switches, content ?? undefined);
+  await runInboundImage(userId, content, config, switches, new LineTransport(replyToken, userId));
 }
 
 // ---- คำสั่งในกลุ่มแอดมิน (ปิด/เปิดบอท ต่อคน · ทั้งหมด · รายชื่อล่าสุด) ----

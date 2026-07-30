@@ -1,6 +1,6 @@
 # META-ADAPTER-SPEC — Messenger (Facebook Page) adapter `[UNBUILT]`
 
-> **สถานะ:** research + ร่างสถาปัตยกรรม (M-0) · **ยังไม่เขียนโค้ด** · ค้นข้อมูลสด 2026-07-29 จากเอกสาร Meta for Developers เป็นหลัก (ดู Sources ท้ายไฟล์)
+> **สถานะ:** M-0 research → **M-1 (ChannelTransport) + M-2 (webhook+MessengerTransport) build แล้ว ✅** · เหลือ M-3 (App Review · งานมือ) + M-4 (cron route ตาม channel) · ดูรายละเอียด build ใน [DECISIONS.md](DECISIONS.md) M-1/M-2 · ค้นข้อมูลสด 2026-07-29 (ดู Sources ท้ายไฟล์)
 > **เป้า:** รับ-ตอบแชทเพจ Facebook ด้วย "สมองปลาทู" ตัวเดิม (`processMessage`) โดยไม่ทุบ pipeline · LINE ยังทำงานปกติ
 > **หลักคิดเดียวกับกฎ ShippingProvider:** เพิ่ม channel ที่สองได้โดยไม่รื้อ · ระบุ `page_id` ชัดทุก event · mapping `page_id → config` แบบวันนี้ 1 เพจใช้ค่าเดียว แต่ไม่ตายทางถ้าเพิ่มเพจ/ธุรกิจ
 

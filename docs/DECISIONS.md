@@ -823,6 +823,17 @@ handoff ทุก path (edit/AI-semantic/keyword) ตั้งแค่ `human_m
 **ไม่แตะ:** cron แจกเลข/idempotency D-29/O semantics เดิม (เพิ่ม loop ต่อท้าย) · **harness:** cron (push+ขนส่ง+เลข · idempotent ไม่ซ้ำ · P ว่าง/R ว่าง ข้าม · human_mode→แอดมิน · greeting · ""=ปิด) + train sim + formatShippingMessage · **405 passed | 3 expected-fail** · build เขียว
 **จบเคส CRM/Follow (ลูกค้าตอบได้รับ→ถามรีวิว) = ก้อน B ส่วนหลัง · ยังไม่ทำ**
 
+### M-2 · Meta Messenger webhook + MessengerTransport (1 commit · เทส Dev Mode)
+รับ-ตอบแชทเพจ Facebook ด้วย `processMessage` เดิม · LINE ไม่กระทบ
+- **ใหม่:** `lib/channel/pages.ts` (🔴 จุดเดียวอ่าน META_* · `resolveAppContext`+`resolvePageContext` env 1 เพจ) · `lib/channel/meta.ts` (Send API + `verifyMetaSignature` HMAC-SHA256 · `GRAPH_VERSION=v21.0`) · `lib/channel/meta-webhook.ts` (`processMetaWebhook`/`metaVerifyChallenge`/`metaUserId`) · `app/api/meta-webhook/route.ts` (GET challenge + POST) · `MessengerTransport` ใน transport.ts (reuse `parseReplyIntoMessages` → invariant cap-5/image-last ที่เดียว)
+- **id:** `fb:<pageId>:<psid>` (ทะเบียน id ใน REPO-MAP §5) · debounce key = id นี้ (ไม่แตะ debounce) · handler สกัด `runInboundText`/`runInboundImage` ร่วม (LINE/Meta เส้นเดียว · LINE พฤติกรรมเดิม)
+- **echo (5.4 · เคาะ META_APP_ID เป็น ENV ที่ 5):** `is_echo` + `app_id===META_APP_ID` → ทิ้ง (กันลูป) · app_id อื่น/แอดมินพิมพ์ → `setHumanMode` · **META_APP_ID ไม่ตั้ง → fallback heuristic (มี app_id=ทิ้ง · ไม่มี=human_mode) + log เตือนดังๆ ทุกครั้ง** (ไม่เงียบ)
+- **page_id ชัดทุก event** → `resolvePageContext(pageId)` (ไม่ตรง/ENV ขาด → ข้าม+log) · กันดีไซน์ตายทาง (อนาคต table channel_pages ไม่รื้อ)
+- **สลิป:** `uploadSlip` scope ตาม prefix → `meta/<pageId>/<psid>_<time>.jpg` (LINE `slips/YYYY-MM/` เดิม) · **Orders:** `source_channel="messenger"` (LINE ว่างเปล่าเดิม) · R เก็บ `fb:...` (KI-06 join key)
+- **cron D-50:** เจอ R `fb:` → ข้าม+log ไม่เคลม (M-4 ค่อย route push ตาม channel) · TRAIN:/U ผ่านปกติ (sandbox ไม่พัง)
+- **harness:** verifyMetaSignature · challenge · resolvePageContext · slipPathname · MessengerTransport payload (text/image/cap-5) · **webhook→pipeline→Send API e2e (ตอบ PSID + สร้าง customer fb: + ไม่แตะ LINE)** · echo ทิ้ง/human_mode · sig ผิด 401 · page ไม่รู้จัก · cron ข้าม fb: · **417 passed** (405 refactor คงเดิม + 12) · build เขียว (/api/meta-webhook)
+- **เจ้าของ:** ENV 5 ตัว (META_APP_SECRET/VERIFY_TOKEN/APP_ID/PAGE_ID/PAGE_ACCESS_TOKEN) เข้า Vercel → ตั้ง webhook callback + subscribe (messages, message_echoes) → เทส Dev Mode กับ role Tester · **M-4** = cron/D-50 route push ตาม channel · **M-3** App Review ขนานไป
+
 ### M-1 · refactor `ChannelTransport` (zero behavior change · 1 commit)
 สกัดช่องทางลูกค้าออกจาก `processMessage` เตรียมเสียบ Messenger (M-2) — LINE คงพฤติกรรมเดิมทุกบรรทัด
 - **ใหม่ `lib/channel/transport.ts`:** `interface ChannelTransport` (reply/push/typing/getProfileName/downloadInboundImage · "ช่องทางลูกค้า" เท่านั้น) + `class LineTransport` ห่อ `lib/line` เดิม (sandbox guard ใน line.ts ยังทำงาน → T-STUDIO ใช้ได้)

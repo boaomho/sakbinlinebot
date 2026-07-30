@@ -39,7 +39,12 @@ app/api/
   cron/orders/route.ts    cron แจกเลขออเดอร์ + ยิงกลุ่มแพ็ค + D-50 แจ้งพัสดุ
   cron/follow/route.ts    cron ตามลูกค้า (Follow — dormant)
 app/train/        # T-STUDIO UI (page+TrainStudio client) + api/{login,turn,reset,cron,preview,write}
-lib/channel/transport.ts  # M-1 · ChannelTransport (interface ช่องทางลูกค้า) + LineTransport (ห่อ lib/line) · M-2 เพิ่ม MessengerTransport
+lib/channel/          # M-1/M-2 · adapter หลายช่องทาง
+  transport.ts        ChannelTransport (interface ช่องทางลูกค้า) + LineTransport + MessengerTransport (reuse parseReplyIntoMessages = invariant cap-5/image-last ที่เดียว)
+  pages.ts            🔴 จุดเดียวอ่าน META_* · resolveAppContext (verify/echo) · resolvePageContext(pageId→config · env 1 เพจ · อนาคต table channel_pages)
+  meta.ts             Send API client (text/image/sender_action · getProfileName · downloadFromUrl) + verifyMetaSignature (HMAC-SHA256)
+  meta-webhook.ts     processMetaWebhook (verify sig → parse entry/messaging → กรอง echo → runInboundText/Image เดิม) · metaVerifyChallenge (GET) · metaUserId(fb:<pageId>:<psid>)
+app/api/meta-webhook/route.ts  # GET challenge + POST event (M-2)
 tests/
   harness/        replay(webhook+HMAC จริง) · setup(mock) · state · db · sheet · assert · fixtures
   scenarios/      *.test.ts (golden/order-core/inject/sheet-*/config-parse/gemini-guard/prompt-lint/image-url/expect-fail)
@@ -108,7 +113,10 @@ scripts/sheet-lint.mjs  D-45 · lint keyword ชีตจริง (คำโด
 | `DIAG_PROMPT_TOKENS` | gemini.ts (=1 → log token จริงต่อ segment) |
 | `TRAIN_PASSWORD` | train/auth.ts — คุมฟีเจอร์ /train (ไม่มี = 404 ทั้งก้อน) |
 | `DATABASE_URL_TRAIN` | db.ts getSql() — Neon branch `train` (state ลูกค้าจำลอง · ใน sandbox เท่านั้น) |
+| `META_APP_SECRET` · `META_VERIFY_TOKEN` · `META_APP_ID`(optional) | **`lib/channel/pages.ts resolveAppContext` เท่านั้น** (M-2 · verify webhook + echo filter) |
+| `META_PAGE_ID` · `META_PAGE_ACCESS_TOKEN` | **`lib/channel/pages.ts resolvePageContext` เท่านั้น** (M-2 · 🔴 ห้ามอ่าน META_* นอก pages.ts) |
 > ⚠️ `SHEET_STEP/FAQ/CONFIG/FOLLOW_URL` **โค้ดไม่อ่านแล้ว** (Step 1 ย้ายไป BOTLIB) — ลบได้ (Phase C ยังไม่ทำ)
+> 🔴 **ทะเบียนรูปแบบ customer id (user_id):** `U`+32hex = **LINE** (raw) · `fb:<pageId>:<psid>` = **Messenger** (M-2) · `TRAIN:<session>` = **T-STUDIO sandbox** · โค้ดที่ push/แยก channel ดู prefix (เช่น cron D-50 ข้าม `fb:`)
 
 ## 6. CSV_Config keys ที่โค้ดอ่าน (ชื่อตรงตัว · มี alias)
 `ชื่อบอท` · `ชื่อร้าน`(/`ชื่อร้าน/แบรนด์`) · `เพศบอท` · `ใช้ emoji`(/`ใช้_emoji`/`emoji`) · `temperature`(default **0.2** · D-44 เครื่องจำแนก · ชีตตั้งทับได้) · `maxOutputTokens`(พื้น 4096) · `แสดง_typing`(/`typing`) · `debounce_รวบคำถาม`(prefix `debounce`) · `หน่วง_ระหว่างบอลลูน`(/`หน่วง_ระหว่างข้อความ`) · `อายุลิงก์สลิป_วัน` · `เวลาตัดรอบออเดอร์`(/`เวลารอบตัดออเดอร์`) · `เลขออเดอร์_รีเซ็ตทุกวัน` · `คำ_handoff`(/`คำ_ส่งต่อแอดมิน`/`keyword_handoff`) · `คืนสิทธิ์บอท_หลังแชทเงียบ` · `ประโยคเปลี่ยนมือ_บอทรับต่อ` · `เปิด_คำสั่งเทสต์` · `โหมดประหยัดโควตา`

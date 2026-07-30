@@ -72,6 +72,12 @@ describe("D-50 · cron แจ้งเลขพัสดุ", () => {
     expect(custPushes().length).toBe(0);
   });
 
+  it("🔴 M-2: R เป็น fb: (messenger) → cron LINE ข้าม+ไม่ push (รอ M-4 route)", async () => {
+    sheetsCalls.getReturn = [buildRow({ "line_user_id": "fb:999888:psid-1" })];
+    expect((await (await runCron()).json()).shipped).toBe(0);
+    expect(lineCalls.pushes.length, "ไม่ push ทาง LINE").toBe(0);
+  });
+
   it("🔴 human_mode → ไม่ push ลูกค้า · แจ้งกลุ่มแอดมินให้แจ้งเอง", async () => {
     await ensureCustomer(USER);
     await setHumanMode(USER, true);

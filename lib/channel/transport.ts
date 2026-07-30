@@ -5,7 +5,10 @@ import {
   getProfileName,
   startLoadingIndicator,
   downloadMessageContent,
+  parseReplyIntoMessages,
 } from "@/lib/line";
+import { sendMessengerText, sendMessengerImage, sendMessengerAction, getMessengerProfileName, downloadFromUrl } from "@/lib/channel/meta";
+import type { PageContext } from "@/lib/channel/pages";
 
 /**
  * lib/channel/transport.ts — M-1 · นามธรรมช่องทาง (ระดับเดียวกับ ShippingProvider)
@@ -51,5 +54,46 @@ export class LineTransport implements ChannelTransport {
   }
   downloadInboundImage(ref: string): Promise<DownloadedContent | null> {
     return downloadMessageContent(ref);
+  }
+}
+
+/**
+ * Messenger transport (M-2) — Send API ด้วย PSID (ไม่มี reply token)
+ * 🔴 reuse parseReplyIntoMessages → invariant "cap 5 บอลลูน + ห้ามจบด้วยรูป" อยู่ที่เดียวกับ LINE
+ */
+export class MessengerTransport implements ChannelTransport {
+  readonly channel = "messenger" as const;
+  constructor(
+    private readonly page: PageContext,
+    private readonly psid: string,
+  ) {}
+  private async send(text: string, collapseBubbles: boolean): Promise<boolean> {
+    const messages = parseReplyIntoMessages(text, collapseBubbles); // แตกบอลลูน + กฎเหล็กเดียวกับ LINE
+    let ok = messages.length > 0;
+    for (const m of messages) {
+      const anyM = m as { type: string; text?: string; originalContentUrl?: string };
+      const sent =
+        anyM.type === "image" && anyM.originalContentUrl
+          ? await sendMessengerImage(this.page.pageId, this.page.pageAccessToken, this.psid, anyM.originalContentUrl)
+          : await sendMessengerText(this.page.pageId, this.page.pageAccessToken, this.psid, anyM.text ?? "");
+      ok = ok && sent;
+    }
+    return ok;
+  }
+  reply(text: string, collapseBubbles = false): Promise<boolean> {
+    return this.send(text, collapseBubbles);
+  }
+  push(text: string, collapseBubbles = false): Promise<boolean> {
+    return this.send(text, collapseBubbles);
+  }
+  async typing(_seconds: number): Promise<void> {
+    void _seconds; // Messenger typing ไม่มี duration → typing_on อย่างเดียว
+    await sendMessengerAction(this.page.pageId, this.page.pageAccessToken, this.psid, "typing_on");
+  }
+  getProfileName(): Promise<string> {
+    return getMessengerProfileName(this.psid, this.page.pageAccessToken);
+  }
+  downloadInboundImage(ref: string): Promise<DownloadedContent | null> {
+    return downloadFromUrl(ref);
   }
 }

@@ -131,8 +131,11 @@ export interface NewOrderInput {
   /** Q = order_id (idempotency key · Step 2 · D-29) */
   orderId?: string;
   /** R = line_user_id — join key กับ Neon (KI-06: cron ใช้ล้างธง delivered_steps ตอนแจกเลข ·
-   *  เดิมไม่เคยเขียน = ธงไม่ถูกล้างบน prod · ยืนยันแล้วชีตจริง R ว่าง ไม่มีสูตร) */
+   *  เดิมไม่เคยเขียน = ธงไม่ถูกล้างบน prod · ยืนยันแล้วชีตจริง R ว่าง ไม่มีสูตร) ·
+   *  M-2: generalize เป็น channel_user_id (LINE=raw U · Messenger=fb:<pageId>:<psid>) */
   lineUserId?: string;
+  /** U = source_channel (M-2) — "messenger" / "" (LINE คงว่างเปล่าเดิม) */
+  sourceChannel?: string;
 }
 
 export async function appendOrderRow(input: NewOrderInput): Promise<void> {
@@ -158,7 +161,8 @@ export async function appendOrderRow(input: NewOrderInput): Promise<void> {
     items_json: sanitizeShortText(input.itemsJson, 1000),
     ค่าส่ง: sanitizeAmount(input.shippingFee),
     order_id: sanitizeShortText(input.orderId, 40), // Q = idempotency key (D-29)
-    line_user_id: sanitizeShortText(input.lineUserId, 50), // R = join key ล้างธง (KI-06)
+    line_user_id: sanitizeShortText(input.lineUserId, 80), // R = join key ล้างธง (KI-06) · M-2 รองรับ fb:<pageId>:<psid>
+    source_channel: sanitizeShortText(input.sourceChannel ?? "", 20), // U = ช่องทาง (M-2 · LINE ว่างเปล่าเดิม)
   };
 
   await withOrdersColumns(async (cols) => {

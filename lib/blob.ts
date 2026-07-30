@@ -15,6 +15,20 @@ export interface UploadResult {
  * ไม่เก็บ signed URL ลงชีต (หมดอายุ) เก็บแค่ pathname แล้วค่อยเรียก getSlipSignedUrl()
  * สร้าง signed GET URL ใหม่ทุกครั้งที่ต้องใช้จริง (เช่น ตอน push เข้ากลุ่มแอดมิน)
  */
+/**
+ * M-2 · path สลิปตาม channel (scope จาก prefix ของ userId)
+ *  fb:<pageId>:<psid> → meta/<pageId>/<psid>_<time>.jpg  ·  อื่น (LINE) → slips/YYYY-MM/<userId>_<time>.jpg (เดิม)
+ */
+export function slipPathname(userId: string, now: Date): string {
+  if (userId.startsWith("fb:")) {
+    const parts = userId.split(":");
+    const pageId = (parts[1] ?? "unknown").replace(/[^\w-]/g, "");
+    const psid = (parts[2] ?? "unknown").replace(/[^\w-]/g, "");
+    return `meta/${pageId}/${psid}_${now.getTime()}.jpg`;
+  }
+  return `slips/${now.getFullYear()}-${pad2(now.getMonth() + 1)}/${userId}_${now.getTime()}.jpg`;
+}
+
 export async function uploadSlip(userId: string, buffer: Buffer, contentType: string): Promise<UploadResult | null> {
   // T-STUDIO guard: sandbox → ไม่อัปโหลด Blob จริง คืน pathname จำลอง (ALS เท่านั้น — เงื่อนไข ก)
   const train = getTrainSandbox();
@@ -27,7 +41,7 @@ export async function uploadSlip(userId: string, buffer: Buffer, contentType: st
   if (!token) return null;
 
   const now = new Date();
-  const pathname = `slips/${now.getFullYear()}-${pad2(now.getMonth() + 1)}/${userId}_${now.getTime()}.jpg`;
+  const pathname = slipPathname(userId, now);
 
   try {
     const result = await put(pathname, buffer, {

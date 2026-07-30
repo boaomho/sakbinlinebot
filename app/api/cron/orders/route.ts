@@ -125,6 +125,11 @@ async function notifyShipping(
         console.warn(JSON.stringify({ scope: "cron-shipping", warning: "ข้าม: ไม่มี order_id (แถวเก่าก่อน D-29)", rowIndex: o.rowIndex }));
         continue;
       }
+      // M-2: ออเดอร์ช่องทาง Messenger (fb:) — cron LINE push ไม่ได้ → ข้าม (ไม่เคลม · M-4 ค่อย route ตาม prefix)
+      if (o.lineUserId.startsWith("fb:")) {
+        console.warn(JSON.stringify({ scope: "cron-shipping", warning: "ข้าม messenger (รอ M-4 route push ตาม channel)", orderId: o.orderId }));
+        continue;
+      }
       // เคลม atomic ก่อนแจ้ง (กัน cron รันซ้อน/ซ้ำ) — เคยเคลม = ข้าม
       if (!(await markShippingNotified(o.orderId))) continue;
 
