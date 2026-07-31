@@ -17,6 +17,8 @@ interface Turn {
   bot: { text: string; image?: boolean }[];
   sources: ReplySource[];
   dropped: { text: string; vars: string[] }[];
+  /** UX: echo user ทันทีที่ส่ง · true = รอบอทตอบ (โชว์ typing) */
+  pending?: boolean;
 }
 interface TurnResult {
   bubbles: { via: string; messages: Msg[] }[];
@@ -151,20 +153,23 @@ export default function TrainStudio() {
     else alert(r.status === 404 ? "ฟีเจอร์ปิดอยู่ (ENV ไม่ครบ)" : "รหัสไม่ถูกต้อง");
   }
 
-  function applyResult(data: TurnResult, user: string, userImage?: boolean) {
+  // เติมผลลงเทิร์นที่ค้าง (pending) ตัวสุดท้าย — เทิร์นเรียงตามลำดับ + busy กันยิงซ้อน จึงชี้ตัวท้ายได้
+  function fillPendingTurn(data: TurnResult) {
     const bot = data.bubbles.flatMap((b) => b.messages.map((m) => m.type === "text" ? { text: m.text ?? "" } : { text: `🖼 [รูป] ${m.originalContentUrl ?? ""}`, image: true }));
-    setTurns((prev) => [...prev, { user, userImage, bot, sources: data.sources ?? [], dropped: data.droppedBubbles ?? [] }]);
+    setTurns((prev) => prev.map((t, i) => (i === prev.length - 1 ? { ...t, bot, sources: data.sources ?? [], dropped: data.droppedBubbles ?? [], pending: false } : t)));
     setXray(data.xray); setOrderRows(data.orderRows ?? []); setAdminPushes(data.adminPushes ?? []);
   }
+  const clearPending = () => setTurns((prev) => prev.map((t, i) => (i === prev.length - 1 && t.pending ? { ...t, pending: false } : t)));
 
   const callTurn = useCallback(async (body: Record<string, unknown>, user: string, userImage?: boolean) => {
     setBusy(true);
+    setTurns((prev) => [...prev, { user, userImage, bot: [], sources: [], dropped: [], pending: true }]); // optimistic: echo ทันที + typing
     try {
       const r = await fetch("/train/api/turn", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId, overlay, ...body }) });
       const data = (await r.json()) as TurnResult;
-      if (!r.ok) { setSys((p) => [...p, `⚠️ ${data.error ?? r.status}`]); return; }
-      applyResult(data, user, userImage);
-    } catch (e) { setSys((p) => [...p, `⚠️ ${String(e)}`]); }
+      if (!r.ok) { setSys((p) => [...p, `⚠️ ${data.error ?? r.status}`]); clearPending(); return; }
+      fillPendingTurn(data);
+    } catch (e) { setSys((p) => [...p, `⚠️ ${String(e)}`]); clearPending(); }
     finally { setBusy(false); }
   }, [sessionId, overlay]);
 
@@ -430,6 +435,7 @@ export default function TrainStudio() {
 
   return (
     <main style={S.page}>
+      <style>{"@keyframes tb-blink{0%,80%,100%{opacity:.25}40%{opacity:1}}"}</style>
       {/* มือถือ: แชทเต็มจอเสมอ (bottom sheet editor ลอยทับ · ไม่ซ่อนแชท) — ซ่อนเฉพาะตอนเปิด X-ray เต็มจอ */}
       <div style={{ ...S.chatCol, display: isMobile && showX ? "none" : "flex" }}>
         <header style={S.header}>
@@ -457,6 +463,11 @@ export default function TrainStudio() {
                   {d.text}<div style={{ fontSize: 10, textDecoration: "none", color: "#b00", marginTop: 2 }}>⚠︎ ทิ้งบอลลูน: {d.vars.join(" ")} resolve ไม่ได้</div>
                 </div>
               ))}
+              {t.pending && (
+                <div style={{ ...S.botB, cursor: "default", display: "flex", gap: 4, alignItems: "center", padding: "10px 12px" }} aria-label="ปลาทูกำลังพิมพ์">
+                  {[0, 1, 2].map((n) => <span key={n} style={{ width: 7, height: 7, borderRadius: "50%", background: "#9aa", display: "inline-block", animation: "tb-blink 1.2s infinite", animationDelay: `${n * 0.2}s` }} />)}
+                </div>
+              )}
             </div>
           ))}
           {sys.map((s, i) => <div key={`s${i}`} style={S.sysB}>{s}</div>)}
@@ -550,7 +561,11 @@ export default function TrainStudio() {
                   </div>
                 );
               })}
-              {asstBusy && <div style={S.sysB}>ผู้ช่วยกำลังคิด…</div>}
+              {asstBusy && (
+                <div style={{ ...S.botB, cursor: "default", alignSelf: "flex-start", display: "flex", gap: 4, alignItems: "center", padding: "10px 12px" }} aria-label="ผู้ช่วยกำลังพิมพ์">
+                  {[0, 1, 2].map((n) => <span key={n} style={{ width: 7, height: 7, borderRadius: "50%", background: "#9aa", display: "inline-block", animation: "tb-blink 1.2s infinite", animationDelay: `${n * 0.2}s` }} />)}
+                </div>
+              )}
             </div>
             <div style={S.inputRow}>
               <input style={S.input} placeholder="พิมพ์บอกผู้ช่วย…" value={asstInput} onChange={(e) => setAsstInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && sendAsst()} disabled={asstBusy} />
