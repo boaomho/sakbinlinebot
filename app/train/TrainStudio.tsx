@@ -39,6 +39,8 @@ interface PreviewResult {
 interface Editor { turnIdx: number; srcIdx: number }
 interface MgmtRow { key: string; status: string; active: boolean; preview: string }
 interface MgmtData { header: string[]; keyCol: string | null; statusCol: string | null; hasStatusCol: boolean; editableCols: string[]; rows: MgmtRow[]; suggestedKey: string | null }
+interface AsstCol { name: string; value: string }
+interface AsstProposal { id: number; action: "add-row" | "edit-row"; tab: string; key: string; cols: AsstCol[]; note: string; done?: boolean }
 
 const OVERLAY_KEY = "train-overlay-v1";
 const MGMT_TABS: { tab: string; label: string }[] = [
@@ -118,6 +120,13 @@ export default function TrainStudio() {
   const [mgmtBusy, setMgmtBusy] = useState(false);
   const [addForm, setAddForm] = useState<Record<string, string> | null>(null);
   const [addLint, setAddLint] = useState<LintFinding[]>([]);
+  // D-59: ผู้ช่วยเทรน
+  const [asstOpen, setAsstOpen] = useState(false);
+  const [asstMsgs, setAsstMsgs] = useState<{ role: "user" | "assistant"; text: string }[]>([]);
+  const [asstInput, setAsstInput] = useState("");
+  const [asstBusy, setAsstBusy] = useState(false);
+  const [proposals, setProposals] = useState<AsstProposal[]>([]);
+  const [liveKeys, setLiveKeys] = useState<Record<string, Set<string>>>({});
   const chatRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const previewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -335,6 +344,65 @@ export default function TrainStudio() {
     flash(mgmtTab === "CSV_FAQ" ? "▶ ใส่คำถามให้แล้ว — กดส่งเพื่อทดสอบ draft (ห้องซ้อมเห็น live)" : "▶ draft พร้อมทดสอบ — พิมพ์ข้อความที่จะกระตุ้นแถวนี้ (ห้องซ้อมเห็น live)");
   }
 
+  // ---- D-59: ผู้ช่วยเทรน (แชท AI → proposal → ยืนยันผ่านเส้นทาง D-57) ----
+  const HDRS = { "content-type": "application/json" };
+  async function sendAsst() {
+    const text = asstInput.trim();
+    if (!text || asstBusy) return;
+    const next: { role: "user" | "assistant"; text: string }[] = [...asstMsgs, { role: "user", text }];
+    setAsstMsgs(next); setAsstInput(""); setAsstBusy(true); setProposals([]);
+    try {
+      const r = await fetch("/train/api/assistant", { method: "POST", headers: HDRS, body: JSON.stringify({ messages: next }) });
+      if (r.status === 401 || r.status === 404) { setAuthed(false); return; }
+      const d = (await r.json()) as { reply?: string; proposals?: { action: "add-row" | "edit-row"; tab: string; key: string; cols: Record<string, string>; note: string }[]; error?: string };
+      setAsstMsgs((m) => [...m, { role: "assistant", text: d.reply ?? d.error ?? "(ไม่มีคำตอบ)" }]);
+      const props: AsstProposal[] = (d.proposals ?? []).map((p, i) => ({ id: Date.now() + i, action: p.action, tab: p.tab, key: p.key, note: p.note, cols: Object.entries(p.cols ?? {}).map(([name, value]) => ({ name, value: String(value) })) }));
+      setProposals(props);
+      for (const tab of [...new Set(props.filter((p) => p.action === "edit-row").map((p) => p.tab))]) {
+        const rr = await fetch("/train/api/rows", { method: "POST", headers: HDRS, body: JSON.stringify({ tab }) });
+        if (rr.ok) { const rd = (await rr.json()) as { rows: { key: string; active: boolean }[] }; setLiveKeys((lk) => ({ ...lk, [tab]: new Set(rd.rows.filter((x) => x.active).map((x) => x.key)) })); }
+      }
+    } catch (e) { setAsstMsgs((m) => [...m, { role: "assistant", text: `⚠️ ${String(e)}` }]); }
+    finally { setAsstBusy(false); }
+  }
+  function editProp(id: number, name: string, value: string) {
+    setProposals((ps) => ps.map((p) => (p.id === id ? { ...p, cols: p.cols.map((c) => (c.name === name ? { ...c, value } : c)) } : p)));
+  }
+  function asstErr(d: { status?: string; lint?: LintFinding[]; message?: string; error?: string }) {
+    const lint = (d.lint ?? []).filter((f) => f.level === "block").map((f) => f.message).join(" · ");
+    const msg = lint || d.message || (d.status === "dup" ? "key นี้มีอยู่แล้ว" : d.error || "เขียนไม่ได้");
+    setAsstMsgs((m) => [...m, { role: "assistant", text: `⚠️ เขียนไม่ได้: ${msg}\n(แก้ในการ์ด หรือบอกผมให้ปรับ)` }]);
+  }
+  async function confirmProp(p: AsstProposal) {
+    const cols = Object.fromEntries(p.cols.map((c) => [c.name, c.value]));
+    if (p.action === "add-row") {
+      const r = await fetch("/train/api/write", { method: "POST", headers: HDRS, body: JSON.stringify({ mode: "add-row", tab: p.tab, cols, origin: "ai" }) });
+      const d = await r.json();
+      if (r.ok && d.status === "ok") { setProposals((ps) => ps.map((x) => (x.id === p.id ? { ...x, done: true } : x))); flash("✅ เพิ่ม draft แล้ว — ทดสอบก่อนเผยแพร่"); return; }
+      asstErr(d);
+    } else {
+      for (const c of p.cols) {
+        const dr = await fetch("/train/api/write", { method: "POST", headers: HDRS, body: JSON.stringify({ mode: "diff", tab: p.tab, key: p.key, column: c.name }) });
+        const dd = await dr.json();
+        if (!dr.ok) { asstErr(dd); return; }
+        const cr = await fetch("/train/api/write", { method: "POST", headers: HDRS, body: JSON.stringify({ mode: "commit", tab: p.tab, key: p.key, column: c.name, newValue: c.value, expectedOld: dd.old ?? "", origin: "ai" }) });
+        const cd = await cr.json();
+        if (!cr.ok) { asstErr(cd); return; }
+      }
+      setProposals((ps) => ps.map((x) => (x.id === p.id ? { ...x, done: true } : x))); flash("✅ แก้แถวแล้ว + จด TRAIN_LOG");
+    }
+  }
+  async function testProposal(tab: string, key: string) {
+    const rr = await fetch("/train/api/rows", { method: "POST", headers: HDRS, body: JSON.stringify({ tab }) });
+    if (!rr.ok) return;
+    const rd = (await rr.json()) as { statusCol: string | null };
+    if (!rd.statusCol) { flash("แท็บนี้ไม่มีคอลัมน์สถานะ — ทดสอบไม่ได้"); return; }
+    setOverlay((prev) => [...prev.filter((o) => !(o.tab === tab && o.key === key && o.column === rd.statusCol)), { tab, key, column: rd.statusCol!, value: "live" }]);
+    if (tab === "CSV_FAQ") setInput(key);
+    setAsstOpen(false);
+    flash("▶ draft พร้อมทดสอบ (ห้องซ้อมเห็น live · prod ยังกรอง draft)");
+  }
+
   if (authed === null) return <main style={S.page} />;
   if (!authed) {
     return (
@@ -367,6 +435,7 @@ export default function TrainStudio() {
         <header style={S.header}>
           <span>🐟 ปลาทู · 🧪 ห้องซ้อม</span>
           <span style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <button onClick={() => setAsstOpen(true)} style={{ color: "#fff", background: "rgba(0,0,0,.18)", border: "none", padding: "5px 10px", borderRadius: 8, fontSize: 12, cursor: "pointer" }}>🤖 ผู้ช่วยเทรน</button>
             <button onClick={openMgmt} style={{ color: "#fff", background: "rgba(0,0,0,.18)", border: "none", padding: "5px 10px", borderRadius: 8, fontSize: 12, cursor: "pointer" }}>📚 คลังความรู้</button>
             <a href="/train/dashboard" style={{ color: "#fff", textDecoration: "none", background: "rgba(0,0,0,.18)", padding: "4px 10px", borderRadius: 8, fontSize: 12 }}>🔴 ร้านจริง →</a>
             <span style={{ fontSize: 12, fontWeight: 400 }}>{busy ? "กำลังคิด…" : overlay.length > 0 ? `draft ${overlay.length}` : "sandbox"}</span>
@@ -444,6 +513,53 @@ export default function TrainStudio() {
           </div>
         </div>
       )}
+      {asstOpen && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 46, padding: isMobile ? 0 : 16 }} onClick={() => setAsstOpen(false)}>
+          <div style={{ background: "#fff", borderRadius: isMobile ? 0 : 14, width: isMobile ? "100%" : 640, maxWidth: "100%", height: isMobile ? "100dvh" : "88dvh", display: "flex", flexDirection: "column", overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ padding: "12px 14px", background: "#06735c", color: "#fff", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <b>🤖 ผู้ช่วยเทรน <span style={{ fontWeight: 400, fontSize: 12 }}>(ช่วยร่าง/แก้คลังความรู้ · เจ้าของยืนยันเอง)</span></b>
+              <button style={{ ...S.toolBtn, background: "transparent", color: "#fff", border: "1px solid rgba(255,255,255,.5)" }} onClick={() => setAsstOpen(false)}>✕ ปิด</button>
+            </div>
+            <div style={{ flex: 1, overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+              {asstMsgs.length === 0 && <div style={S.sysB}>บอกผมได้เลย เช่น &quot;เพิ่ม FAQ ว่าส่งต่างจังหวัดกี่วัน&quot; หรือ &quot;แก้คำตอบเรื่องการเก็บรักษา&quot; · เรื่องสุขภาพผมจะเสนอเป็นประตูส่งต่อแอดมินให้</div>}
+              {asstMsgs.map((m, i) => <div key={i} style={m.role === "user" ? S.userB : { ...S.botB, cursor: "default" }}>{m.text}</div>)}
+              {proposals.map((p) => {
+                const isLiveEdit = p.action === "edit-row" && liveKeys[p.tab]?.has(p.key);
+                return (
+                  <div key={p.id} style={{ border: `1px solid ${p.done ? "#9dd6b3" : "#cfe9d8"}`, borderRadius: 10, padding: 12, background: p.done ? "#eef7f0" : "#f7fdf9" }}>
+                    <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}>
+                      <span style={{ ...S.chip, background: p.action === "add-row" ? "#e7f6ec" : "#fff4d6" }}>{p.action === "add-row" ? "＋ แถวใหม่ (draft)" : "✎ แก้แถวเดิม"}</span>
+                      <span style={S.chip}>{p.tab}</span><span style={S.chip}>{p.key}</span>
+                    </div>
+                    {isLiveEdit && <div style={{ ...S.lintWarn, marginBottom: 6 }}>🔴 แก้แถว live — ผลถึงลูกค้าจริง ~1 นาทีหลังยืนยัน (การแก้ไม่พลิกกลับเป็น draft)</div>}
+                    {p.cols.map((c) => (
+                      <div key={c.name} style={{ marginBottom: 6 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600 }}>{c.name}</div>
+                        <textarea style={{ ...S.ta, minHeight: 40 }} value={c.value} disabled={p.done} onChange={(e) => editProp(p.id, c.name, e.target.value)} />
+                      </div>
+                    ))}
+                    {p.note && <div style={{ fontSize: 11, color: "#777", margin: "4px 0" }}>💡 {p.note}</div>}
+                    {!p.done ? (
+                      <button style={{ ...S.btn, padding: "8px 12px" }} onClick={() => confirmProp(p)}>{p.action === "add-row" ? "ยืนยันเพิ่ม (draft)" : "ยืนยันแก้"}</button>
+                    ) : (
+                      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                        <span style={{ color: "#1e7e42", fontSize: 13 }}>✅ เขียนแล้ว</span>
+                        {p.action === "add-row" && <button style={{ ...S.toolBtn, padding: "6px 10px" }} onClick={() => testProposal(p.tab, p.key)}>▶ ทดสอบในห้องซ้อม</button>}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              {asstBusy && <div style={S.sysB}>ผู้ช่วยกำลังคิด…</div>}
+            </div>
+            <div style={S.inputRow}>
+              <input style={S.input} placeholder="พิมพ์บอกผู้ช่วย…" value={asstInput} onChange={(e) => setAsstInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && sendAsst()} disabled={asstBusy} />
+              <button style={S.btn} onClick={sendAsst} disabled={asstBusy}>ส่ง</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {mgmtOpen && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 45, padding: isMobile ? 0 : 16 }} onClick={() => setMgmtOpen(false)}>
           <div style={{ background: "#fff", borderRadius: isMobile ? 0 : 14, width: isMobile ? "100%" : 640, maxWidth: "100%", height: isMobile ? "100dvh" : "86dvh", display: "flex", flexDirection: "column", overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>

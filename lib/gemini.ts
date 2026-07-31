@@ -15,7 +15,7 @@ export interface OrderDataFromAI {
   items?: AiOrderItem[];
 }
 
-const MODEL = "gemini-3.5-flash";
+export const MODEL = "gemini-3.5-flash";
 
 /**
  * safetySettings = OFF ทั้ง 5 หมวดที่ปรับได้ (D-46) — บอทรับออเดอร์: ชื่อ/ที่อยู่/เบอร์/เลขบัญชี/สลิป
@@ -23,7 +23,7 @@ const MODEL = "gemini-3.5-flash";
  * (H4 handoff + verbatim = AI ไม่มีปากแต่งคำเสี่ยง)
  * 🔴 PROHIBITED_CONTENT เป็น core policy ปรับไม่ได้ → ยังบล็อกได้เสมอ = ชั้น degraded (route) คือหลักประกันจริง
  */
-const SAFETY_SETTINGS = [
+export const SAFETY_SETTINGS = [
   HarmCategory.HARM_CATEGORY_HARASSMENT,
   HarmCategory.HARM_CATEGORY_HATE_SPEECH,
   HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,

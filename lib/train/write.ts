@@ -82,7 +82,7 @@ export async function diffCell(tab: string, key: string, column: string): Promis
 }
 
 /** เขียน 1 เซลล์กลับชีต (conflict check + lint gate + TRAIN_LOG + invalidate cache) */
-export async function writeCell(tab: string, key: string, column: string, newValue: string, expectedOld: string): Promise<WriteResult> {
+export async function writeCell(tab: string, key: string, column: string, newValue: string, expectedOld: string, origin: "ui" | "ai" = "ui"): Promise<WriteResult> {
   assertEditable(tab, column);
   __resetBotLibraryCache();
   const lib = await loadBotLibrary();
@@ -105,7 +105,7 @@ export async function writeCell(tab: string, key: string, column: string, newVal
     spreadsheetId,
     requestBody: { valueInputOption: "USER_ENTERED", data: [{ range, values: [[newValue]] }] },
   });
-  await appendTrainLog(spreadsheetId, tab, key, column, expectedOld, newValue, "edit");
+  await appendTrainLog(spreadsheetId, tab, key, column, expectedOld, newValue, origin === "ai" ? "ai-edit" : "edit");
   __resetBotLibraryCache(); // เทิร์นถัดไปเห็นของจริงใหม่
   return { status: "ok", range };
 }
@@ -180,7 +180,7 @@ export type AppendResult =
  * เพิ่มแถวใหม่ (header-driven · 🔴 บังคับ สถานะ=draft เสมอ · ไม่มีคอลัมน์สถานะ=ปฏิเสธ)
  * กันซ้ำ key · validate funnel_stage (Step) · lint block (รวม H1) กันเขียน · append + TRAIN_LOG action=add-row
  */
-export async function appendRow(tab: string, cols: Record<string, string>): Promise<AppendResult> {
+export async function appendRow(tab: string, cols: Record<string, string>, origin: "ui" | "ai" = "ui"): Promise<AppendResult> {
   if (!EDITABLE_TABS.includes(tab)) throw new Error(`แท็บ "${tab}" เขียนไม่ได้ — เฉพาะ ${EDITABLE_TABS.join(" / ")} (ห้ามแตะ Orders/Products/Promo/Config)`);
   __resetBotLibraryCache();
   const lib = await loadBotLibrary();
@@ -226,7 +226,7 @@ export async function appendRow(tab: string, cols: Record<string, string>): Prom
   await getSheets().spreadsheets.values.append({
     spreadsheetId, range: `${tab}!A:Z`, valueInputOption: "USER_ENTERED", requestBody: { values: [rowArr] },
   });
-  await appendTrainLog(spreadsheetId, tab, key, "(เพิ่มแถว)", "", `draft`, "add-row");
+  await appendTrainLog(spreadsheetId, tab, key, "(เพิ่มแถว)", "", `draft`, origin === "ai" ? "ai-draft" : "add-row");
   __resetBotLibraryCache();
   return { status: "ok" };
 }
@@ -260,7 +260,7 @@ export async function setRowStatus(tab: string, key: string, toStatus: "live" | 
 
 const short = (s: string): string => (s.length > 60 ? s.slice(0, 60) + "…" : s);
 
-async function appendTrainLog(spreadsheetId: string, tab: string, key: string, column: string, oldV: string, newV: string, action: "edit" | "add-row" | "status-change"): Promise<void> {
+async function appendTrainLog(spreadsheetId: string, tab: string, key: string, column: string, oldV: string, newV: string, action: "edit" | "add-row" | "status-change" | "ai-draft" | "ai-edit"): Promise<void> {
   const row = [bangkokDateTime(), tab, key, column, short(oldV), short(newV), action];
   try {
     await getSheets().spreadsheets.values.append({

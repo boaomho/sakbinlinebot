@@ -861,6 +861,18 @@ Dashboard คุมบอทได้จริง: สวิตช์ราย�
 - **harness:** `deriveOrderStatus` **ครบทุก combination** N/M/O/P+notified (6 สถานะ + cancelled precedence) · route: TRAIN กรอง default/toggle · สถานะถูกทุกแถว · sort ใหม่สุดก่อน · counts · shipped_pending vs notified · auth 401 · **462 passed** · build เขียว · v1 fidelity เดิมเขียว
 - **ไม่ทำในเฟสนี้:** ปุ่มกระทำ (คอนเฟิร์ม/ยกเลิก) จาก UI = อนาคต (write phase) · ลิงก์แถวชีต = T2-ค
 
+### D-59 · T2-จ1 · ผู้ช่วยเทรน (แชท AI ดูแลคลังความรู้ · text-only · 1 commit) — spec [docs/T2-STUDIO-SPEC.md](T2-STUDIO-SPEC.md)
+แท็บ 🤖 ใน /train — เจ้าของพิมพ์บอก → AI เสนอ **proposal** (ร่างแถวใหม่/แก้แถวเดิม) → เจ้าของแก้ field + ยืนยัน → เขียน · **AI ร่าง มนุษย์เคาะ · ไม่มีเส้นทางเขียนตรง**
+- **สถาปัตย์:** Gemini call แยก (`runTrainAssistant` · สไตล์ extraction D-48 · ไม่ปน prompt ขาย · temp 0.3 · thinkingLevel LOW · responseSchema) · proposal → **เขียนผ่าน `/train/api/write` เดิม (D-57)** = appendRow(บังคับ draft)/writeCell/lint gate/hard guard/conflict/TRAIN_LOG ครบเหมือน UI กดเอง
+- **quota แยก:** `GEMINI_API_KEY_TRAIN` (optional · ไม่มี=ใช้ `GEMINI_API_KEY` เดิม) · scope log `train-assistant` · cap ประวัติ 12 · maxOutputTokens 2048 (~$0.001–0.003/เทิร์น)
+- **KB สด (`assistant-kb.ts`):** วิธีใช้+วงจร draft→ซ้อม→live · header จริง+key+keywords ทุกแท็บ (กันซ้ำ/ชน substring · loader cache 60วิ = fresh หลังเขียน) · claims blocklist · สินค้า/ตัวแปร read-only
+- **10 กติกา system prompt (เจ้าของเคาะ):** draft เสมอ · 🔴 สุขภาพ default→ประตู `handoff_notify` (handoff เต็มเฉพาะสั่งเอง) · keyword วลีกันชน · claims · ราคา/ข้อเท็จจริงจากข้อมูลจริง · สโคป 4 แท็บ (Config แนะนำได้ห้ามเขียน · Products/Promo=จ2) · JSON เท่านั้น · **ถามก่อนเดา (ข้อมูลไม่พอ=ถามกลับ ไม่ออก proposal · ช่องไม่รู้=เว้นว่าง)** · **ทุก proposal note ≥2 เคสทดสอบ (+1 ต้องจุด/−1 ต้องไม่จุด)** · **≤3 proposals/เทิร์น**
+- **schema/parser (`parseAssistantResponse` บริสุทธิ์):** {reply, proposals[{action,tab,key,cols:[{name,value}]→record,note}]} · กรอง action/tab นอกสโคป · cap 3 · non-JSON→reply fallback
+- **UI (การ์ด modal):** proposal = การ์ดแก้ทุก field ก่อนยืนยัน · lint block (422) → ข้อความไหลกลับแชท (AI แก้ต่อ) · **edit-row บนแถว live → ป้ายเตือน "ผลถึงลูกค้า ~1 นาทีหลังยืนยัน" (writeCell ไม่พลิก draft)** · ▶ ทดสอบต่อแถว (reuse) · TRAIN_LOG `ai-draft`/`ai-edit`
+- ไฟล์: `lib/train/{assistant,assistant-kb}.ts`(NEW) · `app/train/api/assistant`(NEW) · `lib/train/write.ts`(+origin) · `app/train/api/write`(+origin) · `TrainStudio.tsx`(แท็บ🤖) · `lib/gemini.ts`(export MODEL/SAFETY_SETTINGS reuse)
+- **harness:** parser (cols→record · cap 3 · scope guard Config/Products/delete ตัด · no-guess reply-only · non-JSON) · KB (header/keys/claims) · appendRow origin=ai→ai-draft+draft · writeCell origin=ai→ai-edit · **Config เขียนไม่ได้จริง (assertEditable throw)** · lint block ไหลกลับ · route auth 401 · **build เขียว · v1 fidelity เขียว**
+- **ไม่แตะ:** engine/pipeline/invariants/gate/pricing · runSalesTurn (ขายจริง)
+
 ### D-57.1 · bugfix: คอลัมน์สถานะ FAQ ใช้ "status" (อังกฤษ) — แท็บ 📚 ขึ้นแบนเนอร์ผิด (1 commit)
 T2-ค (D-57) hardcode `STATUS_COL="สถานะ"` แต่ **CSV_FAQ ชีตจริงใช้ `status` (อังกฤษ · คอลัมน์ H)** → `listTabRows` หา idx=-1 → แบนเนอร์ "ไม่มีคอลัมน์สถานะ" + ปิด add-row/toggle (ทั้งที่ prod กรอง draft ปกติ)
 - **contract จริง (ปนกัน):** CSV_FAQ = `status` · CSV_Step/Objections/Vars/Products/Promo = `สถานะ`

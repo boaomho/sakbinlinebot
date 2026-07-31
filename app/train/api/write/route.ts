@@ -17,15 +17,17 @@ export async function POST(req: NextRequest) {
     expectedOld?: string;
     cols?: Record<string, string>; // add-row
     toStatus?: "live" | "draft"; // status
+    origin?: "ui" | "ai"; // D-59: ที่มา → TRAIN_LOG ai-draft/ai-edit
   };
   const { tab } = body;
   if (!tab) return NextResponse.json({ error: "ต้องมี tab" }, { status: 400 });
+  const origin = body.origin === "ai" ? "ai" : "ui";
 
   try {
     // T2-ค: เพิ่มแถวใหม่ (บังคับ draft) — status codes สื่อความหมายให้ UI แสดงข้อความถูก
     if (body.mode === "add-row") {
       if (!body.cols || typeof body.cols !== "object") return NextResponse.json({ error: "ต้องมี cols" }, { status: 400 });
-      const result = await appendRow(tab, body.cols);
+      const result = await appendRow(tab, body.cols, origin);
       const httpStatus = result.status === "ok" ? 200 : result.status === "lint" ? 422 : result.status === "not_found" ? 404 : 400;
       return NextResponse.json(result, { status: httpStatus });
     }
@@ -43,7 +45,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(await diffCell(tab, key, column));
     }
     if (body.mode === "commit") {
-      const result = await writeCell(tab, key, column, body.newValue ?? "", body.expectedOld ?? "");
+      const result = await writeCell(tab, key, column, body.newValue ?? "", body.expectedOld ?? "", origin);
       const httpStatus = result.status === "ok" ? 200 : result.status === "conflict" ? 409 : result.status === "lint" ? 422 : 404;
       return NextResponse.json(result, { status: httpStatus });
     }

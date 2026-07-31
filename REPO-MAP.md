@@ -38,8 +38,11 @@ app/api/
   line-webhook/handler.ts เครื่องยนต์ทั้งหมด (export handleEvent + processMessage) · M-1: processMessage รับ ChannelTransport แทน replyToken
   cron/orders/route.ts    cron แจกเลขออเดอร์ + ยิงกลุ่มแพ็ค + D-50 แจ้งพัสดุ
   cron/follow/route.ts    cron ตามลูกค้า (Follow — dormant)
-app/train/        # T-STUDIO UI (page+TrainStudio client · +T2-ค แผง "📚 คลังความรู้") + api/{login,turn,reset,cron,preview,write,rows}
-# api/write โหมด: diff·commit·add-row·status (T2-ค) · api/rows = list แถวแท็บความรู้ (read-only · header-driven form)
+app/train/        # T-STUDIO UI (TrainStudio client · +📚 คลังความรู้ +🤖 ผู้ช่วยเทรน) + api/{login,turn,reset,cron,preview,write,rows,assistant}
+# api/write โหมด: diff·commit·add-row·status (T2-ค) +origin ai (D-59 · TRAIN_LOG ai-draft/ai-edit) · api/rows = list แถว · api/assistant = ผู้ช่วยเทรน (D-59)
+lib/train/assistant.ts   # D-59 จ1: runTrainAssistant (Gemini call แยก · GEMINI_API_KEY_TRAIN optional) + parseAssistantResponse (schema/cap3/scope) + system prompt 10 กติกา
+lib/train/assistant-kb.ts # D-59: buildAssistantKB (header/keys/keywords ทุกแท็บ + claims + สินค้า/ตัวแปร read-only · loader cache 60วิ)
+# lib/gemini.ts export MODEL/SAFETY_SETTINGS (reuse โดย assistant · ไม่ diverge) · proposal → เขียนผ่าน /train/api/write เดิม (AI ไม่มีเส้นทางเขียนตรง)
 app/train/dashboard/  # T2-ก/ข/ฉ · Dashboard "ร้านจริง" (DashboardView client · แท็บ ลูกค้า｜ออเดอร์ · อ่าน PROD Neon นอก sandbox) + api/dashboard/{route,customer,switch,orders}
 lib/train/dashboard.ts # T2-ก/ฉ pure: channelOf · deriveStatus(🟢🟡🔴✅⚪) · formatOrderSummary (ห้าม JSON ดิบ) · deriveOrderStatus+ORDER_STATUS_META (สถานะออเดอร์ · cancelled ก่อนเสมอ)
 # 🔴 คอลัมน์สถานะปนกัน (D-57.1): CSV_FAQ="status"(อังกฤษ) · แท็บอื่น="สถานะ"(ไทย) → resolve ผ่าน `statusColumnIndex(header)` ที่ inject.ts จุดเดียว (loader Step/OBJ/FAQ + write.ts ใช้ร่วม · ห้าม hardcode ชื่อเดียว)

@@ -1,4 +1,4 @@
-# T2-STUDIO-SPEC — T-STUDIO v2: ศูนย์บัญชาการปลาทู `[ก·ข·ฉ·ค ✅ · ง-จ UNBUILT]`
+# T2-STUDIO-SPEC — T-STUDIO v2: ศูนย์บัญชาการปลาทู `[ก·ข·ฉ·ค·จ1 ✅ · ง-จ2 UNBUILT]`
 
 > **สถานะ:** spec จากแชทภาพรวม (สถาปนิก) · ยังไม่เขียนโค้ด · ทำทีละเฟส 1 เฟส 1 commit · report แผน+จุดแตะไฟล์ก่อนลงมือทุกเฟส
 > **ฐาน:** ต่อยอด T-STUDIO v1 (เฟส ก-ง เสร็จแล้ว: simulator sandbox · แตะบอลลูนแก้ · เขียนกลับชีต diff/conflict/TRAIN_LOG · mobile) — **ห้ามรื้อของ v1** ทุกฟีเจอร์เดิมต้องทำงานเหมือนเดิม
@@ -120,7 +120,18 @@ v1 ทั้งหมดคือ **โลกซ้อม (sandbox)** — v2 เ
 
 ---
 
-## เฟส T2-จ · หน้า Brief — AI ช่วยตั้งต้นความรู้ (ทำท้ายสุด · ซับซ้อนสุด)
+## เฟส T2-จ1 · ผู้ช่วยเทรน (แชท AI · text-only · ดูแลคลังความรู้) ✅ เสร็จ (D-59)
+
+> **build แล้ว:** แท็บ 🤖 ผู้ช่วยเทรน ใน /train (modal · multi-turn) — เจ้าของพิมพ์บอก → AI เสนอ proposal (add-row/edit-row การ์ดแก้ field ได้) → ยืนยัน → **เขียนผ่านเส้นทาง D-57 เป๊ะ** (appendRow บังคับ draft / writeCell / lint gate สุดท้าย · lint block ไหลกลับแชท) · ▶ ทดสอบต่อแถว · edit-row บนแถว live มีป้ายเตือน "ผลถึงลูกค้า ~1 นาที"
+> **Gemini call แยก** (`lib/train/assistant.ts` · ไม่ปน prompt ขาย · `GEMINI_API_KEY_TRAIN` optional · fallback key เดิม) · KB สด (`assistant-kb.ts`: header/keys/keywords ทุกแท็บ + claims + สินค้า read-only) · schema {reply, proposals[{action,tab,key,cols,note}]} · parser กรอง scope/cap 3
+> **10 กติกา** (draft เสมอ · H1→handoff_notify default · keyword วลีกันชน · claims · ถามก่อนเดา · note ≥2 เคสทดสอบ · ≤3 proposals/เทิร์น) · สโคปเขียน 4 แท็บ (Config แนะนำได้ห้ามเขียน · Products/Promo=จ2) · TRAIN_LOG `ai-draft`/`ai-edit`
+> ไฟล์: `lib/train/{assistant,assistant-kb}.ts` · `app/train/api/assistant` · `lib/train/write.ts`(+origin) · `TrainStudio.tsx`(แท็บ🤖) · `lib/gemini.ts`(export MODEL/SAFETY)
+
+## เฟส T2-จ2 · Brief — AI ช่วยตั้งต้นความรู้จากไฟล์/รูป (onboarding สินค้า · ก่อน P2 ต.ค.)
+
+> onboarding: โยน PDF/รูปฉลาก/เล่าอิสระ → ร่าง Products/Promo/FAQ · ต่อยอด จ1 (เพิ่ม input ไฟล์/รูป + ขยายสโคปเขียน Products/Promo)
+
+**สเปกเดิม (Brief · อ้างอิง):**
 
 **โจทย์จากเจ้าของ:** โยน PDF/รูปฉลาก/ข้อความเล่าสินค้า+โปร → ไม่ต้องนั่งกรอกตารางเอง
 
@@ -135,7 +146,7 @@ v1 ทั้งหมดคือ **โลกซ้อม (sandbox)** — v2 เ
 
 ## ลำดับ + กติกา
 
-- ลำดับ build: **ก → ข → ฉ → ค → ง → จ** (คุณค่าเร็ว→ช้า · เสี่ยงต่ำ→สูง · T2-ฉ อ่านอย่างเดียวแทรกก่อนงานเขียนชีต) · เสร็จแล้ว: ก·ข·ฉ·ค · หยุดพักระหว่างเฟสได้ทุกจุด — แต่ละเฟสจบในตัว
+- ลำดับ build (อัปเดต D-59): **ก → ข → ฉ → ค → จ1 → ง → จ2** (จ1 ผู้ช่วยเทรน text-only ดึงขึ้นก่อน ง · จ2 onboarding ไฟล์/รูป ทำก่อน P2 ต.ค.) · เสร็จแล้ว: ก·ข·ฉ·ค·จ1 · หยุดพักระหว่างเฟสได้ทุกจุด
 - ทุกเฟส: report แผน+จุดแตะไฟล์ก่อน · 1 commit · npm test เขียว · อัปเดต STATUS/DECISIONS/spec นี้ (ติ๊กเฟสที่เสร็จ) ในคอมมิตเดียวกัน
 - ห้ามแตะ: engine/pipeline/invariants/H1/gate/pricing ทั้งหมด · v1 simulator ต้องทำงานเหมือนเดิมทุกเฟส (เทส fidelity เดิมเขียวตลอด)
 - โมเดล: ทุกเฟสเริ่มด้วย Opus · สลับ Fable เฉพาะติดจริงตามกติกาโปรเจกต์
