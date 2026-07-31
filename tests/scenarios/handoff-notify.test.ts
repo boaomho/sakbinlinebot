@@ -18,12 +18,13 @@ const STEP_H = ["step_id", "funnel_stage", "ชื่อประตู", "เ�
 function row(step_id: string, funnel: string, o: Partial<Record<string, string>> = {}): string[] {
   return STEP_H.map((h) => (h === "step_id" ? step_id : h === "funnel_stage" ? funnel : o[h] ?? ""));
 }
-/** ชีตที่ H1=handoff_notify (มี pattern) + HX=handoff จริง */
+/** ชีตที่ H1=handoff_notify (มี pattern) + H5=handoff_notify (per-door D-60) + HX=handoff จริง */
 function notifySheet(h1Funnel = "handoff_notify", h1Pattern = NOTIFY_ANSWER): string[][] {
   return [
     STEP_H,
     row("S1", "lead", { ตัวอย่างคำตอบ: "สวัสดีค่ะ" }),
     row("H1", h1Funnel, { ตัวอย่างคำตอบ: h1Pattern }),
+    row("H5", "handoff_notify", { ตัวอย่างคำตอบ: "เรื่องเบาหวานแนะนำปรึกษาแพทย์ เดี๋ยวแอดมินช่วยดูแลนะคะ" }),
     row("HX", "handoff", { ตัวอย่างคำตอบ: "ขอตามแอดมินนะคะ" }),
   ];
 }
@@ -103,5 +104,20 @@ describe("D-58 · handoff_notify — ตอบ + แจ้ง + ไม่ปิ�
     expect(JSON.stringify(adminPushes()), "handoff เดิม").toContain(FOOTER);
     expect((await readCustomer(U))?.human_mode).toBe(true);
     expect(notifyPushCount(), "notify ปิดอยู่").toBe(0);
+  });
+
+  // ---- D-60: per-door mapping (คำ_notify_<step_id>) ----
+  it("🔴 D-60 per-door: notifyDoors ประตู H5 → 'เบาหวาน' เข้า H5 (ไม่ใช่ H1) + notify + ไม่ปิดบอท", async () => {
+    harnessOverrides.config = { handoffKeywords: ["ขอแอดมิน"], notifyKeywords: [], notifyDoors: [{ door: "H5", keywords: ["เบาหวาน"] }] };
+    await sendText(U, "เป็นเบาหวานทานได้ไหมคะ");
+    expect(bubbles().join(" "), "ตอบ pattern ประตู H5").toContain("เบาหวานแนะนำปรึกษาแพทย์");
+    expect(notifyPushCount()).toBe(1);
+    expect((await readCustomer(U))?.human_mode).toBe(false);
+  });
+  it("🔴 D-60 per-door fail-safe: ประตูชี้ HX (funnel=handoff) → ปิดบอทเงียบ", async () => {
+    harnessOverrides.config = { handoffKeywords: ["ขอแอดมิน"], notifyKeywords: [], notifyDoors: [{ door: "HX", keywords: ["เบาหวาน"] }] };
+    await sendText(U, "เป็นเบาหวานไหม");
+    expect(JSON.stringify(adminPushes())).toContain(FOOTER);
+    expect((await readCustomer(U))?.human_mode).toBe(true);
   });
 });

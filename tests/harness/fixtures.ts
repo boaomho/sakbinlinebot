@@ -49,6 +49,7 @@ export function testConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     orderNumberResetDaily: true,
     handoffKeywords: [...DEFAULT_HANDOFF_KEYWORDS],
     notifyKeywords: [], // D-58: default ปิด (เทส notify override เอง)
+    notifyDoors: [], // D-60: per-door mapping (เทส override เอง)
     adminSilenceReturnMinutes: 45,
     botResumeMessage: "ปลาทูมาดูแลต่อเองนะคะ",
     testCommandsEnabled: true,

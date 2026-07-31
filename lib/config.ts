@@ -40,8 +40,10 @@ export interface AppConfig {
   orderCutoffTime: string;
   orderNumberResetDaily: boolean;
   handoffKeywords: string[];
-  /** D-58: คำ_notify — pre-check ชั้นสอง (หลัง คำ_handoff) → บังคับเข้าประตู H1 (ตอบ+แจ้งแอดมิน ไม่ปิดบอท) · default [] = ปิดฟีเจอร์ */
+  /** D-58: คำ_notify — pre-check ชั้นสอง (alias → ประตู H1) · default [] = ปิดฟีเจอร์ */
   notifyKeywords: string[];
+  /** D-60: คำ_notify_<step_id> — mapping คำ→ประตู notify รายประตู (เช่น คำ_notify_H5 → H5) · alias คำ_notify → H1 (handler รวมให้) */
+  notifyDoors: { door: string; keywords: string[] }[];
   /** คืนสิทธิ์บอท_หลังแชทเงียบ (นาที) — ถ้าลูกค้าเงียบเกินเวลานี้ในโหมดแอดมิน บอทคืนมาดูแลเอง */
   adminSilenceReturnMinutes: number;
   /** ประโยคเปลี่ยนมือ_บอทรับต่อ — ข้อความบอกลูกค้าตอนบอทรับช่วงต่อจากแอดมิน */
@@ -132,6 +134,21 @@ const CONFIG_MEMO_MS = 5_000;
 export function __resetConfigCache(): void {
   cachedConfig = null;
   cachedAt = 0;
+}
+
+/**
+ * D-60: mapping คำ→ประตู notify รายประตู · key = "คำ_notify_<step_id>" (เช่น คำ_notify_H5 → door H5)
+ * 🔴 ไม่รวม alias "คำ_notify" (ไม่มี suffix) — handler รวมเองเป็น NOTIFY_DOOR=H1 (backward compat D-58)
+ */
+export function parseNotifyDoors(raw: Map<string, string>): { door: string; keywords: string[] }[] {
+  const out: { door: string; keywords: string[] }[] = [];
+  for (const [k, v] of raw.entries()) {
+    const m = /^คำ_notify_(.+)$/.exec(k.trim());
+    if (!m) continue;
+    const keywords = v.split(",").map((s) => cleanCell(s)).filter(Boolean);
+    if (keywords.length > 0) out.push({ door: m[1].trim(), keywords });
+  }
+  return out;
 }
 
 export async function getConfig(): Promise<AppConfig> {
@@ -232,6 +249,7 @@ export async function getConfig(): Promise<AppConfig> {
       .split(",")
       .map((s) => cleanCell(s))
       .filter(Boolean),
+    notifyDoors: parseNotifyDoors(raw), // D-60
     adminSilenceReturnMinutes: numOf(45, "คืนสิทธิ์บอท_หลังแชทเงียบ", "คืนสิทธิ์บอท_หลังแชทเงียบ_นาที"),
     botResumeMessage: strOf("ปลาทูมาดูแลต่อเองนะคะ", "ประโยคเปลี่ยนมือ_บอทรับต่อ"),
     testCommandsEnabled: boolOf(true, "เปิด_คำสั่งเทสต์", "เปิด_คำสั่งเทส"),

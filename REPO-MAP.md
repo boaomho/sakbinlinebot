@@ -40,7 +40,8 @@ app/api/
   cron/follow/route.ts    cron ตามลูกค้า (Follow — dormant)
 app/train/        # T-STUDIO UI (TrainStudio client · +📚 คลังความรู้ +🤖 ผู้ช่วยเทรน) + api/{login,turn,reset,cron,preview,write,rows,assistant}
 # api/write โหมด: diff·commit·add-row·status (T2-ค) +origin ai (D-59 · TRAIN_LOG ai-draft/ai-edit) · api/rows = list แถว · api/assistant = ผู้ช่วยเทรน (D-59)
-lib/train/assistant.ts   # D-59 จ1: runTrainAssistant (Gemini call แยก · GEMINI_API_KEY_TRAIN optional) + parseAssistantResponse (schema/cap3/scope) + system prompt 10 กติกา
+lib/train/assistant.ts   # D-59/60 จ1: runTrainAssistant (Gemini call แยก · GEMINI_API_KEY_TRAIN optional · +excludeKeys) + parseAssistantResponse (schema/cap3/scope) + buildAssistantSystem (12 กติกา · flow สัมภาษณ์/เสียงนักขาย/persona ค่ะ/เกลาเสียง)
+lib/train/rewrite-safety.ts # D-60: rewriteSafety(old,new) จับ {var} หาย/ตัวเลขเปลี่ยน (import-free · client+server+เทส ใช้ร่วม)
 lib/train/assistant-kb.ts # D-59: buildAssistantKB (header/keys/keywords ทุกแท็บ + claims + สินค้า/ตัวแปร read-only · loader cache 60วิ)
 # lib/gemini.ts export MODEL/SAFETY_SETTINGS (reuse โดย assistant · ไม่ diverge) · proposal → เขียนผ่าน /train/api/write เดิม (AI ไม่มีเส้นทางเขียนตรง)
 app/train/dashboard/  # T2-ก/ข/ฉ · Dashboard "ร้านจริง" (DashboardView client · แท็บ ลูกค้า｜ออเดอร์ · อ่าน PROD Neon นอก sandbox) + api/dashboard/{route,customer,switch,orders}
@@ -147,7 +148,7 @@ scripts/sheet-lint.mjs  D-45 · lint keyword ชีตจริง (คำโด
 **objections (D-27):** `จำนวนข้อโต้แย้งที่ยัดเข้า prompt`(2) · ~~`จำนวนตัวอย่างที่ยัดเข้า prompt`~~ (ลบ v2.0 D-41 · เลิก Examples)
 **order_id (D-29):** `รหัสนำหน้าออเดอร์`(default `SKB`) · `เลขออเดอร์_รีเซ็ตทุกวัน`(ลำดับ col A)
 **handoff_after_intake (D-34/D-35):** `เพดานเทิร์นก่อนส่งแอดมิน`(default 3 · คุยมากสุด) · `เทิร์นขั้นต่ำก่อนส่งแอดมิน`(default 1 · ถามก่อน · เพิกเฉย AI flag จนเทิร์น min+1) · 🔴 คำ trigger ห้ามซ้ำ `คำ_handoff` (keyword pre-check ปิดก่อนเข้า intake)
-**handoff_notify (D-58):** `คำ_notify`(default ว่าง=ปิด · alias `คำ_แจ้งแอดมิน`) — pre-check ชั้นสอง (หลัง `คำ_handoff`) → บังคับประตู `NOTIFY_DOOR="H1"` (funnel=`handoff_notify`): ตอบ pattern verbatim + push 🔔 (dedup delivered_steps) + **ไม่ปิดบอท** · fail-safe: H1 funnel≠handoff_notify/pattern ว่าง → `runHandoffFlow` ปิดเงียบ+log · 🔴 ไม่แตะ DEFAULT_HANDOFF_KEYWORDS · funnel enum: region 7 + handoff 3 (handoff/handoff_after_intake/handoff_notify)
+**handoff_notify (D-58/D-60):** `คำ_notify`(alias→H1) + `คำ_notify_<step_id>`(per-door D-60 · `parseNotifyDoors`→`config.notifyDoors`) — pre-check ชั้นสอง (หลัง `คำ_handoff`) → handler loop ทุกประตู · match บังคับประตูนั้น (funnel=`handoff_notify`): ตอบ pattern verbatim + push 🔔 (dedup delivered_steps ต่อประตู) + **ไม่ปิดบอท** · fail-safe ต่อประตู: funnel≠handoff_notify/pattern ว่าง → `runHandoffFlow` ปิดเงียบ+log · 🔴 ไม่แตะ DEFAULT_HANDOFF_KEYWORDS · funnel enum: region 7 + handoff 3
 **สวิตช์:** `เปิด_ติดแท็ก` · `เปิด_ส่งต่อแอดมิน` · `เปิด_ระบบออเดอร์` · `เปิด_ระบบติดตาม` · `เปิด_การ์ด_flex` · `เปิด_จังหวะหน่วงเหมือนคน`
 > ค่าสวิตช์ที่รับ: `เปิด/true/on/1/ใช่/yes` = true · `ปิด/false/off/0/ไม่/no/ว่าง` = false
 

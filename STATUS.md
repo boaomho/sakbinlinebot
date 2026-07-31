@@ -41,6 +41,8 @@
 - **D-58 handoff_notify เสร็จ ✅** บน `main` — funnel ใหม่ `handoff_notify` (ตอบ pattern + แจ้งแอดมิน 🔔 + ไม่ปิดบอท) + pre-check ชั้นสอง `คำ_notify` (fail-safe → handoff ถ้าชีตตั้งผิด) · 🔴 **ไม่แตะ DEFAULT_HANDOFF_KEYWORDS** (notifyKeywords ว่าง=พฤติกรรมเดิม 100%) · **486 passed**
 - 🔴 **เปิดใช้ D-58 = งานชีตเจ้าของ:** ย้ายคำสุขภาพ `คำ_handoff`→`คำ_notify` + ประตู H1 `funnel_stage=handoff_notify` + เขียน pattern ปลอดภัย (ข้อมูล+ปรึกษาแพทย์ ไม่รับรอง "ทานได้")
 - **T2-จ1 ผู้ช่วยเทรน (D-59) เสร็จ ✅** บน `main` — แท็บ 🤖 ใน /train · แชท AI (Gemini call แยก · `GEMINI_API_KEY_TRAIN` optional) เสนอ proposal ร่าง/แก้แถว → เจ้าของยืนยัน → **เขียนผ่านเส้นทาง D-57 เป๊ะ** (draft/lint/TRAIN_LOG ai-draft/ai-edit) · 10 กติกา (สุขภาพ→handoff_notify · ถามก่อนเดา · ≤3/เทิร์น) · Config แนะนำได้ห้ามเขียน · edit-row live มีป้ายเตือน
+- **D-60 เสร็จ ✅** บน `main` — (1) `คำ_notify_<step_id>` per-door (alias `คำ_notify`→H1 · fail-safe/dedup ต่อประตู) (2) system prompt ผู้ช่วย +กติกา 11 flow สัมภาษณ์/12 เสียงนักขาย CX/persona ค่ะ (3) โหมดเกลาเสียง (KB เนื้อเต็ม · `rewriteSafety` รักษา {}/ตัวเลข · ≤3/เทิร์น · ปุ่มข้าม/excludeKeys ไม่วนซ้ำ)
+- 🔴 **เปิดใช้ per-door (เจ้าของ):** ตั้ง `คำ_notify_<step_id>` ใน CSV_Config (เช่น `คำ_notify_H5` = เบาหวาน,ความดัน) + ประตูนั้น `funnel_stage=handoff_notify` + pattern ปลอดภัย
 - 🔴 **ลำดับใหม่ (D-59):** ก→ข→ฉ→ค→**จ1**→ง→จ2 · ต่อไป **T2-ง** (Config แบบฟอร์ม) แล้ว **T2-จ2** (onboarding ไฟล์/รูป · Products/Promo · ก่อน P2 ต.ค.)
 - **ต่อไป (งานมือเจ้าของ):** (option) ตั้ง `GEMINI_API_KEY_TRAIN` แยกโควตาผู้ช่วยเทรน · M-3 (App Review · ใช้ URL `/privacy`) · Utility Template (Messenger นอก 24 ชม.) · Follow/CRM ก้อน B ส่วนหลัง
 

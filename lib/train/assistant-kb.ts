@@ -2,6 +2,7 @@ import { loadBotLibrary, BotLibrary } from "@/lib/sheets/loader";
 import { getConfig } from "@/lib/config";
 import { cleanHeader, cleanCell } from "@/lib/sheets/clean";
 import { tabKeyColumn } from "./sandbox";
+import { EDITABLE_COLS } from "./preview";
 import { statusColumnIndex, isActiveStatus } from "@/lib/agent/inject";
 
 /**
@@ -22,6 +23,8 @@ function tabSummary(tab: string, rows: string[][]): string {
   const statusIdx = statusColumnIndex(header);
   const kwIdx = KW_COL[tab] ? header.indexOf(cleanHeader(KW_COL[tab])) : -1;
   const funnelIdx = header.indexOf("funnel_stage");
+  const contentCol = (EDITABLE_COLS[tab] ?? [])[0]; // คอลัมน์คำตอบหลัก (สำหรับโหมดเกลาเสียง)
+  const contentIdx = contentCol ? header.indexOf(cleanHeader(contentCol)) : -1;
   const lines: string[] = [];
   for (let i = 1; i < rows.length; i++) {
     const key = keyIdx >= 0 ? cleanCell(rows[i][keyIdx] ?? "") : "";
@@ -29,7 +32,9 @@ function tabSummary(tab: string, rows: string[][]): string {
     const draft = statusIdx >= 0 && !isActiveStatus(rows[i][statusIdx]) ? " (draft)" : "";
     const kw = kwIdx >= 0 && rows[i][kwIdx] ? ` [kw: ${cleanCell(rows[i][kwIdx])}]` : "";
     const funnel = funnelIdx >= 0 && rows[i][funnelIdx] ? ` [funnel: ${cleanCell(rows[i][funnelIdx])}]` : "";
-    lines.push(`- ${key}${funnel}${kw}${draft}`);
+    // เนื้อคำตอบเต็ม (bounded 300 ตัว) — ให้ผู้ช่วยรีไรต์โหมดเกลาเสียงได้ (รักษา {ตัวแปร}+ตัวเลขเดิม)
+    const content = contentIdx >= 0 && rows[i][contentIdx] ? `\n    คำตอบ: ${cleanCell(rows[i][contentIdx]).slice(0, 300)}` : "";
+    lines.push(`- ${key}${funnel}${kw}${draft}${content}`);
   }
   const statusName = statusIdx >= 0 ? header[statusIdx] : "(ไม่มี!)";
   return `### ${tab}\nคอลัมน์: ${header.filter(Boolean).join(" | ")}\nคอลัมน์สถานะ: ${statusName} · key column: ${keyCol ?? "?"}\nแถวที่มีอยู่ (ห้ามเสนอ key ซ้ำ):\n${lines.join("\n") || "(ยังไม่มีแถว)"}`;

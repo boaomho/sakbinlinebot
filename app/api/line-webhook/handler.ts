@@ -507,23 +507,29 @@ export async function processMessage(
   // FAQ: สารบัญทุกข้อ + เต็มเฉพาะที่ keyword ตรง
   const lib = await loadBotLibrary();
 
-  // 🔴 D-58: pre-check ชั้นสอง (คำ_notify) — หลัง คำ_handoff (ปิดเงียบ) · reuse checkHandoffKeywords (ไม่ fork · KI-01)
-  //    match → บังคับเข้าประตู notify: ตอบ pattern verbatim + push 🔔 + ไม่ปิดบอท (ไหลผ่าน pipeline เดิม ด้วย forced stage)
-  //    fail-safe: ประตู NOTIFY_DOOR funnel ต้อง=handoff_notify + มี pattern · ไม่งั้น → ปิดบอทเงียบ + log (ห้ามบอทตอบสุขภาพเงียบ/หายเงียบ)
+  // 🔴 D-58/D-60: pre-check ชั้นสอง (คำ_notify รายประตู) — หลัง คำ_handoff (ปิดเงียบ) · reuse checkHandoffKeywords (ไม่ fork · KI-01)
+  //    match ประตูไหน → บังคับเข้าประตูนั้น: ตอบ pattern verbatim + push 🔔 + ไม่ปิดบอท (ไหลผ่าน pipeline เดิม ด้วย forced stage)
+  //    D-60: notifyDoors = คำ_notify_<step_id> รายประตู + alias คำ_notify → NOTIFY_DOOR(H1) · match แรกชนะ · fail-safe/dedup ต่อประตู
+  //    fail-safe ต่อประตู: funnel ต้อง=handoff_notify + มี pattern · ไม่งั้น → ปิดบอทเงียบ + log (ห้ามบอทตอบสุขภาพเงียบ/หายเงียบ)
   let notifyForcedStage: string | null = null;
-  if (switches.handoff && config.notifyKeywords.length > 0) {
-    const notifyCheck = checkHandoffKeywords(userMessage, config.notifyKeywords);
-    if (notifyCheck.matched) {
-      const doorFunnel = lib ? funnelStageOf(lib.CSV_Step, NOTIFY_DOOR) : null;
-      const sv = lib ? stepVerbatim(lib.CSV_Step, NOTIFY_DOOR) : null;
+  if (switches.handoff) {
+    const doors = [
+      ...config.notifyDoors,
+      ...(config.notifyKeywords.length > 0 ? [{ door: NOTIFY_DOOR, keywords: config.notifyKeywords }] : []),
+    ];
+    for (const d of doors) {
+      if (!checkHandoffKeywords(userMessage, d.keywords).matched) continue;
+      const doorFunnel = lib ? funnelStageOf(lib.CSV_Step, d.door) : null;
+      const sv = lib ? stepVerbatim(lib.CSV_Step, d.door) : null;
       if (doorFunnel === "handoff_notify" && sv && sv.pattern.trim() !== "") {
-        notifyForcedStage = NOTIFY_DOOR;
-        console.log(JSON.stringify({ scope: "notify-precheck", keyword: notifyCheck.keyword, stage: NOTIFY_DOOR }));
+        notifyForcedStage = d.door;
+        console.log(JSON.stringify({ scope: "notify-precheck", door: d.door }));
       } else {
-        console.warn(JSON.stringify({ scope: "notify-precheck", event: "misconfigured", door: NOTIFY_DOOR, funnel: doorFunnel, hasPattern: Boolean(sv && sv.pattern.trim()), action: "fallback-handoff" }));
-        await runHandoffFlow(userId, userMessage, transport, config, switches, `คำ_notify แต่ประตู ${NOTIFY_DOOR} funnel=${doorFunnel ?? "ไม่พบ"}/pattern ว่าง — ปิดบอทเพื่อความปลอดภัย`);
+        console.warn(JSON.stringify({ scope: "notify-precheck", event: "misconfigured", door: d.door, funnel: doorFunnel, hasPattern: Boolean(sv && sv.pattern.trim()), action: "fallback-handoff" }));
+        await runHandoffFlow(userId, userMessage, transport, config, switches, `คำ_notify ประตู ${d.door} funnel=${doorFunnel ?? "ไม่พบ"}/pattern ว่าง — ปิดบอทเพื่อความปลอดภัย`);
         return;
       }
+      break; // match แรกชนะ
     }
   }
 

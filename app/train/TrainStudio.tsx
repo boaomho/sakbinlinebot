@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { EditorBoundary, EditorRenderer } from "./EditorBoundary";
+import { rewriteSafety } from "@/lib/train/rewrite-safety";
 
 /**
  * T-STUDIO — เฟส ก (แชทจำลอง + X-ray) + เฟส ข (แตะบอลลูนเพื่อแก้ · draft overlay · lint สด)
@@ -129,6 +130,7 @@ export default function TrainStudio() {
   const [asstBusy, setAsstBusy] = useState(false);
   const [proposals, setProposals] = useState<AsstProposal[]>([]);
   const [liveKeys, setLiveKeys] = useState<Record<string, Set<string>>>({});
+  const [skipKeys, setSkipKeys] = useState<Set<string>>(new Set()); // D-60: แถวที่จัดการ/ข้าม (ไม่วนเสนอซ้ำ)
   const chatRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const previewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -354,10 +356,11 @@ export default function TrainStudio() {
   async function sendAsst() {
     const text = asstInput.trim();
     if (!text || asstBusy) return;
+    if (text.includes("เกลา")) flash("⚠️ โหมดเกลาเสียง: แก้แถว live มีผลลูกค้าจริง ~1 นาที — เกลาทีละไม่กี่แถวแล้วดูผลจริงก่อนไล่ทั้งแท็บ");
     const next: { role: "user" | "assistant"; text: string }[] = [...asstMsgs, { role: "user", text }];
     setAsstMsgs(next); setAsstInput(""); setAsstBusy(true); setProposals([]);
     try {
-      const r = await fetch("/train/api/assistant", { method: "POST", headers: HDRS, body: JSON.stringify({ messages: next }) });
+      const r = await fetch("/train/api/assistant", { method: "POST", headers: HDRS, body: JSON.stringify({ messages: next, excludeKeys: [...skipKeys] }) });
       if (r.status === 401 || r.status === 404) { setAuthed(false); return; }
       const d = (await r.json()) as { reply?: string; proposals?: { action: "add-row" | "edit-row"; tab: string; key: string; cols: Record<string, string>; note: string }[]; error?: string };
       setAsstMsgs((m) => [...m, { role: "assistant", text: d.reply ?? d.error ?? "(ไม่มีคำตอบ)" }]);
@@ -378,23 +381,32 @@ export default function TrainStudio() {
     const msg = lint || d.message || (d.status === "dup" ? "key นี้มีอยู่แล้ว" : d.error || "เขียนไม่ได้");
     setAsstMsgs((m) => [...m, { role: "assistant", text: `⚠️ เขียนไม่ได้: ${msg}\n(แก้ในการ์ด หรือบอกผมให้ปรับ)` }]);
   }
+  const markHandled = (p: AsstProposal) => setSkipKeys((s) => new Set(s).add(`${p.tab}::${p.key}`));
+  function skipProp(p: AsstProposal) { markHandled(p); setProposals((ps) => ps.filter((x) => x.id !== p.id)); flash("ข้ามแถวนี้ (ไม่เสนอซ้ำในรอบนี้)"); }
   async function confirmProp(p: AsstProposal) {
     const cols = Object.fromEntries(p.cols.map((c) => [c.name, c.value]));
     if (p.action === "add-row") {
       const r = await fetch("/train/api/write", { method: "POST", headers: HDRS, body: JSON.stringify({ mode: "add-row", tab: p.tab, cols, origin: "ai" }) });
       const d = await r.json();
-      if (r.ok && d.status === "ok") { setProposals((ps) => ps.map((x) => (x.id === p.id ? { ...x, done: true } : x))); flash("✅ เพิ่ม draft แล้ว — ทดสอบก่อนเผยแพร่"); return; }
+      if (r.ok && d.status === "ok") { setProposals((ps) => ps.map((x) => (x.id === p.id ? { ...x, done: true } : x))); markHandled(p); flash("✅ เพิ่ม draft แล้ว — ทดสอบก่อนเผยแพร่"); return; }
       asstErr(d);
     } else {
+      // D-60: ดึงค่าเก่า → เตือนถ้า rewrite ทำ {ตัวแปร} หาย/ตัวเลขเปลี่ยน (โหมดเกลาเสียงห้ามเปลี่ยนข้อเท็จจริง)
+      const diffs: { col: string; old: string; next: string }[] = [];
       for (const c of p.cols) {
         const dr = await fetch("/train/api/write", { method: "POST", headers: HDRS, body: JSON.stringify({ mode: "diff", tab: p.tab, key: p.key, column: c.name }) });
         const dd = await dr.json();
         if (!dr.ok) { asstErr(dd); return; }
-        const cr = await fetch("/train/api/write", { method: "POST", headers: HDRS, body: JSON.stringify({ mode: "commit", tab: p.tab, key: p.key, column: c.name, newValue: c.value, expectedOld: dd.old ?? "", origin: "ai" }) });
+        diffs.push({ col: c.name, old: dd.old ?? "", next: c.value });
+      }
+      const warns = diffs.flatMap((d) => { const s = rewriteSafety(d.old, d.next); return [...(s.droppedVars.length ? [`${d.col}: {ตัวแปร} หาย ${s.droppedVars.join(" ")}`] : []), ...(s.changedNumbers ? [`${d.col}: ตัวเลขเปลี่ยน`] : [])]; });
+      if (warns.length > 0 && !window.confirm(`⚠️ รีไรต์นี้อาจเปลี่ยนข้อเท็จจริง:\n${warns.join("\n")}\nยืนยันเขียนต่อ?`)) return;
+      for (const d of diffs) {
+        const cr = await fetch("/train/api/write", { method: "POST", headers: HDRS, body: JSON.stringify({ mode: "commit", tab: p.tab, key: p.key, column: d.col, newValue: d.next, expectedOld: d.old, origin: "ai" }) });
         const cd = await cr.json();
         if (!cr.ok) { asstErr(cd); return; }
       }
-      setProposals((ps) => ps.map((x) => (x.id === p.id ? { ...x, done: true } : x))); flash("✅ แก้แถวแล้ว + จด TRAIN_LOG");
+      setProposals((ps) => ps.map((x) => (x.id === p.id ? { ...x, done: true } : x))); markHandled(p); flash("✅ แก้แถวแล้ว + จด TRAIN_LOG");
     }
   }
   async function testProposal(tab: string, key: string) {
@@ -551,7 +563,10 @@ export default function TrainStudio() {
                     ))}
                     {p.note && <div style={{ fontSize: 11, color: "#777", margin: "4px 0" }}>💡 {p.note}</div>}
                     {!p.done ? (
-                      <button style={{ ...S.btn, padding: "8px 12px" }} onClick={() => confirmProp(p)}>{p.action === "add-row" ? "ยืนยันเพิ่ม (draft)" : "ยืนยันแก้"}</button>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button style={{ ...S.btn, padding: "8px 12px" }} onClick={() => confirmProp(p)}>{p.action === "add-row" ? "ยืนยันเพิ่ม (draft)" : "ยืนยันแก้"}</button>
+                        <button style={{ ...S.toolBtn, padding: "8px 12px" }} onClick={() => skipProp(p)}>ข้าม</button>
+                      </div>
                     ) : (
                       <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                         <span style={{ color: "#1e7e42", fontSize: 13 }}>✅ เขียนแล้ว</span>

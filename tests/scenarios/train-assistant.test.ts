@@ -2,7 +2,9 @@ import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 import { sheetsCalls } from "../harness/state";
 import { seedBotLib } from "../harness/botlib-fixture";
-import { parseAssistantResponse } from "@/lib/train/assistant";
+import { parseAssistantResponse, buildAssistantSystem } from "@/lib/train/assistant";
+import { rewriteSafety } from "@/lib/train/rewrite-safety";
+import { parseNotifyDoors } from "@/lib/config";
 import { buildAssistantKB } from "@/lib/train/assistant-kb";
 import { appendRow, writeCell } from "@/lib/train/write";
 
@@ -95,6 +97,50 @@ describe("D-59 · เขียน origin=ai → TRAIN_LOG ai-draft/ai-edit", () 
     sheetsCalls.botLibReturn.CSV_FAQ = [["คำถาม", "keywords", "action", "คำตอบ", "สถานะ"], ["x", "x", "answer", "y", "live"]];
     const res = await appendRow("CSV_FAQ", { คำถาม: "แพ้กุ้งทานได้ไหม", keywords: "แพ้กุ้ง", action: "answer", คำตอบ: "ทานได้ค่ะ ไม่เป็นไร" }, "ai");
     expect(res.status).toBe("lint");
+  });
+});
+
+// ---------- D-60 · per-door parse + system prompt + rewriteSafety ----------
+describe("D-60 · parseNotifyDoors", () => {
+  it("คำ_notify_<id> → door · alias คำ_notify (ไม่มี suffix) ไม่นับ", () => {
+    const raw = new Map<string, string>([
+      ["คำ_notify_H5", "เบาหวาน, ความดัน"],
+      ["คำ_notify_H1", "แพ้, แพ้กุ้ง"],
+      ["คำ_notify", "ท้อง"], // alias → handler รวมเป็น H1 เอง · parseNotifyDoors ไม่นับ
+      ["ชื่อบอท", "ปลาทู"],
+    ]);
+    const doors = parseNotifyDoors(raw);
+    expect(doors.find((d) => d.door === "H5")?.keywords).toEqual(["เบาหวาน", "ความดัน"]);
+    expect(doors.find((d) => d.door === "H1")?.keywords).toEqual(["แพ้", "แพ้กุ้ง"]);
+    expect(doors.some((d) => d.door === "" || d.door === "notify")).toBe(false);
+  });
+});
+
+describe("D-59/60 · buildAssistantSystem — กติกา 11/12/persona", () => {
+  it("มี flow สัมภาษณ์ (11) · เสียงนักขาย (12) · persona ค่ะ · เกลาเสียง · excludeKeys", () => {
+    const s = buildAssistantSystem("KB_PLACEHOLDER", ["CSV_FAQ::ส่งกี่วัน"]);
+    expect(s).toContain("FLOW สัมภาษณ์");
+    expect(s).toContain("3 แบบ");
+    expect(s).toContain("เสียงนักขาย CX");
+    expect(s).toContain("ค่ะ/นะคะ");
+    expect(s).toContain("ห้าม ครับ/ผม");
+    expect(s).toContain("เกลาเสียง");
+    expect(s, "excludeKeys ต่อท้าย").toContain("CSV_FAQ::ส่งกี่วัน");
+    expect(s).toContain("KB_PLACEHOLDER");
+  });
+});
+
+describe("D-60 · rewriteSafety (โหมดเกลาเสียงรักษา {} + ตัวเลข)", () => {
+  it("รักษาครบ → ไม่เตือน", () => {
+    const r = rewriteSafety("โปร 3 ถ้วย {ยอดรวม} บาทค่ะ", "3 ถ้วยราคา {ยอดรวม} บาทนะคะ");
+    expect(r.droppedVars).toHaveLength(0);
+    expect(r.changedNumbers).toBe(false);
+  });
+  it("🔴 {ตัวแปร} หาย → droppedVars", () => {
+    expect(rewriteSafety("ยอด {ยอดรวม} บาท", "ราคาดีค่ะ").droppedVars).toContain("{ยอดรวม}");
+  });
+  it("🔴 ตัวเลขเปลี่ยน → changedNumbers", () => {
+    expect(rewriteSafety("ส่ง 1-2 วันค่ะ", "ส่ง 3-4 วันค่ะ").changedNumbers).toBe(true);
   });
 });
 
