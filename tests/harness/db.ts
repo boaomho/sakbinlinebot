@@ -32,7 +32,22 @@ function assertHarnessDb(): string {
 }
 
 export async function initHarnessDb(): Promise<void> {
-  assertHarnessDb();
+  const url = assertHarnessDb();
+  // 🔴 warm-up: Neon serverless compute อาจ cold (ตื่นช้า >30วิ) → ping SELECT 1 พร้อม retry ให้ตื่นก่อน
+  //    กัน ensureSchema รอบแรก timeout (เคย "1 failed ปลอม" เป็นระยะ) · backoff 1→5วิ (รวม ~15วิ + latency)
+  const sql = neon(url);
+  let lastErr: unknown = null;
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      await sql("SELECT 1");
+      lastErr = null;
+      break;
+    } catch (e) {
+      lastErr = e;
+      await new Promise((r) => setTimeout(r, attempt * 1000));
+    }
+  }
+  if (lastErr) throw lastErr;
   await ensureSchema();
 }
 

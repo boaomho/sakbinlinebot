@@ -16,9 +16,9 @@ export default defineConfig({
     // scenario ทุกบทใช้ DB harness-test ก้อนเดียวกัน + truncate ต่อบท → ห้ามรันขนาน
     fileParallelism: false,
     sequence: { concurrent: false },
-    // DB จริงข้ามเน็ต + debounce → เผื่อเวลา
+    // DB จริงข้ามเน็ต + debounce → เผื่อเวลา · hook เผื่อ Neon cold-start (warm-up retry ใน initHarnessDb)
     testTimeout: 30_000,
-    hookTimeout: 30_000,
+    hookTimeout: 60_000,
     include: ["tests/scenarios/**/*.test.ts"],
   },
 });
