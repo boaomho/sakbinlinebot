@@ -8,7 +8,7 @@ import { getConfig } from "@/lib/config";
 import { lintPattern } from "./lint";
 import { patternFromColumns, triggerTextForTab, h1FlagsForRow, EDITABLE_COLS } from "./preview";
 import { tabKeyColumn } from "./sandbox";
-import { VALID_FUNNEL_STAGES, isActiveStatus } from "@/lib/agent/inject";
+import { VALID_FUNNEL_STAGES, isActiveStatus, statusColumnIndex } from "@/lib/agent/inject";
 
 /**
  * lib/train/write.ts — เฟส ค: เขียน draft กลับชีต BotLibrary จริง
@@ -19,7 +19,6 @@ import { VALID_FUNNEL_STAGES, isActiveStatus } from "@/lib/agent/inject";
 const EDITABLE_TABS = ["CSV_Step", "CSV_Objections", "CSV_FAQ", "CSV_Vars"];
 const TRAIN_LOG_TAB = "TRAIN_LOG";
 const TRAIN_LOG_HEADER = ["เวลา", "แท็บ", "key", "คอลัมน์", "ค่าเก่า(ย่อ)", "ค่าใหม่(ย่อ)", "ประเภท"];
-const STATUS_COL = "สถานะ";
 const DRAFT = "draft";
 
 export type WriteResult =
@@ -117,6 +116,8 @@ export interface TabRow { key: string; status: string; active: boolean; preview:
 export interface TabRowsResult {
   header: string[];
   keyCol: string | null;
+  /** ชื่อคอลัมน์สถานะจริงในชีต ("status" | "สถานะ") · null = แท็บนี้ไม่มี → เพิ่ม/สลับสถานะไม่ได้ */
+  statusCol: string | null;
   hasStatusCol: boolean;
   editableCols: string[];
   rows: TabRow[];
@@ -131,10 +132,10 @@ export async function listTabRows(tab: string): Promise<TabRowsResult> {
   const keyCol = tabKeyColumn(tab);
   const editableCols = EDITABLE_COLS[tab] ?? [];
   const rows = lib ? ((lib as Record<string, string[][]>)[tab] ?? []) : [];
-  if (rows.length < 1 || !keyCol) return { header: [], keyCol, hasStatusCol: false, editableCols, rows: [], suggestedKey: null };
+  if (rows.length < 1 || !keyCol) return { header: [], keyCol, statusCol: null, hasStatusCol: false, editableCols, rows: [], suggestedKey: null };
   const header = rows[0].map(cleanHeader);
   const keyIdx = header.indexOf(keyCol);
-  const statusIdx = header.indexOf(STATUS_COL);
+  const statusIdx = statusColumnIndex(header); // status/สถานะ (single source · ตรงกับ loader prod)
   const prevIdx = editableCols[0] ? header.indexOf(cleanHeader(editableCols[0])) : -1;
   const out: TabRow[] = [];
   for (let i = 1; i < rows.length; i++) {
@@ -144,7 +145,7 @@ export async function listTabRows(tab: string): Promise<TabRowsResult> {
     const preview = prevIdx >= 0 ? (rows[i][prevIdx] ?? "") : "";
     out.push({ key, status: statusRaw || "(ว่าง=live)", active: isActiveStatus(statusRaw), preview: preview.slice(0, 80) });
   }
-  return { header, keyCol, hasStatusCol: statusIdx >= 0, editableCols, rows: out, suggestedKey: suggestNextKey(tab, out.map((r) => r.key)) };
+  return { header, keyCol, statusCol: statusIdx >= 0 ? header[statusIdx] : null, hasStatusCol: statusIdx >= 0, editableCols, rows: out, suggestedKey: suggestNextKey(tab, out.map((r) => r.key)) };
 }
 
 /** เสนอ key ถัดไป (เฉพาะแท็บที่ key เป็น id มีเลขต่อท้าย: step_id/objection_id) · FAQ/Vars = คนพิมพ์เอง → null */
@@ -189,9 +190,9 @@ export async function appendRow(tab: string, cols: Record<string, string>): Prom
   if (rows.length < 1 || !keyCol) return { status: "not_found" };
   const header = rows[0].map(cleanHeader);
   const keyIdx = header.indexOf(keyCol);
-  const statusIdx = header.indexOf(STATUS_COL);
+  const statusIdx = statusColumnIndex(header); // status/สถานะ (single source)
   if (keyIdx === -1) return { status: "not_found" };
-  // 🔴 safety #1: ไม่มีคอลัมน์ "สถานะ" = ปฏิเสธ (ช่องว่าง=live → แถวใหม่จะขึ้นหน้าร้านทันที)
+  // 🔴 safety #1: ไม่มีคอลัมน์สถานะ (status/สถานะ) = ปฏิเสธ (ช่องว่าง=live → แถวใหม่จะขึ้นหน้าร้านทันที)
   if (statusIdx === -1) return { status: "no_status_col" };
 
   const key = cleanCell(cols[keyCol] ?? "");
@@ -241,7 +242,7 @@ export async function setRowStatus(tab: string, key: string, toStatus: "live" | 
   if (rows.length < 2 || !keyCol) return { status: "not_found" };
   const header = rows[0].map(cleanHeader);
   const keyIdx = header.indexOf(keyCol);
-  const statusIdx = header.indexOf(STATUS_COL);
+  const statusIdx = statusColumnIndex(header); // status/สถานะ (single source)
   if (keyIdx === -1 || statusIdx === -1) return { status: "not_found" };
   const rowIndex = rows.findIndex((r, i) => i > 0 && cleanCell(r[keyIdx] ?? "") === key);
   if (rowIndex === -1) return { status: "not_found" };
@@ -252,7 +253,7 @@ export async function setRowStatus(tab: string, key: string, toStatus: "live" | 
   await getSheets().spreadsheets.values.batchUpdate({
     spreadsheetId, requestBody: { valueInputOption: "USER_ENTERED", data: [{ range, values: [[toStatus]] }] },
   });
-  await appendTrainLog(spreadsheetId, tab, key, STATUS_COL, current, toStatus, "status-change");
+  await appendTrainLog(spreadsheetId, tab, key, header[statusIdx], current, toStatus, "status-change");
   __resetBotLibraryCache();
   return { status: "ok", range };
 }

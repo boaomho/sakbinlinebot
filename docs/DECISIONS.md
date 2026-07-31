@@ -861,6 +861,14 @@ Dashboard คุมบอทได้จริง: สวิตช์ราย�
 - **harness:** `deriveOrderStatus` **ครบทุก combination** N/M/O/P+notified (6 สถานะ + cancelled precedence) · route: TRAIN กรอง default/toggle · สถานะถูกทุกแถว · sort ใหม่สุดก่อน · counts · shipped_pending vs notified · auth 401 · **462 passed** · build เขียว · v1 fidelity เดิมเขียว
 - **ไม่ทำในเฟสนี้:** ปุ่มกระทำ (คอนเฟิร์ม/ยกเลิก) จาก UI = อนาคต (write phase) · ลิงก์แถวชีต = T2-ค
 
+### D-57.1 · bugfix: คอลัมน์สถานะ FAQ ใช้ "status" (อังกฤษ) — แท็บ 📚 ขึ้นแบนเนอร์ผิด (1 commit)
+T2-ค (D-57) hardcode `STATUS_COL="สถานะ"` แต่ **CSV_FAQ ชีตจริงใช้ `status` (อังกฤษ · คอลัมน์ H)** → `listTabRows` หา idx=-1 → แบนเนอร์ "ไม่มีคอลัมน์สถานะ" + ปิด add-row/toggle (ทั้งที่ prod กรอง draft ปกติ)
+- **contract จริง (ปนกัน):** CSV_FAQ = `status` · CSV_Step/Objections/Vars/Products/Promo = `สถานะ`
+- **loader เดิมไม่สม่ำเสมอ:** `parseFaqRows` เช็ค `status`→`สถานะ` (ทั้งคู่) · `parseStepRows`/objection เช็ค `สถานะ` อย่างเดียว
+- **fix (single source · ห้ามสองชื่อ):** +`statusColumnIndex(header)` ใน [inject.ts](../lib/agent/inject.ts) (เช็ค `status`→`สถานะ` · impl เดียว export) → refactor 3 จุด loader (Step/OBJ/FAQ) เรียกตัวเดียวกัน (Step/OBJ รับ `status` เพิ่ม · ผ่อนปรนขึ้น ไม่ regress) + `write.ts` (listTabRows/appendRow/setRowStatus) ใช้ตัวเดียวกัน
+- `listTabRows` คืน `statusCol` (ชื่อจริง) → TrainStudio ใช้ตัด column จากฟอร์ม + overlay "▶ ทดสอบ" (FAQ→`status`) + แบนเนอร์ · ไม่ hardcode `"สถานะ"` ที่ใดอีก
+- **harness:** FAQ `status` → statusCol=status/hasStatusCol=true · appendRow บังคับ draft ลง `status` · setRowStatus เขียน `status`(E) · Vars `สถานะ` ยังผ่าน · **490 passed** · build เขียว · inject filter เดิม (Step/OBJ `สถานะ`, FAQ `status`) เขียว
+
 ### D-58 · funnel_stage ใหม่ `handoff_notify` — ตอบ pattern + แจ้งแอดมิน + ไม่ปิดบอท (1 commit)
 ประตูสุขภาพทั่วไป (ไม่รุนแรง): บอทตอบข้อมูลปลอดภัยตาม pattern ชีต + push แจ้งแอดมิน 🔔 + **ไม่ตั้ง human_mode** (ต่างจาก `handoff` ที่ปิดบอทเงียบ)
 - **Q ที่เจ้าของถาม:** pre-check `คำ_handoff` = **บังคับ handoff ตรง (silent)** ก่อน Gemini ([handler.ts](../app/api/line-webhook/handler.ts)) — ไม่ route เข้าประตู · `DEFAULT_HANDOFF_KEYWORDS` มีคำ H1 ครบ (แพ้/ท้อง/เบาหวาน/กินยา…)

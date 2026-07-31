@@ -38,7 +38,7 @@ interface PreviewResult {
 }
 interface Editor { turnIdx: number; srcIdx: number }
 interface MgmtRow { key: string; status: string; active: boolean; preview: string }
-interface MgmtData { header: string[]; keyCol: string | null; hasStatusCol: boolean; editableCols: string[]; rows: MgmtRow[]; suggestedKey: string | null }
+interface MgmtData { header: string[]; keyCol: string | null; statusCol: string | null; hasStatusCol: boolean; editableCols: string[]; rows: MgmtRow[]; suggestedKey: string | null }
 
 const OVERLAY_KEY = "train-overlay-v1";
 const MGMT_TABS: { tab: string; label: string }[] = [
@@ -47,7 +47,6 @@ const MGMT_TABS: { tab: string; label: string }[] = [
   { tab: "CSV_Step", label: "ประตูขาย" },
   { tab: "CSV_Vars", label: "ตัวแปร" },
 ];
-const STATUS_COL = "สถานะ";
 
 function sessionIdFromStorage(): string {
   const KEY = "train-session-id";
@@ -301,9 +300,9 @@ export default function TrainStudio() {
 
   function openAddForm() {
     if (!mgmtData) return;
-    if (!mgmtData.hasStatusCol) { flash("🔴 แท็บนี้ไม่มีคอลัมน์ 'สถานะ' — เพิ่มแถวไม่ได้ (กันแถวใหม่ขึ้นหน้าร้านทันที)"); return; }
+    if (!mgmtData.statusCol) { flash("🔴 แท็บนี้ไม่มีคอลัมน์สถานะ (status/สถานะ) — เพิ่มแถวไม่ได้ (กันแถวใหม่ขึ้นหน้าร้านทันที)"); return; }
     const init: Record<string, string> = {};
-    for (const h of mgmtData.header) if (h && h !== STATUS_COL) init[h] = "";
+    for (const h of mgmtData.header) if (h && h !== mgmtData.statusCol) init[h] = "";
     if (mgmtData.keyCol && mgmtData.suggestedKey) init[mgmtData.keyCol] = mgmtData.suggestedKey;
     setAddForm(init); setAddLint([]);
   }
@@ -325,9 +324,11 @@ export default function TrainStudio() {
 
   function testDraftInSandbox(key: string) {
     // overlay สถานะ→live เฉพาะแถวนี้ในห้องซ้อม (prod ยังกรอง draft ทิ้ง) + pre-fill ข้อความลูกค้าที่เกี่ยว
+    const sCol = mgmtData?.statusCol; // ชื่อจริง (FAQ="status" · อื่น="สถานะ") — overlay ต้องตรงชื่อชีต
+    if (!sCol) { flash("แท็บนี้ไม่มีคอลัมน์สถานะ — ทดสอบ draft ไม่ได้"); return; }
     setOverlay((prev) => {
-      const rest = prev.filter((o) => !(o.tab === mgmtTab && o.key === key && o.column === STATUS_COL));
-      return [...rest, { tab: mgmtTab, key, column: STATUS_COL, value: "live" }];
+      const rest = prev.filter((o) => !(o.tab === mgmtTab && o.key === key && o.column === sCol));
+      return [...rest, { tab: mgmtTab, key, column: sCol, value: "live" }];
     });
     if (mgmtTab === "CSV_FAQ") setInput(key); // FAQ key = คำถาม → เติมให้เลย
     setMgmtOpen(false);
@@ -467,7 +468,7 @@ export default function TrainStudio() {
                     <button style={S.toolBtn} onClick={() => setAddForm(null)}>ยกเลิก</button>
                   </div>
                   <div style={{ fontSize: 11, color: "#888", marginBottom: 8 }}>แถวใหม่เกิดเป็น draft เสมอ — ทดสอบในห้องซ้อมก่อน แล้วค่อยกดเผยแพร่ (live)</div>
-                  {mgmtData.header.filter((h) => h && h !== STATUS_COL).map((h) => (
+                  {mgmtData.header.filter((h) => h && h !== mgmtData.statusCol).map((h) => (
                     <div key={h} style={{ marginBottom: 8 }}>
                       <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 2 }}>
                         {h}{h === mgmtData.keyCol && <span style={{ color: "#06735c" }}> (key)</span>}
@@ -481,7 +482,7 @@ export default function TrainStudio() {
                 </div>
               )}
 
-              {mgmtData && !mgmtData.hasStatusCol && <div style={S.lintWarn}>⚠︎ แท็บนี้ไม่มีคอลัมน์ &quot;สถานะ&quot; — เพิ่มแถว/สลับสถานะไม่ได้ (กันแถวใหม่ขึ้นหน้าร้านทันที)</div>}
+              {mgmtData && !mgmtData.statusCol && <div style={S.lintWarn}>⚠︎ แท็บนี้ไม่มีคอลัมน์สถานะ (status/สถานะ) — เพิ่มแถว/สลับสถานะไม่ได้ (กันแถวใหม่ขึ้นหน้าร้านทันที)</div>}
               {mgmtData && mgmtData.rows.length === 0 && !mgmtBusy && <div style={{ color: "#888" }}>ยังไม่มีแถว</div>}
               {mgmtData?.rows.map((row) => (
                 <div key={row.key} style={{ display: "flex", gap: 8, alignItems: "center", padding: "8px 0", borderBottom: "1px solid #f0f0f0" }}>

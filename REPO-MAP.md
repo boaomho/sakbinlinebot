@@ -42,6 +42,7 @@ app/train/        # T-STUDIO UI (page+TrainStudio client · +T2-ค แผง "�
 # api/write โหมด: diff·commit·add-row·status (T2-ค) · api/rows = list แถวแท็บความรู้ (read-only · header-driven form)
 app/train/dashboard/  # T2-ก/ข/ฉ · Dashboard "ร้านจริง" (DashboardView client · แท็บ ลูกค้า｜ออเดอร์ · อ่าน PROD Neon นอก sandbox) + api/dashboard/{route,customer,switch,orders}
 lib/train/dashboard.ts # T2-ก/ฉ pure: channelOf · deriveStatus(🟢🟡🔴✅⚪) · formatOrderSummary (ห้าม JSON ดิบ) · deriveOrderStatus+ORDER_STATUS_META (สถานะออเดอร์ · cancelled ก่อนเสมอ)
+# 🔴 คอลัมน์สถานะปนกัน (D-57.1): CSV_FAQ="status"(อังกฤษ) · แท็บอื่น="สถานะ"(ไทย) → resolve ผ่าน `statusColumnIndex(header)` ที่ inject.ts จุดเดียว (loader Step/OBJ/FAQ + write.ts ใช้ร่วม · ห้าม hardcode ชื่อเดียว)
 lib/train/bot-switch.ts # T2-ข · builder ข้อความ (botModeMsg/channelSwitchMsg · handler เดิม import ร่วม → คำสั่งพิมพ์เท่าเดิม) + channelStatusLine/listChannelStates + orchestrator (applyChannelSwitch/applyCustomerBotMode → reuse setChannelEnabled/setHumanMode · push กลุ่ม +(จาก Dashboard))
 # api/dashboard/switch (POST · target channel｜customer · guardTrainRequest · เขียน PROD Neon) · main route +channels[] · api/dashboard/orders (T2-ฉ · read-only ชีต · TRAIN กรอง default)
 # lib/db.ts +T2-ก reads (read-only): dashboardSummaryCounts/dashboardCustomerRows(aggregate turn·LIMIT·TRAIN ตัด)/wonOrdersSince · +T2-ฉ listNotifiedOrderIds(ANY::text[]) · lib/orders.ts orderAmountMap+listOrdersForDashboard(cache 60วิ) · lib/core/time.ts bangkokDayStart

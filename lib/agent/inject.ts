@@ -28,6 +28,19 @@ const STEP_COLS = [
   "ตัวอย่างประโยคปิดท้าย",
 ];
 
+/** 🔴 ชื่อคอลัมน์สถานะที่รองรับ — ชีตจริงปนกัน: CSV_FAQ ใช้ "status" (อังกฤษ) · แท็บอื่นใช้ "สถานะ" (ไทย)
+ *  single source: ทุกที่ (prod status filter + T2-ค UI) ต้อง resolve ผ่านตัวนี้ · ห้าม hardcode ชื่อเดียว */
+const STATUS_COLUMN_ALIASES = ["status", "สถานะ"] as const;
+
+/** index คอลัมน์สถานะใน header (map cleanHeader มาแล้ว) · -1 = ไม่มี — ใช้ร่วม prod filter (Step/FAQ/OBJ) + write.ts (T2-ค) */
+export function statusColumnIndex(header: string[]): number {
+  for (const name of STATUS_COLUMN_ALIASES) {
+    const i = header.indexOf(name);
+    if (i >= 0) return i;
+  }
+  return -1;
+}
+
 /** แถว active มั้ย — คอลัมน์ สถานะ/status (v2.0): live/เปิด = ใช้ · draft/ปิด/inactive = ทิ้ง · ว่าง = ใช้ (key-column-empty กรอง junk แล้ว)
  *  🔴 export ให้ T2-ค (ห้องซ้อมจัดการแถว) ใช้ตัดสิน live/draft ด้วย logic เดียวกับ prod เป๊ะ — ห้าม fork */
 export function isActiveStatus(raw: string | undefined): boolean {
@@ -87,7 +100,7 @@ function parseStepRows(rows: string[][]): ParsedSteps | null {
   const header = rows[0].map(cleanHeader);
   const thinkIdx = header.indexOf("คิดเอง");
   const caseIdx = header.indexOf("กรณี");
-  const statusIdx = header.indexOf("สถานะ");
+  const statusIdx = statusColumnIndex(header); // status/สถานะ (single source)
 
   const steps: StepRow[] = [];
   for (let i = 1; i < rows.length; i++) {
@@ -491,7 +504,7 @@ export function buildObjectionInjection(rows: string[][], userMessage: string, c
   const nameIdx = header.findIndex((h) => h.startsWith("ชื่อ")); // "ชื่อข้อโต้แย้ง"
   const thinkIdx = header.indexOf("คิดเอง"); // v2.0 ไม่มี → -1 → parseThinkMode("") → ปิด (verbatim ชนะ · D-40)
   const exampleIdx = header.indexOf("ตัวอย่างคำตอบ"); // "ตัวอย่างคำตอบ (บอลลูน)" — pattern verbatim
-  const statusIdx = header.indexOf("สถานะ");
+  const statusIdx = statusColumnIndex(header); // status/สถานะ (single source)
 
   interface Obj { id: string; name: string; says: string; concern: string; think: ThinkMode; pattern: string; }
   const objs: Obj[] = [];
@@ -552,7 +565,7 @@ function parseFaqRows(rows: string[][]): FaqRow[] | null {
   const cols = resolveColumns(rows[0], FAQ_COLS, "CSV_FAQ");
   if (!cols) return null;
   const header = rows[0].map(cleanHeader);
-  const statusIdx = header.indexOf("status") >= 0 ? header.indexOf("status") : header.indexOf("สถานะ"); // v2.0: status filter
+  const statusIdx = statusColumnIndex(header); // v2.0: status filter (status/สถานะ · single source)
   const faqs: FaqRow[] = [];
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i];

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { sheetsCalls } from "../harness/state";
 import { seedBotLib } from "../harness/botlib-fixture";
 import { appendRow, setRowStatus, listTabRows, suggestNextKey } from "@/lib/train/write";
+import { columnLetter } from "@/lib/sheets/columns";
 import { lintPattern } from "@/lib/train/lint";
 import { loadBotLibrary } from "@/lib/sheets/loader";
 import { getConfig } from "@/lib/config";
@@ -135,6 +136,44 @@ describe("T2-ค · listTabRows + suggestNextKey", () => {
   it("suggestNextKey: Objections id ต่อเลข · FAQ = null", () => {
     expect(suggestNextKey("CSV_Objections", ["OBJ_1", "OBJ_2"])).toBe("OBJ_3");
     expect(suggestNextKey("CSV_FAQ", ["ส่งกี่วัน"])).toBeNull();
+  });
+});
+
+// ---------- D-57 bugfix · resolve คอลัมน์สถานะ (CSV_FAQ="status" อังกฤษ · แท็บอื่น="สถานะ") ----------
+describe("D-57 bugfix · statusColumnIndex — FAQ ใช้ status (อังกฤษ) ต้องผ่าน", () => {
+  const FAQ_STATUS_H = ["คำถาม", "keywords", "action", "คำตอบ", "status"];
+  it("🔴 CSV_FAQ header 'status' → statusCol='status' + hasStatusCol=true (ไม่ขึ้นแบนเนอร์)", async () => {
+    seedBotLib();
+    sheetsCalls.botLibReturn.CSV_FAQ = [FAQ_STATUS_H, ["ส่งกี่วัน", "ส่ง", "answer", "1-2 วันค่ะ", "live"], ["โปร", "โปร", "answer", "มีค่ะ", "draft"]];
+    const out = await listTabRows("CSV_FAQ");
+    expect(out.statusCol).toBe("status");
+    expect(out.hasStatusCol).toBe(true);
+    expect(out.rows.find((r) => r.key === "ส่งกี่วัน")!.active).toBe(true);
+    expect(out.rows.find((r) => r.key === "โปร")!.active, "draft = ไม่ active").toBe(false);
+  });
+  it("🔴 appendRow FAQ (status) → บังคับ draft ลงคอลัมน์ 'status'", async () => {
+    seedBotLib();
+    sheetsCalls.botLibReturn.CSV_FAQ = [FAQ_STATUS_H, ["x", "x", "answer", "y", "live"]];
+    const res = await appendRow("CSV_FAQ", { คำถาม: "ส่งเสาร์ไหม", keywords: "เสาร์", action: "answer", คำตอบ: "ส่งค่ะ", status: "live" });
+    expect(res.status).toBe("ok");
+    const app = sheetsCalls.appends.filter((a) => a.range.startsWith("CSV_FAQ")).pop();
+    expect(app!.values[0][FAQ_STATUS_H.indexOf("status")], "บังคับ draft แม้ส่ง live").toBe("draft");
+  });
+  it("🔴 setRowStatus FAQ (status) → เขียนคอลัมน์ 'status' (E)", async () => {
+    seedBotLib();
+    sheetsCalls.botLibReturn.CSV_FAQ = [FAQ_STATUS_H, ["ส่งกี่วัน", "ส่ง", "answer", "ค่ะ", "draft"]];
+    const res = await setRowStatus("CSV_FAQ", "ส่งกี่วัน", "live");
+    expect(res.status).toBe("ok");
+    const upd = sheetsCalls.batchUpdates.pop();
+    expect(upd!.range, "status = คอลัมน์ที่ 5 (E)").toContain(`!${columnLetter(4)}`);
+    expect(upd!.values[0][0]).toBe("live");
+  });
+  it("แท็บอื่น (Vars) header 'สถานะ' → ยังผ่าน (ไทย)", async () => {
+    seedBotLib();
+    sheetsCalls.botLibReturn.CSV_Vars = [["ตัวแปร", "ค่า", "หมายเหตุ", "สถานะ"], ["{a}", "1", "", "live"]];
+    const out = await listTabRows("CSV_Vars");
+    expect(out.statusCol).toBe("สถานะ");
+    expect(out.hasStatusCol).toBe(true);
   });
 });
 
