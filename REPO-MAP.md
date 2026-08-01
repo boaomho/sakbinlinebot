@@ -129,6 +129,7 @@ scripts/sheet-lint.mjs  D-45 · lint keyword ชีตจริง (คำโด
 | `DATABASE_URL_TRAIN` | db.ts getSql() — Neon branch `train` (state ลูกค้าจำลอง · ใน sandbox เท่านั้น) |
 | `META_APP_SECRET` · `META_VERIFY_TOKEN` · `META_APP_ID`(optional) | **`lib/channel/pages.ts resolveAppContext` เท่านั้น** (M-2 · verify webhook + echo filter) |
 | `META_PAGE_ID` · `META_PAGE_ACCESS_TOKEN` | **`lib/channel/pages.ts resolvePageContext` เท่านั้น** (M-2 · 🔴 ห้ามอ่าน META_* นอก pages.ts) |
+| `SHEET_SCHEMA` | **`lib/schema-mode.ts sheetSchema()` เท่านั้น** (D-61 · `v2`(default)/`v3` · env-only ถาวร — สลับ = deliberate act ใน Vercel · v3 = สมองใหม่ D-61.A) |
 > ⚠️ `SHEET_STEP/FAQ/CONFIG/FOLLOW_URL` **โค้ดไม่อ่านแล้ว** (Step 1 ย้ายไป BOTLIB) — ลบได้ (Phase C ยังไม่ทำ)
 > 🔴 **ทะเบียนรูปแบบ customer id (user_id):** `U`+32hex = **LINE** (raw) · `fb:<pageId>:<psid>` = **Messenger** (M-2) · `TRAIN:<session>` = **T-STUDIO sandbox** · โค้ดที่ push/แยก channel ดู prefix (เช่น cron D-50 ข้าม `fb:`)
 
@@ -148,6 +149,7 @@ scripts/sheet-lint.mjs  D-45 · lint keyword ชีตจริง (คำโด
 **objections (D-27):** `จำนวนข้อโต้แย้งที่ยัดเข้า prompt`(2) · ~~`จำนวนตัวอย่างที่ยัดเข้า prompt`~~ (ลบ v2.0 D-41 · เลิก Examples)
 **order_id (D-29):** `รหัสนำหน้าออเดอร์`(default `SKB`) · `เลขออเดอร์_รีเซ็ตทุกวัน`(ลำดับ col A)
 **handoff_after_intake (D-34/D-35):** `เพดานเทิร์นก่อนส่งแอดมิน`(default 3 · คุยมากสุด) · `เทิร์นขั้นต่ำก่อนส่งแอดมิน`(default 1 · ถามก่อน · เพิกเฉย AI flag จนเทิร์น min+1) · 🔴 คำ trigger ห้ามซ้ำ `คำ_handoff` (keyword pre-check ปิดก่อนเข้า intake)
+**v3 (D-61.A · ใช้เมื่อ SHEET_SCHEMA=v3 เท่านั้น):** `คำ_ธงสุขภาพ`(ชื่อเดียวไม่มี alias · ไม่มี key=default ตาข่ายในโค้ด `DEFAULT_HEALTH_FLAG_KEYWORDS` · ว่าง=ปิด) · `คำรับรอง_ต้องห้าม`(list assurance guard · default ในโค้ด) · `ข้อความ_แจ้งแอดมิน_notify`(เนื้อ 🔔 ธงสุขภาพ) — โค้ดใหม่: `lib/schema-mode.ts` · `prompt/system-v3.ts` · `lib/guards/assurance.ts` · handler dispatch v2/v3 (notifyPrecheckV2/matchHealthFlagV3 · composeReplyV2/V3 · applyAssuranceGuardV3 · pushNotifyDoorV2/pushHealthNotifyV3) · marker `__HEALTH_NOTIFY__` ใน delivered_steps
 **handoff_notify (D-58/D-60):** `คำ_notify`(alias→H1) + `คำ_notify_<step_id>`(per-door D-60 · `parseNotifyDoors`→`config.notifyDoors`) — pre-check ชั้นสอง (หลัง `คำ_handoff`) → handler loop ทุกประตู · match บังคับประตูนั้น (funnel=`handoff_notify`): ตอบ pattern verbatim + push 🔔 (dedup delivered_steps ต่อประตู) + **ไม่ปิดบอท** · fail-safe ต่อประตู: funnel≠handoff_notify/pattern ว่าง → `runHandoffFlow` ปิดเงียบ+log · 🔴 ไม่แตะ DEFAULT_HANDOFF_KEYWORDS · funnel enum: region 7 + handoff 3
 **สวิตช์:** `เปิด_ติดแท็ก` · `เปิด_ส่งต่อแอดมิน` · `เปิด_ระบบออเดอร์` · `เปิด_ระบบติดตาม` · `เปิด_การ์ด_flex` · `เปิด_จังหวะหน่วงเหมือนคน`
 > ค่าสวิตช์ที่รับ: `เปิด/true/on/1/ใช่/yes` = true · `ปิด/false/off/0/ไม่/no/ว่าง` = false

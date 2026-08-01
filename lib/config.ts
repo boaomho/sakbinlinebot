@@ -1,4 +1,5 @@
 import { loadBotLibrary } from "./sheets/loader";
+import { DEFAULT_ASSURANCE_PHRASES } from "./guards/assurance";
 // หมายเหตุ: cleanCell/stripKeyAnnotation ยังเป็น copy ในไฟล์นี้ (regex อักขระล่องหนแก้ยาก)
 // ตัวกลางอยู่ lib/sheets/clean.ts แล้ว — ตรงกัน 100% · ถ้าแก้ regex ต้องแก้ทั้ง 2 ที่
 
@@ -42,8 +43,14 @@ export interface AppConfig {
   handoffKeywords: string[];
   /** D-58: คำ_notify — pre-check ชั้นสอง (alias → ประตู H1) · default [] = ปิดฟีเจอร์ */
   notifyKeywords: string[];
-  /** D-60: คำ_notify_<step_id> — mapping คำ→ประตู notify รายประตู (เช่น คำ_notify_H5 → H5) · alias คำ_notify → H1 (handler รวมให้) */
+  /** D-60: คำ_notify_<step_id> — mapping คำ→ประตู notify รายประตู (เช่น คำ_notify_H5 → H5) · alias คำ_notify → H1 (handler รวมให้) · ใช้เฉพาะโหมด v2 */
   notifyDoors: { door: string; keywords: string[] }[];
+  /** D-61.A (v3): คำ_ธงสุขภาพ — match แล้ว: hint เข้า prompt + 🔔 dedup ต่อเคส + arm assurance guard · ไม่ force stage · ชื่อเดียวไม่มี alias (กติกา B1) · default ในโค้ด = ตาข่ายรวมคำสุขภาพเดิม (deploy v3 ที่ยังไม่ตั้ง key ไม่เสียตาข่าย) */
+  healthFlagKeywords: string[];
+  /** D-61.A (v3): คำรับรอง_ต้องห้าม — list ของ assurance guard · default ในโค้ด */
+  assuranceBannedPhrases: string[];
+  /** D-61.A (v3): ข้อความ_แจ้งแอดมิน_notify — เนื้อ 🔔 แจ้งกลุ่มตอนติดธงสุขภาพ */
+  notifyAdminHealthTemplate: string;
   /** คืนสิทธิ์บอท_หลังแชทเงียบ (นาที) — ถ้าลูกค้าเงียบเกินเวลานี้ในโหมดแอดมิน บอทคืนมาดูแลเอง */
   adminSilenceReturnMinutes: number;
   /** ประโยคเปลี่ยนมือ_บอทรับต่อ — ข้อความบอกลูกค้าตอนบอทรับช่วงต่อจากแอดมิน */
@@ -124,6 +131,18 @@ function findKeyValueCols(rows: string[][]): { keyCol: number; valCol: number; h
     if (keyCol !== -1 && valCol !== -1) return { keyCol, valCol, headerRowIndex: i };
   }
   return { keyCol: 1, valCol: 2, headerRowIndex: 0 };
+}
+
+/** D-61.A: ตาข่ายธงสุขภาพ default (v3) — ชีตไม่ตั้ง `คำ_ธงสุขภาพ` = ใช้ชุดนี้ (รวมคำจาก คำ_notify เดิม + spec A6) · ตั้ง key ว่าง = ปิดโดยเจตนา */
+export const DEFAULT_HEALTH_FLAG_KEYWORDS = [
+  "แพ้", "ภูมิแพ้", "แพ้กุ้ง", "แพ้อาหารทะเล", "แพ้ปลา", "กลูเตน",
+  "ท้อง", "ตั้งครรภ์", "ให้นม", "เบาหวาน", "ความดัน", "โรคไต", "ผู้ป่วย", "กินยา", "ทานยา",
+];
+
+/** แปลงค่า list คั่น , — undefined = ไม่มี key (คืน undefined ให้ default ทำงาน) · "" = key ว่าง (ปิดโดยเจตนา → []) */
+function splitList(v: string | undefined): string[] | undefined {
+  if (v === undefined) return undefined;
+  return v.split(",").map((s) => cleanCell(s)).filter(Boolean);
 }
 
 let cachedConfig: AppConfig | null = null;
@@ -250,6 +269,10 @@ export async function getConfig(): Promise<AppConfig> {
       .map((s) => cleanCell(s))
       .filter(Boolean),
     notifyDoors: parseNotifyDoors(raw), // D-60
+    // D-61.A (v3) — ชื่อเดียว ไม่มี alias (กติกา B1) · default = ตาข่ายคำสุขภาพ (DEFAULT_HEALTH_FLAG_KEYWORDS)
+    healthFlagKeywords: splitList(raw.get("คำ_ธงสุขภาพ")) ?? [...DEFAULT_HEALTH_FLAG_KEYWORDS],
+    assuranceBannedPhrases: splitList(raw.get("คำรับรอง_ต้องห้าม")) ?? [...DEFAULT_ASSURANCE_PHRASES],
+    notifyAdminHealthTemplate: strOf("ถามเรื่องสุขภาพ/แพ้อาหาร — บอทให้ข้อมูลตามข้อเท็จจริงแล้ว ยังคุยต่อ (ไม่ได้ปิดบอท) รบกวนช่วยดูให้ด้วยค่ะ", "ข้อความ_แจ้งแอดมิน_notify"),
     adminSilenceReturnMinutes: numOf(45, "คืนสิทธิ์บอท_หลังแชทเงียบ", "คืนสิทธิ์บอท_หลังแชทเงียบ_นาที"),
     botResumeMessage: strOf("ปลาทูมาดูแลต่อเองนะคะ", "ประโยคเปลี่ยนมือ_บอทรับต่อ"),
     testCommandsEnabled: boolOf(true, "เปิด_คำสั่งเทสต์", "เปิด_คำสั่งเทส"),

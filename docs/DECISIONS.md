@@ -861,6 +861,18 @@ Dashboard คุมบอทได้จริง: สวิตช์ราย�
 - **harness:** `deriveOrderStatus` **ครบทุก combination** N/M/O/P+notified (6 สถานะ + cancelled precedence) · route: TRAIN กรอง default/toggle · สถานะถูกทุกแถว · sort ใหม่สุดก่อน · counts · shipped_pending vs notified · auth 401 · **462 passed** · build เขียว · v1 fidelity เดิมเขียว
 - **ไม่ทำในเฟสนี้:** ปุ่มกระทำ (คอนเฟิร์ม/ยกเลิก) จาก UI = อนาคต (write phase) · ลิงก์แถวชีต = T2-ค
 
+### D-61.A · v3.0 "บอทนักขาย CX" เฟส A — สมองใหม่ (1 commit) — contract เต็ม: [D61-SPEC.md](../D61-SPEC.md)
+รื้อใหญ่ที่สุดของโปรเจกต์ เฟสแรก: prompt ขายเขียนใหม่ + โหมดเรียบเรียงสด + assurance guard + แปลง คำ_notify เป็นธงสุขภาพ
+- 🔴 **สวิตช์ `SHEET_SCHEMA` (env-only ถาวร · เจ้าของเคาะ #4) — default `v2` = โค้ดเดินเส้นเดิมทุกบรรทัด** · v3 ยังไม่มีทางถูกใช้จริงจนเฟส C cutover · full suite ทั้ง repo รันใน v2 = บทพิสูจน์ v2-frozen ในตัว
+- **pattern branch (เจ้าของสั่ง):** เช็ค `isSchemaV3()` ครั้งเดียวต้นทาง processMessage → dispatch เข้า function แยกชัด 4 จุด: `notifyPrecheckV2`/`matchHealthFlagV3` · `composeReplyV2`(ก้อน D-42 เดิมทั้งดุ้น)/`composeReplyV3` · `applyAssuranceGuardV3` · `pushNotifyDoorV2`/`pushHealthNotifyV3` — เตรียมลบ v2 ง่ายหลังเกษียณ
+- **A1 เรียบเรียงสด (v3):** reply AI ส่งตรง (verbatim/precedence D-42 ไม่วิ่ง) · เหลือ override: handoff จริง + รูป-fallback + degraded · `delivered_steps` → hint "อย่าทวนซ้ำ" + dedup 🔔 เท่านั้น (mark ทุกเทิร์นที่ส่งจริง)
+- **A2-A4 prompt ใหม่:** `prompt/system-v3.ts` ทั้งไฟล์ (Identity ไม่แกล้งเป็นคน · หมวก 3 ใบ+choice close ban · 3C · ตอบแทรก-พากลับ · 4 ประตู จ่ายก่อนที่อยู่ · สุขภาพ=สนทนาปกติ+ห้ามรับรอง · **few-shot 3 ฉากคำต่อคำ**) · JSON contract เดิมเป๊ะ (pipeline อ่านต่อได้ทุก field) · v2 `prompt/system.ts` ไม่แตะ
+- **A5 assurance guard:** `lib/guards/assurance.ts` (pure) — ธงสุขภาพ+คำรับรอง (`คำรับรอง_ต้องห้าม` · รูปคำถาม "ทานได้ไหม" ไม่นับ) → block → **regenerate 1 ครั้ง** (sales call ที่ 2 + correction · timeout แยก 8s) → ยังหลุด/ล้ม = กลับคำตอบแรก**ตัดรายบรรทัด** → บอลลูนว่าง=ทิ้ง → ว่างหมด=fallback สุภาพ (**ห้ามเงียบทุกกรณี** เจ้าของเคาะ #2) · วางหลัง price guard ก่อน var-guard
+- **A6 ธงสุขภาพ:** `คำ_ธงสุขภาพ` (ชื่อเดียว · default ในโค้ด=ตาข่ายรวมคำสุขภาพเดิม — deploy v3 ไม่ตั้ง key ไม่เสียตาข่าย · key ว่าง=ปิดโดยเจตนา) → hint เข้า state + 🔔 (`ข้อความ_แจ้งแอดมิน_notify`) dedup ต่อเคสผ่าน marker `__HEALTH_NOTIFY__` ใน delivered_steps (เจ้าของเคาะ #3 · ล้างพร้อมธง=ต่อเคสจริง) + arm guard · **ไม่ force stage ไม่ปิดบอท**
+- **คำ_handoff:** `DEFAULT_HANDOFF_KEYWORDS_V3` (เรียกคนเท่านั้น) เลือกผ่าน fallback param ที่ call site — **ค่า v2 เดิมไม่ขยับ** (เจ้าของเคาะ #1)
+- **จุดที่ v3 จำเป็นต้องต่างเพิ่ม (รายงานไว้):** payment pre-check "ข้าม AI ทั้งเทิร์น" (D-47 ชิ้น 1) = v2 เท่านั้น — v3 ต้องให้ AI เขียน reply เสมอ (ไม่มี verbatim มาเติม) · **lock payment_method ยังคุมทั้งสองโหมด** · บันได extraction/degraded เดิมยังรับเมื่อ blocked
+- **harness:** `v3-brain.test.ts` (SHEET_SCHEMA=v3 เฉพาะไฟล์ · afterAll คืน) — assurance pure (จับ/คำถามไม่นับ/ตัด/ว่าง) · prompt โครง+few-shot · เรียบเรียงสด pattern ไม่ทับ · FAQ ไม่ force · handoff จริงชนะ · DEFAULT_V3 (แพ้→ไม่ปิด · ขอแอดมิน→ปิด) · ธง (🔔 ครั้งเดียว+marker+stage ไม่ถูก force) · guard (regenerate สะอาด/ตัดบรรทัด/fallback/ไม่ติดธงไม่ยุ่ง) · **v2 ทั้ง suite เขียวโดยไม่แตะ assertion ใด**
+
 ### D-60.2 · bugfix กติกา 11 — ผู้ช่วยเทรนไม่เข้า flow สัมภาษณ์ + greeting "ผม" (1 commit)
 **อาการจริง:** สั่ง "เพิ่ม Step H5 handoff_notify เรื่องสุขภาพ" (งานใหม่ ข้อมูลไม่ครบ) → ออก proposal เต็มใบทันที ไม่ถามกลับ · greeting UI ใช้ "ผม"
 - **วินิจฉัย (ก):** prompt บน deploy = ล่าสุด (มี 11/12/persona ครบ) · "ผม" = **hardcode ใน UI 2 จุด** (TrainStudio greeting + ข้อความ error) คนละที่กับ prompt

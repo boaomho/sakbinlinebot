@@ -1,5 +1,6 @@
 import type { AppConfig } from "@/lib/config";
 import { DEFAULT_HANDOFF_KEYWORDS } from "@/lib/handoff";
+import { DEFAULT_ASSURANCE_PHRASES } from "@/lib/guards/assurance";
 
 export const STEP_CSV = `ประตู,เป้าหมาย,หลักการ
 1,ทักทาย+จับความสนใจ,ถามว่าสนใจตัวไหน
@@ -50,6 +51,9 @@ export function testConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     handoffKeywords: [...DEFAULT_HANDOFF_KEYWORDS],
     notifyKeywords: [], // D-58: default ปิด (เทส notify override เอง)
     notifyDoors: [], // D-60: per-door mapping (เทส override เอง)
+    healthFlagKeywords: [], // D-61.A (v3): default ปิดในเทส — เทส v3 override เอง (โค้ดจริง default = DEFAULT_HEALTH_FLAG_KEYWORDS)
+    assuranceBannedPhrases: [...DEFAULT_ASSURANCE_PHRASES],
+    notifyAdminHealthTemplate: "ถามเรื่องสุขภาพ/แพ้อาหาร — บอทให้ข้อมูลตามข้อเท็จจริงแล้ว ยังคุยต่อ (ไม่ได้ปิดบอท) รบกวนช่วยดูให้ด้วยค่ะ",
     adminSilenceReturnMinutes: 45,
     botResumeMessage: "ปลาทูมาดูแลต่อเองนะคะ",
     testCommandsEnabled: true,

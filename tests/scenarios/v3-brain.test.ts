@@ -1,0 +1,201 @@
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { sendText } from "../harness/replay";
+import { scriptGemini, turn, adminPushes, lineCalls, harnessOverrides } from "../harness/state";
+import { seedBotLib } from "../harness/botlib-fixture";
+import { readCustomer } from "../harness/db";
+import { buildSalesSystemV3 } from "@/prompt/system-v3";
+import { findAssuranceHits, cutAssuranceLines, DEFAULT_ASSURANCE_PHRASES } from "@/lib/guards/assurance";
+import { sheetSchema } from "@/lib/schema-mode";
+
+/**
+ * D-61.A · สมองใหม่ v3 (SHEET_SCHEMA=v3 เฉพาะไฟล์นี้ — afterAll คืนค่า · ชุดเทสที่เหลือทั้ง repo รัน v2 = พิสูจน์ v2 ไม่เปลี่ยน)
+ * ครอบ: เรียบเรียงสด (pattern ไม่ทับ) · FAQ/OBJ ไม่ force · handoff จริงชนะ · ธงสุขภาพ (hint+🔔 dedup+ไม่ปิดบอท) ·
+ * assurance guard (block→regenerate→cut→fallback · ห้ามเงียบ) · DEFAULT_HANDOFF_KEYWORDS_V3 (คำสุขภาพไม่ปิดบอท)
+ */
+const U = "Uv3braincustomer0000000000000001";
+const FOOTER = "บอทปิดการทำงานกับลูกค้ารายนี้แล้ว";
+
+const STEP_H = ["step_id", "funnel_stage", "ชื่อประตู", "เข้าเมื่อ", "ไปประตูถัดไปเมื่อ", "ต้องเก็บข้อมูล", "ตัวอย่างคำตอบ", "ตัวอย่างประโยคปิดท้าย"];
+function row(step_id: string, funnel: string, o: Partial<Record<string, string>> = {}): string[] {
+  return STEP_H.map((h) => (h === "step_id" ? step_id : h === "funnel_stage" ? funnel : o[h] ?? ""));
+}
+function v3Sheet(): string[][] {
+  return [
+    STEP_H,
+    row("S1", "lead", { ตัวอย่างคำตอบ: "สวัสดีค่ะ (PATTERN-S1)" }),
+    row("S2", "qualified", { ตัวอย่างคำตอบ: "รายละเอียดสินค้า (PATTERN-S2)", ตัวอย่างประโยคปิดท้าย: "สนใจโปรไหนดีคะ (PATTERN-CLOSE)" }),
+    row("HX", "handoff", { ตัวอย่างคำตอบ: "ขอตามแอดมินนะคะ" }),
+  ];
+}
+function seedV3(): void {
+  seedBotLib({ stepRows: v3Sheet() });
+}
+function bubbles(): string[] {
+  return lineCalls.replies.flatMap((r) => r.messages).map((m) => (m.type === "text" ? (m.text ?? "") : "[IMG]"));
+}
+function healthPushCount(): number {
+  return adminPushes().filter((p) => p.messages.some((m) => m.type === "text" && (m as { text: string }).text.includes("🔔"))).length;
+}
+/** config v3 มาตรฐานของเทส: คำ_handoff = เรียกคนเท่านั้น (ตรงชีตจริงตาม spec) + ธงสุขภาพ */
+function cfgV3(over: Record<string, unknown> = {}): void {
+  harnessOverrides.config = { handoffKeywords: ["ขอแอดมิน", "คุยกับคน", "ฟ้อง"], healthFlagKeywords: ["แพ้", "เบาหวาน"], ...over };
+}
+
+beforeAll(() => {
+  process.env.SHEET_SCHEMA = "v3";
+  expect(sheetSchema()).toBe("v3");
+});
+afterAll(() => {
+  delete process.env.SHEET_SCHEMA; // 🔴 คืน v2 ให้ไฟล์เทสอื่นทั้ง repo (v2-frozen sentinel)
+});
+beforeEach(() => seedV3());
+
+// ---------- unit · assurance guard (pure) ----------
+describe("D-61.A · assurance guard (pure)", () => {
+  it("จับคำรับรอง · รูปคำถามไม่นับ (ทานได้ไหม = คำถาม ไม่ใช่รับรอง)", () => {
+    expect(findAssuranceHits("ทานได้เลยค่ะ ไม่ต้องห่วง")).toContain("ทานได้");
+    expect(findAssuranceHits("ลูกค้าถามว่าทานได้ไหมใช่มั้ยคะ")).toHaveLength(0);
+    expect(findAssuranceHits("สินค้ามีส่วนผสมปลาค่ะ แนะนำปรึกษาแพทย์ก่อนนะคะ")).toHaveLength(0);
+  });
+  it("ตัดรายบรรทัด · บอลลูนว่างถูกทิ้ง · ทั้งหมดว่าง = ''", () => {
+    const r = cutAssuranceLines("มีปลาเป็นส่วนผสมค่ะ\nทานได้เลยค่ะ[[เว้น]]สอบถามเพิ่มได้นะคะ");
+    expect(r.text).toContain("มีปลาเป็นส่วนผสมค่ะ");
+    expect(r.text).not.toContain("ทานได้");
+    expect(r.cutLines).toBe(1);
+    const empty = cutAssuranceLines("ทานได้ค่ะ[[เว้น]]ปลอดภัยแน่นอนค่ะ");
+    expect(empty.text).toBe("");
+    expect(empty.droppedBubbles).toBe(2);
+    expect(DEFAULT_ASSURANCE_PHRASES.length).toBeGreaterThan(3);
+  });
+});
+
+// ---------- unit · โครง prompt v3 ----------
+describe("D-61.A · buildSalesSystemV3 (โครง + few-shot คำต่อคำ)", () => {
+  const s = buildSalesSystemV3({ botName: "ปลาทู", shopName: "สากบิน", personaGender: "หญิง", useEmoji: false });
+  it("มีครบ: identity/หมวก 3 ใบ/3C/ตอบแทรก-พากลับ/4 ประตู/สุขภาพ/JSON contract", () => {
+    expect(s).toContain("เขียนข้อความถึงลูกค้าเองทุกเทิร์น");
+    expect(s).toContain("หมวกนักขาย 3 ใบ");
+    expect(s).toContain("choice close");
+    expect(s).toContain("รับมั้ยคะ"); // ban list
+    expect(s).toContain("say no but never say no");
+    expect(s).toContain("3C");
+    expect(s).toContain("ตอบแทรก-แล้วพากลับ");
+    expect(s).toContain("ชำระเงินมาก่อนที่อยู่");
+    expect(s).toContain("ห้ามพูดประโยครับรองแทนลูกค้า");
+    expect(s).toContain("objection_detected"); // JSON contract เดิม
+    expect(s).toContain("ค่ะ/นะคะ");
+  });
+  it("few-shot ภาคผนวก ก คำต่อคำ (ฉาก 1-3)", () => {
+    expect(s).toContain("ของเราเน้นเนื้อปลาทูแน่นๆ เครื่องจัดจ้าน");
+    expect(s).toContain("ที่อยู่จัดส่งถูกต้องนะคะ");
+    expect(s).toContain("ลูกค้าสะดวกโอนเลยมั้ยคะ ทีมแอดมินกำลังแพคของเตรียมส่งพอดีเลยค่ะ");
+    expect(s).toContain("รับน้ำพริกปลาทู 1 ถ้วยตามที่แจ้งมา หรือรับเป็นโปรโมชั่น 3 ถ้วยดีคะ");
+  });
+});
+
+// ---------- pipeline v3 (scripted) ----------
+describe("D-61.A · เรียบเรียงสด — pattern ชีตไม่ทับ reply ของ AI", () => {
+  it("🔴 reply AI ส่งตรงถึงลูกค้า (ไม่ใช่ PATTERN ของ step)", async () => {
+    cfgV3();
+    scriptGemini([turn({ reply: "คำตอบเรียบเรียงสดค่ะ[[เว้น]]รับเป็นโปรไหนดีคะ", stage: "S2" })]);
+    await sendText(U, "สนใจน้ำพริกค่ะ");
+    const t = bubbles().join(" | ");
+    expect(t).toContain("คำตอบเรียบเรียงสดค่ะ");
+    expect(t, "pattern ชีตต้องไม่ทับ").not.toContain("PATTERN-S2");
+    expect(t).not.toContain("PATTERN-CLOSE");
+  });
+
+  it("🔴 FAQ keyword match ก็ไม่ force answer (AI ประกอบเอง)", async () => {
+    cfgV3();
+    scriptGemini([turn({ reply: "ส่งประมาณ 1-2 วันค่ะ มีอะไรให้ช่วยเพิ่มไหมคะ", stage: "S2" })]);
+    await sendText(U, "ส่งกี่วันคะ"); // keyword "ส่งกี่วัน" ใน seedBotLib FAQ
+    const t = bubbles().join(" ");
+    expect(t).toContain("ส่งประมาณ 1-2 วันค่ะ");
+    expect(t, "คำตอบ FAQ ดิบต้องไม่ถูก force").not.toContain("1-2 วันค่ะ มีอะไรให้ช่วยเพิ่มไหมคะ 1-2 วันค่ะ");
+  });
+
+  it("handoff จริง (AI flag) ยังชนะทุกอย่าง — footer + ปิดบอท", async () => {
+    cfgV3();
+    scriptGemini([turn({ reply: "ขอส่งต่อแอดมินนะคะ", stage: "HX", handoff: true, handoffReason: "ลูกค้าโกรธ" })]);
+    await sendText(U, "จะร้องเรียนพวกคุณ");
+    expect(JSON.stringify(adminPushes())).toContain(FOOTER);
+    expect((await readCustomer(U))?.human_mode).toBe(true);
+  });
+
+  it("🔴 v3 DEFAULT_HANDOFF (fallback): คำสุขภาพไม่ปิดบอท · 'ขอแอดมิน' ยังปิด", async () => {
+    cfgV3({ handoffKeywords: [], healthFlagKeywords: [] }); // fallback = DEFAULT_HANDOFF_KEYWORDS_V3
+    scriptGemini([turn({ reply: "มีส่วนผสมปลาค่ะ", stage: "S2" })]);
+    await sendText(U, "แพ้กุ้งหรือเปล่าคะ");
+    expect((await readCustomer(U))?.human_mode, "คำสุขภาพไม่โดนปิดเงียบใน v3").toBe(false);
+    await sendText(U, "ขอแอดมินหน่อยค่ะ");
+    expect((await readCustomer(U))?.human_mode, "เจตนาเรียกคนยังปิดบอท").toBe(true);
+  });
+});
+
+describe("D-61.A · ธงสุขภาพ (A6) — hint + 🔔 dedup ต่อเคส + ไม่ force + ไม่ปิดบอท", () => {
+  it("🔴 flag → บอทตอบสด + 🔔 ครั้งเดียว + human_mode=false + stage จาก AI (ไม่ถูก force)", async () => {
+    cfgV3();
+    scriptGemini([
+      turn({ reply: "สินค้ามีส่วนผสมปลาและกะปิค่ะ แนะนำปรึกษาแพทย์ก่อนนะคะ ลูกค้าแพ้เฉพาะกุ้ง หรืออาหารทะเลอื่นด้วยคะ", stage: "S2" }),
+      turn({ reply: "มีกะปิซึ่งทำจากกุ้งค่ะ ขอให้ข้อมูลไลน์ผลิตให้แอดมินเช็คเพิ่มนะคะ", stage: "S2" }),
+    ]);
+    await sendText(U, "แพ้กุ้งค่ะ กินได้ไหม");
+    expect(bubbles().join(" ")).toContain("แนะนำปรึกษาแพทย์");
+    expect((await readCustomer(U))?.human_mode).toBe(false);
+    expect(healthPushCount(), "🔔 ครั้งแรก").toBe(1);
+    expect((await readCustomer(U))?.stage, "stage จาก AI ไม่ใช่ force").toBe("S2");
+    // เทิร์นสอง — ธงติดอีกแต่ marker แล้ว → ไม่ push ซ้ำ
+    await sendText(U, "แล้วเบาหวานล่ะคะ");
+    expect(healthPushCount(), "dedup ต่อเคส").toBe(1);
+    const c = await readCustomer(U);
+    expect((c?.delivered_steps as string[]) ?? []).toContain("__HEALTH_NOTIFY__");
+  });
+});
+
+describe("D-61.A · assurance guard ใน pipeline (block→regenerate→cut→fallback)", () => {
+  it("🔴 คำตอบแรกหลุด 'ทานได้' → regenerate สะอาด → ลูกค้าเห็นตัว regenerate", async () => {
+    cfgV3();
+    scriptGemini([
+      turn({ reply: "ทานได้เลยค่ะ ไม่ต้องกังวลนะคะ", stage: "S2" }), // call 1 หลุด
+      turn({ reply: "สินค้ามีส่วนผสมปลาค่ะ แนะนำปรึกษาแพทย์ก่อนตัดสินใจนะคะ", stage: "S2" }), // regenerate สะอาด
+    ]);
+    await sendText(U, "แพ้ปลาทานได้ไหมคะ");
+    const t = bubbles().join(" ");
+    expect(t).toContain("แนะนำปรึกษาแพทย์");
+    expect(t, "คำรับรองต้องไม่ถึงลูกค้า").not.toContain("ทานได้เลยค่ะ");
+    expect((await readCustomer(U))?.human_mode, "ไม่ล้มเทิร์น ไม่ปิดบอท").toBe(false);
+  });
+
+  it("regenerate ยังหลุด → กลับคำตอบแรก ตัดบรรทัดผิด (เจ้าของเคาะ #2)", async () => {
+    cfgV3();
+    scriptGemini([
+      turn({ reply: "มีปลาเป็นส่วนผสมหลักค่ะ\nทานได้เลยค่ะ[[เว้น]]สอบถามเพิ่มได้เลยนะคะ", stage: "S2" }),
+      turn({ reply: "ปลอดภัยแน่นอนค่ะ", stage: "S2" }), // regenerate ก็หลุด
+    ]);
+    await sendText(U, "เป็นเบาหวานทานได้ไหม");
+    const t = bubbles().join(" | ");
+    expect(t).toContain("มีปลาเป็นส่วนผสมหลักค่ะ");
+    expect(t).toContain("สอบถามเพิ่มได้เลยนะคะ");
+    expect(t).not.toContain("ทานได้เลยค่ะ");
+    expect(t).not.toContain("ปลอดภัย");
+  });
+
+  it("🔴 ตัดแล้วว่างหมด → fallback สุภาพ (ห้ามบอทเงียบทุกกรณี)", async () => {
+    cfgV3();
+    scriptGemini([
+      turn({ reply: "ทานได้เลยค่ะ", stage: "S2" }),
+      turn({ reply: "ไม่เป็นไรค่ะ หายห่วงได้เลย", stage: "S2" }),
+    ]);
+    await sendText(U, "แพ้อาหารทะเลรุนแรง ทานได้ไหม");
+    const t = bubbles().join(" ");
+    expect(t, "ต้องมีข้อความถึงลูกค้าเสมอ").toContain("แอดมินช่วยดูแลต่อ");
+    expect(t).not.toContain("ทานได้เลยค่ะ");
+  });
+
+  it("ไม่ติดธง → guard ไม่ทำงานแม้มีคำ 'ทานได้' (ใช้ได้ในบริบทปกติ เช่น วิธีทาน)", async () => {
+    cfgV3();
+    scriptGemini([turn({ reply: "เปิดฝาเติมน้ำอุ่นก็ทานได้เลยค่ะ สะดวกมากค่ะ", stage: "S2" })]);
+    await sendText(U, "กินยังไงคะ");
+    expect(bubbles().join(" ")).toContain("ทานได้เลยค่ะ");
+  });
+});

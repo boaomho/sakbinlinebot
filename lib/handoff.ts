@@ -8,6 +8,12 @@ export interface HandoffPreCheckResult {
  * 🔴 D-44: หดเหลือ "คำที่ชัดว่าต้องคนทันที" ตรงชีต v2.0 **คำต่อคำ** — H1 สุขภาพ/แพ้ + ขอคุยกับคน + ฟ้อง
  *    ตัด ร้องเรียน/ของเสีย/ขายส่ง/แฟรนไชส์/สื่อ/PR ออก → เข้าประตู H2-H4 (handoff_after_intake · บอทถามก่อนส่งคน)
  */
+/**
+ * D-61.A (v3): DEFAULT เฉพาะ "เจตนาเรียกคน" — ตัดคำสุขภาพออก (v3 มีธงสุขภาพ + assurance guard ฝั่ง output แทน)
+ * 🔴 ใช้เฉพาะโหมด v3 (เลือกที่ call site ผ่าน fallback param) · DEFAULT_HANDOFF_KEYWORDS เดิม (v2) ห้ามขยับ — เจ้าของเคาะ
+ */
+export const DEFAULT_HANDOFF_KEYWORDS_V3 = ["ขอแอดมิน", "คุยกับคน", "คุยกับแอดมิน", "เจ้าของ", "ฟ้อง"];
+
 export const DEFAULT_HANDOFF_KEYWORDS = [
   "ขอแอดมิน",
   "คุยกับคน",
@@ -47,8 +53,12 @@ function escapeRegex(s: string): string {
  *    เดิม substring → "PR" ชน "promotion"/"express"/"price" → คำถามกลางกรวยโดน handoff บอทเงียบ เสียยอด
  *    คำไทยไม่มีช่องว่างระหว่างคำ (\b ใช้ไม่ได้) → คงใช้ substring ต่อไป
  */
-export function checkHandoffKeywords(text: string, configuredKeywords: string[]): HandoffPreCheckResult {
-  const keywords = configuredKeywords.length > 0 ? configuredKeywords : DEFAULT_HANDOFF_KEYWORDS;
+export function checkHandoffKeywords(
+  text: string,
+  configuredKeywords: string[],
+  fallbackKeywords: string[] = DEFAULT_HANDOFF_KEYWORDS, // D-61.A: v3 call site ส่ง DEFAULT_HANDOFF_KEYWORDS_V3 · v2 ไม่ส่ง = พฤติกรรมเดิมเป๊ะ
+): HandoffPreCheckResult {
+  const keywords = configuredKeywords.length > 0 ? configuredKeywords : fallbackKeywords;
   const normalized = text.toLowerCase();
 
   for (const keyword of keywords) {

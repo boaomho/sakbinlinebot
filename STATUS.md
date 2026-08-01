@@ -1,5 +1,10 @@
 # STATUS — SakbinAdvBot ("ปลาทู")
 
+## 🔴 D-61 · v3.0 "บอทนักขาย CX" — รื้อใหญ่ (กำลังทำ · contract: [D61-SPEC.md](D61-SPEC.md) · โมเดล Fable)
+- **เฟส A (สมองใหม่) เสร็จ ✅** บน `main` — สวิตช์ `SHEET_SCHEMA` (env-only · default **v2 = พฤติกรรมเดิม 100%**) · prompt v3 (`prompt/system-v3.ts` · หมวก 3 ใบ/3C/ตอบแทรก-พากลับ/4 ประตู/few-shot เจ้าของ) · เรียบเรียงสด (verbatim/precedence ไม่วิ่งใน v3) · ธงสุขภาพ `คำ_ธงสุขภาพ` (hint+🔔 dedup `__HEALTH_NOTIFY__`+ไม่ปิดบอท) · assurance guard (block→regenerate 1→ตัดบรรทัด→fallback · ห้ามเงียบ) · `DEFAULT_HANDOFF_KEYWORDS_V3` (v2 เดิมไม่ขยับ)
+- **ต่อไป: เฟส B** (ชีต v3 ไฟล์ใหม่ + adapter loader) → **C** (dual-read + golden ≥25 + cutover กับเจ้าของ) → **D** (ผู้ช่วยเทรน v3 + โหมดสัมภาษณ์เซ็ตอัพ)
+- 🔴 กติกา: report แผนก่อนทุกเฟส · 1 commit/เฟส · v2 ที่ลูกค้าจริงใช้ห้ามเปลี่ยนจน cutover · ห้ามแตะ pricing/gate semantics/Neon/channel adapters/TRAIN_LOG
+
 > สแนปช็อตสำหรับคนรับช่วงต่อ (ไม่เห็นแชทก็ทำต่อได้) · อัปเดต 2026-07-30
 > รายละเอียด → [docs/DECISIONS.md](docs/DECISIONS.md) · แผนที่โค้ด → [REPO-MAP.md](REPO-MAP.md) · brief → [docs/P2-REBUILD-BRIEF.md](docs/P2-REBUILD-BRIEF.md)
 

@@ -7,7 +7,9 @@ import {
   AppConfig,
   FeatureSwitches,
 } from "@/lib/config";
-import { loadBotLibrary } from "@/lib/sheets/loader";
+import { loadBotLibrary, BotLibrary } from "@/lib/sheets/loader";
+import { isSchemaV3 } from "@/lib/schema-mode";
+import { findAssuranceHits, cutAssuranceLines } from "@/lib/guards/assurance";
 import { buildStepInjection, buildFaqInjection, buildCatalogInjection, buildObjectionInjection, readConfigDescription, funnelStageOf, stepNameOf, stepVerbatim, stepClosing, joinVerbatimParts, detectPaymentChoice, isPaymentChoiceOnly, resolvePaymentStep, resolveRecoveredStage, redactFinancial } from "@/lib/agent/inject";
 import { isFirstMessageOfDay, prependToFirstTextBubble, DEFAULT_DAILY_GREETING } from "@/lib/greeting";
 import {
@@ -62,7 +64,7 @@ import { ChannelTransport, LineTransport } from "@/lib/channel/transport";
 import { channelLabel } from "@/lib/channel/label";
 import { messengerPageIds } from "@/lib/channel/pages";
 import { botModeMsg, channelSwitchMsg, channelStatusLine } from "@/lib/train/bot-switch";
-import { checkHandoffKeywords } from "@/lib/handoff";
+import { checkHandoffKeywords, DEFAULT_HANDOFF_KEYWORDS, DEFAULT_HANDOFF_KEYWORDS_V3 } from "@/lib/handoff";
 import {
   parseAdminCommand,
   matchCustomersByName,
@@ -219,6 +221,189 @@ async function runHandoffFlow(
   if (!sent) await transport.push(finalReply, config.quotaSaver);
 
   await handoff(userId, switches, { reason, userMessage }, transport); // ปิดบอท + แจ้งแอดมิน + footer (จุดเดียว)
+}
+
+// ═══════════════ D-61.A · v2/v3 branch helpers — เช็ค isSchemaV3() ต้นทางแล้ว dispatch เข้า function ชัด (ห้ามหว่าน if ในเนื้อ logic · เตรียมลบ v2 ง่ายหลังเกษียณ) ═══════════════
+
+/** D-61.A (v3): marker dedup 🔔 ธงสุขภาพใน delivered_steps — prefix __ กันชน step_id จริง (เจ้าของเคาะ #3) · ล้างพร้อมธงตอนปิดออเดอร์/cron/reset = "ต่อเคส" จริง */
+const HEALTH_NOTIFY_MARKER = "__HEALTH_NOTIFY__";
+
+/** D-61.A (v3): ทุกบอลลูนโดน assurance ตัดหมด → ข้อความสุภาพ ห้ามบอทเงียบใส่ลูกค้าทุกกรณี (เจ้าของเคาะ #2) */
+const ASSURANCE_FALLBACK_REPLY = "ขออภัยค่ะ เรื่องนี้ขอให้แอดมินช่วยดูแลต่อเพื่อความแม่นยำนะคะ ทีมงานจะรีบมาตอบโดยเร็วเลยค่ะ";
+
+/** D-58/D-60 (v2 เท่านั้น): pre-check คำ_notify รายประตู — ย้ายก้อนเดิมมาทั้งดุ้น (พฤติกรรมเดิมเป๊ะ) · handled=true = ปิดบอทไปแล้ว caller ต้อง return */
+async function notifyPrecheckV2(args: {
+  userId: string;
+  userMessage: string;
+  transport: ChannelTransport;
+  config: AppConfig;
+  switches: FeatureSwitches;
+  lib: BotLibrary | null;
+}): Promise<{ handled: boolean; forcedStage: string | null }> {
+  const { userId, userMessage, transport, config, switches, lib } = args;
+  const doors = [
+    ...config.notifyDoors,
+    ...(config.notifyKeywords.length > 0 ? [{ door: NOTIFY_DOOR, keywords: config.notifyKeywords }] : []),
+  ];
+  for (const d of doors) {
+    if (!checkHandoffKeywords(userMessage, d.keywords).matched) continue;
+    const doorFunnel = lib ? funnelStageOf(lib.CSV_Step, d.door) : null;
+    const sv = lib ? stepVerbatim(lib.CSV_Step, d.door) : null;
+    if (doorFunnel === "handoff_notify" && sv && sv.pattern.trim() !== "") {
+      console.log(JSON.stringify({ scope: "notify-precheck", door: d.door }));
+      return { handled: false, forcedStage: d.door }; // match แรกชนะ
+    }
+    console.warn(JSON.stringify({ scope: "notify-precheck", event: "misconfigured", door: d.door, funnel: doorFunnel, hasPattern: Boolean(sv && sv.pattern.trim()), action: "fallback-handoff" }));
+    await runHandoffFlow(userId, userMessage, transport, config, switches, `คำ_notify ประตู ${d.door} funnel=${doorFunnel ?? "ไม่พบ"}/pattern ว่าง — ปิดบอทเพื่อความปลอดภัย`);
+    return { handled: true, forcedStage: null };
+  }
+  return { handled: false, forcedStage: null };
+}
+
+/** D-61.A (v3): ธงสุขภาพ — match คำ_ธงสุขภาพ (fallback [] = ไม่มี key ว่าง→ปิด) · ไม่ force stage ไม่ปิดบอท */
+function matchHealthFlagV3(userMessage: string, config: AppConfig): boolean {
+  if (config.healthFlagKeywords.length === 0) return false;
+  return checkHandoffKeywords(userMessage, config.healthFlagKeywords, []).matched;
+}
+
+/** D-61.A (v3): hint ต่อท้าย state — delivered_steps เปลี่ยนหน้าที่จาก "เลือกข้อความ" → คำใบ้ให้ AI ไม่ทวนซ้ำ + บริบทสุขภาพ */
+function buildV3StateHints(customer: CustomerState | null, healthFlagged: boolean): string {
+  const parts: string[] = [];
+  const sent = (customer?.deliveredSteps ?? []).filter((s) => !s.startsWith("__"));
+  if (sent.length > 0) parts.push(`(เคยส่งสาระของประตูเหล่านี้ให้ลูกค้าแล้ว อย่าทวนซ้ำยาว สรุปสั้นพอ: ${sent.join(", ")})`);
+  if (healthFlagged) {
+    parts.push("🔴 บริบทสุขภาพเทิร์นนี้: ให้ข้อเท็จจริงจากข้อมูลสินค้า ถามกลับเพื่อเข้าใจได้ ห้ามประโยครับรองแทนลูกค้า (ทานได้/ปลอดภัย/ไม่เป็นไร) · ไม่รู้ = บอกตรงๆ + เสนอให้แอดมินเช็ค");
+  }
+  return parts.length > 0 ? `\n${parts.join("\n")}` : "";
+}
+
+interface ComposeReplyResult {
+  baseReply: string;
+  verbatimMode: boolean;
+  deliverMarksStep: boolean;
+}
+
+/** v2 (D-42/D-45b): เลือกที่มาข้อความ precedence handoff > order-complete > OBJ > FAQ > step — ย้ายก้อนเดิมมาทั้งดุ้น (พฤติกรรมเดิมเป๊ะ) */
+function composeReplyV2(args: {
+  lib: BotLibrary | null;
+  geminiOutput: GeminiTurnOutput;
+  customer: CustomerState | null;
+  config: AppConfig;
+  objection: { verbatim: { id: string; pattern: string } | null };
+  faqInj: { verbatim: { answer: string } | null };
+  orderCompleteThisTurn: boolean;
+  imageFallback: boolean;
+  isHandoffTurn: boolean;
+}): ComposeReplyResult {
+  const { lib, geminiOutput, customer, config, objection, faqInj, orderCompleteThisTurn, imageFallback, isHandoffTurn } = args;
+  const sv = lib ? stepVerbatim(lib.CSV_Step, geminiOutput.stage) : null;
+  const stepFull = sv?.mode === "ปิด" ? sv.pattern : ""; // เนื้อเต็มก้อน (คำตอบ+ปิดท้าย) — เฉพาะโหมดปิด
+  const stepClose = lib ? stepClosing(lib.CSV_Step, geminiOutput.stage) : "";
+  const stepAlreadySent = (customer?.deliveredSteps ?? []).includes(geminiOutput.stage);
+  // "กลับบ้าน" ต่อท้าย FAQ/OBJ: ยังไม่เคยส่งเนื้อหา step นี้ → เต็มก้อน · เคยแล้ว → ปิดท้าย (mode เปิด/เต็มว่าง → ปิดท้าย = พฤติกรรม D-42 เดิม)
+  const homeSuffix = stepAlreadySent ? stepClose : stepFull || stepClose;
+  const homeIsFull = !stepAlreadySent && stepFull !== "";
+  // D-49 #3: ออเดอร์ครบเทิร์นนี้ (จริง ไม่ใช่แค่มี pending) → complete ชนะ FAQ/OBJ · log ตอนมีตัวจะแทรกจริง
+  if (orderCompleteThisTurn && !isHandoffTurn && (objection.verbatim || faqInj.verbatim)) {
+    console.log(JSON.stringify({ scope: "verbatim", event: "order-complete-overrides-faq-obj", stage: geminiOutput.stage, hadObjection: Boolean(objection.verbatim), hadFaq: Boolean(faqInj.verbatim) }));
+  }
+  if (imageFallback) {
+    return { baseReply: imageReceivedReply(config), verbatimMode: false, deliverMarksStep: false }; // AI degraded อ่านรูปไม่ได้ → ไม่ verbatim (stage ไม่น่าเชื่อถือ)
+  }
+  if (geminiOutput.degraded) {
+    // 🔴 D-46: เทิร์นข้อความล้วนที่ Gemini ไม่ตอบ → บอกตรงว่า "ยังไม่ได้รับข้อความล่าสุด รบกวนส่งใหม่" · ห้าม verbatim/resend step
+    console.warn(JSON.stringify({ scope: "degraded", reason: "gemini-no-output", stage: geminiOutput.stage }));
+    return { baseReply: DEGRADED_NO_INPUT_REPLY, verbatimMode: false, deliverMarksStep: false };
+  }
+  if (!isHandoffTurn && !orderCompleteThisTurn && objection.verbatim) {
+    console.log(JSON.stringify({ scope: "verbatim", source: "objection", id: objection.verbatim.id, homeFull: homeIsFull }));
+    return { baseReply: joinVerbatimParts(objection.verbatim.pattern, homeSuffix), verbatimMode: true, deliverMarksStep: homeIsFull };
+  }
+  if (!isHandoffTurn && !orderCompleteThisTurn && faqInj.verbatim) {
+    // D-42/D-45b: FAQ answer + กลับบ้าน (เต็มก้อน step ครั้งแรก · ปิดท้ายเมื่อเคยส่งแล้ว)
+    console.log(JSON.stringify({ scope: "verbatim", source: "faq", stage: geminiOutput.stage, homeFull: homeIsFull }));
+    return { baseReply: joinVerbatimParts(faqInj.verbatim.answer, homeSuffix), verbatimMode: true, deliverMarksStep: homeIsFull };
+  }
+  // step path: ยังไม่เคยส่ง → เต็มก้อน · เคยส่งแล้ว → ปิดท้ายอย่างเดียว (ปิดท้ายว่าง → fallback AI ผ่าน guard เดิม)
+  const stepPattern = stepAlreadySent ? stepClose : stepFull;
+  if (sv?.mode === "ปิด" && stepPattern) {
+    console.log(JSON.stringify({ scope: "verbatim", source: "step", stage: geminiOutput.stage, resendClosingOnly: stepAlreadySent }));
+    return { baseReply: stepPattern, verbatimMode: true, deliverMarksStep: !stepAlreadySent };
+  }
+  // safety (D-39): ปิดแต่ pattern ว่าง (2 ช่องว่าง / เคยส่งแล้ว+ปิดท้ายว่าง) → fallback เปิด (AI ผ่าน guard ครบ) + log
+  if (sv?.mode === "ปิด" && !stepPattern) {
+    console.warn(JSON.stringify({ scope: "verbatim", event: "empty-pattern-fallback-ai", stage: geminiOutput.stage, alreadySent: stepAlreadySent }));
+  }
+  return { baseReply: geminiOutput.reply, verbatimMode: false, deliverMarksStep: false };
+}
+
+/** D-61.A (v3): เรียบเรียงสด — reply ของ AI ส่งตรง (ยามตรวจ "ผลลัพธ์" ทีหลัง ไม่บังคับเนื้อหา) · เหลือ 2 ทางพิเศษเดิม: รูป-fallback / degraded */
+function composeReplyV3(args: { geminiOutput: GeminiTurnOutput; imageFallback: boolean; config: AppConfig }): ComposeReplyResult {
+  const { geminiOutput, imageFallback, config } = args;
+  if (imageFallback) return { baseReply: imageReceivedReply(config), verbatimMode: false, deliverMarksStep: false };
+  if (geminiOutput.degraded) {
+    console.warn(JSON.stringify({ scope: "degraded", reason: "gemini-no-output", stage: geminiOutput.stage }));
+    return { baseReply: DEGRADED_NO_INPUT_REPLY, verbatimMode: false, deliverMarksStep: false };
+  }
+  // delivered_steps ใน v3 = hint + dedup 🔔 เท่านั้น (A1) — mark ทุกเทิร์นที่เนื้อหาถึงลูกค้าจริง
+  return { baseReply: geminiOutput.reply, verbatimMode: false, deliverMarksStep: true };
+}
+
+/**
+ * D-61.A (v3): assurance guard — เทิร์นธงสุขภาพ + คำตอบมีประโยครับรอง →
+ * บล็อก → regenerate 1 ครั้ง (แนบเหตุผล) → ยังหลุด/ล้ม/timeout = กลับคำตอบรอบแรกตัดประโยคผิด (เจ้าของเคาะ #2)
+ * ตัดแล้วว่างหมด = fallback สุภาพ · ห้ามล้มทั้งเทิร์น ห้ามบอทเงียบ
+ */
+async function applyAssuranceGuardV3(opts: {
+  outReply: string;
+  phrases: string[];
+  regenerate: (correction: string) => Promise<GeminiTurnOutput | null>;
+  resolveReply: (raw: string) => string;
+}): Promise<string> {
+  const hits = findAssuranceHits(opts.outReply, opts.phrases);
+  if (hits.length === 0) return opts.outReply;
+  console.warn(JSON.stringify({ scope: "assurance-guard", event: "hit", hits }));
+  let candidate: string | null = null;
+  try {
+    const regen = await opts.regenerate(`มีประโยครับรองเรื่องสุขภาพแทนลูกค้า (${hits.join(", ")}) — ห้ามใช้ทุกรูปแบบ ให้ข้อเท็จจริงแล้วลูกค้าตัดสินใจเอง`);
+    if (regen && !regen.degraded && regen.reply.trim() !== "") candidate = opts.resolveReply(regen.reply);
+  } catch (error) {
+    console.error(JSON.stringify({ scope: "assurance-guard", warning: "regenerate failed", error: String(error).slice(0, 80) }));
+  }
+  if (candidate && findAssuranceHits(candidate, opts.phrases).length === 0) {
+    console.log(JSON.stringify({ scope: "assurance-guard", event: "regenerated-clean" }));
+    return candidate;
+  }
+  const cut = cutAssuranceLines(opts.outReply, opts.phrases);
+  console.warn(JSON.stringify({ scope: "assurance-guard", event: "cut", cutLines: cut.cutLines, droppedBubbles: cut.droppedBubbles, empty: cut.text === "" }));
+  return cut.text === "" ? ASSURANCE_FALLBACK_REPLY : cut.text;
+}
+
+/** D-58 (v2): 🔔 ประตู notify — ย้ายก้อนเดิมมาทั้งดุ้น (ข้อความเดิมเป๊ะ) · เรียกเฉพาะใน block mark delivered_steps (dedup เดิม) */
+async function pushNotifyDoorV2(args: { userId: string; userMessage: string; stageFunnelReply: string | null; transport: ChannelTransport }): Promise<void> {
+  if (args.stageFunnelReply !== "handoff_notify") return;
+  const adminGroupId = process.env.ADMIN_GROUP_ID;
+  if (!adminGroupId) return;
+  const name = await args.transport.getProfileName();
+  await pushRawText(adminGroupId, `🔔 ${channelLabel(args.userId)} ${name} ถามเรื่องสุขภาพ/แพ้อาหาร — บอทตอบข้อมูลตามชีตแล้ว ยังคุยต่อ (ไม่ได้ปิดบอท) รบกวนช่วยดูให้ด้วยค่ะ\nข้อความ: ${args.userMessage}`);
+}
+
+/** D-61.A (v3): 🔔 ธงสุขภาพ — ครั้งเดียวต่อเคสผ่าน HEALTH_NOTIFY_MARKER (mark ก่อน push กันยิงซ้ำ) · เนื้อจาก Config ข้อความ_แจ้งแอดมิน_notify */
+async function pushHealthNotifyV3(args: {
+  userId: string;
+  userMessage: string;
+  healthFlagged: boolean;
+  customer: CustomerState;
+  config: AppConfig;
+  transport: ChannelTransport;
+}): Promise<void> {
+  if (!args.healthFlagged) return;
+  if (args.customer.deliveredSteps.includes(HEALTH_NOTIFY_MARKER)) return; // dedup ต่อเคส
+  await addDeliveredStep(args.userId, HEALTH_NOTIFY_MARKER);
+  const adminGroupId = process.env.ADMIN_GROUP_ID;
+  if (!adminGroupId) return;
+  const name = await args.transport.getProfileName();
+  await pushRawText(adminGroupId, `🔔 ${channelLabel(args.userId)} ${name} ${args.config.notifyAdminHealthTemplate}\nข้อความ: ${args.userMessage}`);
 }
 
 /** ข้อความสบายใจตอน AI อ่านรูปไม่สำเร็จ — รับรูปแล้ว กำลังตรวจสอบ (ไม่ทำให้ลูกค้ากังวล) */
@@ -492,8 +677,12 @@ export async function processMessage(
 
   }
 
+  // 🔴 D-61.A: โหมด schema — เช็คครั้งเดียวต้นทาง ทุก branch point ใช้ตัวนี้ (v2 = เส้นเดิมทุกบรรทัด)
+  const v3 = isSchemaV3();
+
   if (switches.handoff) {
-    const preCheck = checkHandoffKeywords(userMessage, config.handoffKeywords);
+    // v3: DEFAULT fallback = เฉพาะเจตนาเรียกคน (ตาข่ายสุขภาพย้ายไปธง+assurance guard) · v2: ชุดเดิมห้ามขยับ (เจ้าของเคาะ #1)
+    const preCheck = checkHandoffKeywords(userMessage, config.handoffKeywords, v3 ? DEFAULT_HANDOFF_KEYWORDS_V3 : DEFAULT_HANDOFF_KEYWORDS);
     if (preCheck.matched) {
       await runHandoffFlow(userId, userMessage, transport, config, switches, `เจอคำสำคัญ: ${preCheck.keyword}`);
       return;
@@ -507,29 +696,17 @@ export async function processMessage(
   // FAQ: สารบัญทุกข้อ + เต็มเฉพาะที่ keyword ตรง
   const lib = await loadBotLibrary();
 
-  // 🔴 D-58/D-60: pre-check ชั้นสอง (คำ_notify รายประตู) — หลัง คำ_handoff (ปิดเงียบ) · reuse checkHandoffKeywords (ไม่ fork · KI-01)
-  //    match ประตูไหน → บังคับเข้าประตูนั้น: ตอบ pattern verbatim + push 🔔 + ไม่ปิดบอท (ไหลผ่าน pipeline เดิม ด้วย forced stage)
-  //    D-60: notifyDoors = คำ_notify_<step_id> รายประตู + alias คำ_notify → NOTIFY_DOOR(H1) · match แรกชนะ · fail-safe/dedup ต่อประตู
-  //    fail-safe ต่อประตู: funnel ต้อง=handoff_notify + มี pattern · ไม่งั้น → ปิดบอทเงียบ + log (ห้ามบอทตอบสุขภาพเงียบ/หายเงียบ)
+  // 🔴 D-61.A branch: v2 = คำ_notify force ประตู (D-58/D-60 เดิมเป๊ะ · notifyPrecheckV2) · v3 = ธงสุขภาพ (ไม่ force · hint+🔔+assurance guard)
   let notifyForcedStage: string | null = null;
+  let healthFlagged = false;
   if (switches.handoff) {
-    const doors = [
-      ...config.notifyDoors,
-      ...(config.notifyKeywords.length > 0 ? [{ door: NOTIFY_DOOR, keywords: config.notifyKeywords }] : []),
-    ];
-    for (const d of doors) {
-      if (!checkHandoffKeywords(userMessage, d.keywords).matched) continue;
-      const doorFunnel = lib ? funnelStageOf(lib.CSV_Step, d.door) : null;
-      const sv = lib ? stepVerbatim(lib.CSV_Step, d.door) : null;
-      if (doorFunnel === "handoff_notify" && sv && sv.pattern.trim() !== "") {
-        notifyForcedStage = d.door;
-        console.log(JSON.stringify({ scope: "notify-precheck", door: d.door }));
-      } else {
-        console.warn(JSON.stringify({ scope: "notify-precheck", event: "misconfigured", door: d.door, funnel: doorFunnel, hasPattern: Boolean(sv && sv.pattern.trim()), action: "fallback-handoff" }));
-        await runHandoffFlow(userId, userMessage, transport, config, switches, `คำ_notify ประตู ${d.door} funnel=${doorFunnel ?? "ไม่พบ"}/pattern ว่าง — ปิดบอทเพื่อความปลอดภัย`);
-        return;
-      }
-      break; // match แรกชนะ
+    if (v3) {
+      healthFlagged = matchHealthFlagV3(userMessage, config);
+      if (healthFlagged) console.log(JSON.stringify({ scope: "health-flag", event: "flagged" }));
+    } else {
+      const r = await notifyPrecheckV2({ userId, userMessage, transport, config, switches, lib });
+      if (r.handled) return; // fail-safe ปิดบอทไปแล้ว
+      notifyForcedStage = r.forcedStage;
     }
   }
 
@@ -586,6 +763,8 @@ export async function processMessage(
   const objection = lib ? buildObjectionInjection(lib.CSV_Objections, userMessage, objCap) : { text: "", matchedIds: [] as string[], verbatim: null };
   const configText = formatConfigForPrompt(config);
   let stateText = buildStateText(customer, orderWarning, preOrderPriceStuck, lastOrderLine);
+  // D-61.A (v3): hint เข้า state — delivered_steps ("อย่าทวนซ้ำยาว") + บริบทสุขภาพ (ธง A6)
+  if (v3) stateText += buildV3StateHints(customer, healthFlagged);
 
   let historyText = "(ระบบความจำปิดอยู่)";
   let historyLen = 0; // D-51: ประวัติก่อนเทิร์นนี้ (0 = ลูกค้าใหม่/หลัง reset) — ใช้ตัดสินทักทายรายวัน
@@ -613,7 +792,8 @@ export async function processMessage(
   const prePayment = ordersActive && customer && preItems.length > 0 && !imageContent
     ? detectPaymentChoice(userMessage) : "";
   // ข้อความ = คำเลือกวิธีจ่ายล้วน + resolve ประตูได้ → ข้าม AI ทั้งเทิร์น (deterministic)
-  const preCheckStep = prePayment && isPaymentChoiceOnly(userMessage) && lib ? resolvePaymentStep(lib.CSV_Step, prePayment) : null;
+  // 🔴 D-61.A: skip นี้ = v2 เท่านั้น — v3 ต้องให้ AI เขียน reply เสมอ (ไม่มี verbatim มาเติม) · lock ทับ payment_method (D-47 ชิ้น 1) ยังคุมทั้งสองโหมด
+  const preCheckStep = !v3 && prePayment && isPaymentChoiceOnly(userMessage) && lib ? resolvePaymentStep(lib.CSV_Step, prePayment) : null;
 
   let geminiOutput: GeminiTurnOutput;
   if (preCheckStep) {
@@ -811,62 +991,16 @@ export async function processMessage(
     }
   }
 
-  // ---- เลือกที่มาข้อความ (D-42 precedence): handoff > objection pattern > FAQ answer > step pattern ----
-  // 🔴 AI ยังเลือก step + สกัด order_data + handoff เสมอ (ชั้น①) · โหมดปิด = ทิ้งแค่ reply ที่ AI แต่ง แทนด้วย pattern ชีต
-  // 🔴 เทิร์น handoff (AI flag / ประตู funnel=handoff|intake) → ห้ามแทรก objection/FAQ answer (ปล่อย step pattern = ข้อความประตูส่งต่อ/intake)
-  // D-45b ธงต่อ step: step ที่เคย "ส่งเนื้อหา" แล้ว → ส่งเฉพาะปิดท้าย (กันโชว์ตารางโปรซ้ำ) · FAQ/OBJ = ทางแยก ต้อง "กลับบ้าน" เสมอ
+  // ---- เลือกที่มาข้อความ (D-61.A dispatch): v2 = precedence D-42 (composeReplyV2 · ก้อนเดิมทั้งดุ้น) · v3 = เรียบเรียงสด (composeReplyV3) ----
   const stageFunnelReply = lib ? funnelStageOf(lib.CSV_Step, geminiOutput.stage) : null;
-  // 🔴 handoff_notify (D-58): ปฏิบัติเหมือน handoff ตอน "เลือกที่มาข้อความ" — ส่ง pattern ประตูตามชีต ไม่ให้ OBJ/FAQ ทับ (แต่ไม่ปิดบอท ดูบล็อก handoff-decision)
-  const isHandoffTurn = geminiOutput.handoff || stageFunnelReply === "handoff" || stageFunnelReply === "handoff_after_intake" || stageFunnelReply === "handoff_notify";
-  const sv = lib ? stepVerbatim(lib.CSV_Step, geminiOutput.stage) : null;
-  const stepFull = sv?.mode === "ปิด" ? sv.pattern : ""; // เนื้อเต็มก้อน (คำตอบ+ปิดท้าย) — เฉพาะโหมดปิด
-  const stepClose = lib ? stepClosing(lib.CSV_Step, geminiOutput.stage) : "";
-  const stepAlreadySent = (customer?.deliveredSteps ?? []).includes(geminiOutput.stage);
-  // "กลับบ้าน" ต่อท้าย FAQ/OBJ: ยังไม่เคยส่งเนื้อหา step นี้ → เต็มก้อน · เคยแล้ว → ปิดท้าย (mode เปิด/เต็มว่าง → ปิดท้าย = พฤติกรรม D-42 เดิม)
-  const homeSuffix = stepAlreadySent ? stepClose : stepFull || stepClose;
-  const homeIsFull = !stepAlreadySent && stepFull !== "";
-  let deliverMarksStep = false; // ตั้งธงหลัง deliver สำเร็จเท่านั้น
-  let verbatimMode = false;
-  // D-49 #3: ออเดอร์ครบเทิร์นนี้ (จริง ไม่ใช่แค่มี pending) → complete ชนะ FAQ/OBJ · log ตอนมีตัวจะแทรกจริง
-  if (orderCompleteThisTurn && !isHandoffTurn && (objection.verbatim || faqInj.verbatim)) {
-    console.log(JSON.stringify({ scope: "verbatim", event: "order-complete-overrides-faq-obj", stage: geminiOutput.stage, hadObjection: Boolean(objection.verbatim), hadFaq: Boolean(faqInj.verbatim) }));
-  }
-  let baseReply: string;
-  if (imageFallback) {
-    baseReply = imageReceivedReply(config); // AI degraded อ่านรูปไม่ได้ → ไม่ verbatim (stage ไม่น่าเชื่อถือ)
-  } else if (geminiOutput.degraded) {
-    // 🔴 D-46: เทิร์นข้อความล้วนที่ Gemini ไม่ตอบ (blocked PROHIBITED_CONTENT / timeout / parse-fail / MAX_TOKENS)
-    //    → บอกตรงว่า "ยังไม่ได้รับข้อความล่าสุด รบกวนส่งใหม่" · ห้าม verbatim/resend step (ลูกค้าเพิ่งส่งข้อมูลสำคัญ ถามซ้ำ=พัง)
-    baseReply = DEGRADED_NO_INPUT_REPLY;
-    deliverMarksStep = false; // เนื้อหา step ไม่ถึงลูกค้า → ไม่ตั้งธง
-    console.warn(JSON.stringify({ scope: "degraded", reason: "gemini-no-output", stage: geminiOutput.stage }));
-  } else if (!isHandoffTurn && !orderCompleteThisTurn && objection.verbatim) {
-    baseReply = joinVerbatimParts(objection.verbatim.pattern, homeSuffix);
-    verbatimMode = true;
-    deliverMarksStep = homeIsFull;
-    console.log(JSON.stringify({ scope: "verbatim", source: "objection", id: objection.verbatim.id, homeFull: homeIsFull }));
-  } else if (!isHandoffTurn && !orderCompleteThisTurn && faqInj.verbatim) {
-    // D-42/D-45b: FAQ answer + กลับบ้าน (เต็มก้อน step ครั้งแรก · ปิดท้ายเมื่อเคยส่งแล้ว)
-    baseReply = joinVerbatimParts(faqInj.verbatim.answer, homeSuffix);
-    verbatimMode = true;
-    deliverMarksStep = homeIsFull;
-    console.log(JSON.stringify({ scope: "verbatim", source: "faq", stage: geminiOutput.stage, homeFull: homeIsFull }));
-  } else {
-    // step path: ยังไม่เคยส่ง → เต็มก้อน · เคยส่งแล้ว → ปิดท้ายอย่างเดียว (ปิดท้ายว่าง → fallback AI ผ่าน guard เดิม)
-    const stepPattern = stepAlreadySent ? stepClose : stepFull;
-    if (sv?.mode === "ปิด" && stepPattern) {
-      baseReply = stepPattern;
-      verbatimMode = true;
-      deliverMarksStep = !stepAlreadySent;
-      console.log(JSON.stringify({ scope: "verbatim", source: "step", stage: geminiOutput.stage, resendClosingOnly: stepAlreadySent }));
-    } else {
-      // safety (D-39): ปิดแต่ pattern ว่าง (2 ช่องว่าง / เคยส่งแล้ว+ปิดท้ายว่าง) → fallback เปิด (AI ผ่าน guard ครบ) + log
-      if (sv?.mode === "ปิด" && !stepPattern) {
-        console.warn(JSON.stringify({ scope: "verbatim", event: "empty-pattern-fallback-ai", stage: geminiOutput.stage, alreadySent: stepAlreadySent }));
-      }
-      baseReply = geminiOutput.reply;
-    }
-  }
+  // v2: handoff_notify นับเป็น handoff turn (D-58 ส่ง pattern ประตู) · v3: ไม่มี notify force — ธงสุขภาพคุมผ่าน assurance guard แทน
+  const isHandoffTurn = geminiOutput.handoff || stageFunnelReply === "handoff" || stageFunnelReply === "handoff_after_intake" || (!v3 && stageFunnelReply === "handoff_notify");
+  const sel = v3
+    ? composeReplyV3({ geminiOutput, imageFallback, config })
+    : composeReplyV2({ lib, geminiOutput, customer, config, objection, faqInj, orderCompleteThisTurn, imageFallback, isHandoffTurn });
+  const baseReply = sel.baseReply;
+  const verbatimMode = sel.verbatimMode;
+  let deliverMarksStep = sel.deliverMarksStep; // guard ข้างล่างยัง set false ได้ (บล็อก/ทิ้งบอลลูน = เนื้อหาไม่ถึงลูกค้า)
   const shouldNotifyResume = Boolean(switches.memory && customer?.resumeNoticePending && config.botResumeMessage);
   const withResume = (text: string) => (shouldNotifyResume ? `${config.botResumeMessage}[[เว้น]]${text}` : text);
 
@@ -946,6 +1080,22 @@ export async function processMessage(
       }
     }
   }
+
+  // 🔴 D-61.A (v3): assurance guard — เทิร์นธงสุขภาพห้ามประโยครับรอง (block → regenerate 1 → cut · ห้ามล้มเทิร์น/ห้ามเงียบ)
+  if (v3 && healthFlagged && !geminiOutput.degraded && !imageFallback) {
+    outReply = await applyAssuranceGuardV3({
+      outReply,
+      phrases: config.assuranceBannedPhrases,
+      regenerate: (correction) =>
+        withTimeout<GeminiTurnOutput | null>(
+          runSalesTurn({ config, configText, stepText, faqText, catalogText, objectionText: objection.text, stateText, historyText, userMessage, currentStage: previousStage ?? "1", image: imageForGemini, correction }),
+          GEMINI_TIMEOUT_MS,
+          null, // timeout = ถือว่า regenerate ล้ม → caller ตกไปตัดประโยค (เจ้าของเคาะ #2)
+        ),
+      resolveReply: (raw) => resolveAllVars(raw, varCtx),
+    });
+  }
+
   // 🔴 Phase2 var-guard (ทั้งโหมดเปิด/ปิด): กันลูกค้าเห็นตัวแปร "ที่รู้จัก" ดิบ ({ออเดอร์_ที่อยู่}/{การชำระเงิน}...)
   //    typo ตัวแปรผิด step / order ยังไม่มี → resolve ไม่ได้ → ทิ้งบอลลูนนั้น (ไม่ใช่ `{` ทุกตัว)
   {
@@ -985,14 +1135,11 @@ export async function processMessage(
   // D-45b: ตั้งธง "ส่งเนื้อหา step นี้แล้ว" เฉพาะเมื่อ deliver สำเร็จจริง + เทิร์นนี้มีเนื้อเต็มก้อนของ step อยู่ในข้อความ
   if (deliveredOk && deliverMarksStep && switches.memory && customer) {
     await addDeliveredStep(userId, geminiOutput.stage);
-    // 🔴 D-58: ประตู handoff_notify → แจ้งแอดมิน "บอทตอบข้อมูลแล้ว ยังคุยต่อ" · ไม่ปิดบอท
-    //    dedup: push ตรงจังหวะเดียวกับ mark delivered_steps (ครั้งแรกที่ส่งประตูนี้เท่านั้น) — reuse ธงเดิม ไม่มี state ใหม่
-    if (stageFunnelReply === "handoff_notify") {
-      const adminGroupId = process.env.ADMIN_GROUP_ID;
-      if (adminGroupId) {
-        const name = await transport.getProfileName();
-        await pushRawText(adminGroupId, `🔔 ${channelLabel(userId)} ${name} ถามเรื่องสุขภาพ/แพ้อาหาร — บอทตอบข้อมูลตามชีตแล้ว ยังคุยต่อ (ไม่ได้ปิดบอท) รบกวนช่วยดูให้ด้วยค่ะ\nข้อความ: ${userMessage}`);
-      }
+    // 🔔 dispatch ตามโหมด (D-61.A): v2 = ประตู notify (D-58 dedup ผ่านธง step) · v3 = ธงสุขภาพ (dedup ผ่าน HEALTH_NOTIFY_MARKER ต่อเคส)
+    if (v3) {
+      await pushHealthNotifyV3({ userId, userMessage, healthFlagged, customer, config, transport });
+    } else {
+      await pushNotifyDoorV2({ userId, userMessage, stageFunnelReply, transport });
     }
   }
 

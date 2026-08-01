@@ -1,5 +1,7 @@
 import { GoogleGenAI, ThinkingLevel, Type, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { buildStaticSystemInstruction, buildUserContent } from "@/prompt/system";
+import { buildSalesSystemV3 } from "@/prompt/system-v3";
+import { isSchemaV3 } from "@/lib/schema-mode";
 import { AppConfig, DEFAULT_REPLY } from "./config";
 import { AiOrderItem } from "./core/pricing";
 
@@ -48,6 +50,8 @@ export interface GeminiTurnInput {
   userMessage: string;
   currentStage: string;
   image?: GeminiImageInput;
+  /** D-61.A (v3): regenerate 1 ครั้งจาก assurance guard — ข้อความแก้ไขแนบท้าย user content (v2 ไม่ใช้) */
+  correction?: string;
 }
 
 /** ช่องทางชำระเงินที่ AI ประเมินใหม่ทุกเทิร์นจากบทสนทนาล่าสุด · "" = ยังไม่ตัดสิน */
@@ -292,13 +296,19 @@ async function runExtraction(input: GeminiTurnInput): Promise<GeminiTurnOutput |
   }
 }
 
-export async function runSalesTurn(input: GeminiTurnInput): Promise<GeminiTurnOutput> {
-  const systemInstruction = buildStaticSystemInstruction({
+/** D-61.A: เลือกสมองตามโหมด — จุดเดียว (v2 = จำแนกและสกัด/verbatim · v3 = นักขาย CX เรียบเรียงสด) */
+function selectSystemInstruction(input: GeminiTurnInput): string {
+  const p = {
     botName: input.config.botName,
     shopName: input.config.shopName,
     personaGender: input.config.personaGender,
     useEmoji: input.config.useEmoji,
-  });
+  };
+  return isSchemaV3() ? buildSalesSystemV3(p) : buildStaticSystemInstruction(p);
+}
+
+export async function runSalesTurn(input: GeminiTurnInput): Promise<GeminiTurnOutput> {
+  const systemInstruction = selectSystemInstruction(input);
 
   const userText = buildUserContent({
     configText: input.configText,
@@ -315,6 +325,10 @@ export async function runSalesTurn(input: GeminiTurnInput): Promise<GeminiTurnOu
   const parts: any[] = [{ text: userText }];
   if (input.image) {
     parts.push({ inlineData: { mimeType: input.image.mimeType, data: input.image.base64Data } });
+  }
+  // D-61.A (v3): regenerate — แนบเหตุผลที่คำตอบรอบก่อนถูกบล็อก ให้เขียนใหม่โดยไม่ใช้คำรับรอง
+  if (input.correction) {
+    parts.push({ text: `\n🔴 คำตอบรอบก่อนถูกระบบบล็อก: ${input.correction}\nเขียนคำตอบใหม่ทั้งหมด (เนื้อหาเดิมได้ แต่ห้ามมีประโยครับรองข้างต้น)` });
   }
 
   // แยกขนาดแต่ละส่วน (char = estimate เท่านั้น) — หาว่าส่วนไหนใหญ่สุด selective ทำงานจริงมั้ย
