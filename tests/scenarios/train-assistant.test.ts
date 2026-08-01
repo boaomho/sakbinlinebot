@@ -4,7 +4,9 @@ import { sheetsCalls } from "../harness/state";
 import { seedBotLib } from "../harness/botlib-fixture";
 import { parseAssistantResponse, buildAssistantSystem } from "@/lib/train/assistant";
 import { rewriteSafety } from "@/lib/train/rewrite-safety";
-import { parseNotifyDoors } from "@/lib/config";
+import { lintPattern } from "@/lib/train/lint";
+import { loadBotLibrary } from "@/lib/sheets/loader";
+import { parseNotifyDoors, getConfig } from "@/lib/config";
 import { buildAssistantKB } from "@/lib/train/assistant-kb";
 import { appendRow, writeCell } from "@/lib/train/write";
 
@@ -127,6 +129,37 @@ describe("D-59/60 · buildAssistantSystem — กติกา 11/12/persona", ()
     expect(s).toContain("เกลาเสียง");
     expect(s, "excludeKeys ต่อท้าย").toContain("CSV_FAQ::ส่งกี่วัน");
     expect(s).toContain("KB_PLACEHOLDER");
+  });
+  it("🔴 กติกา 12 เกลา — 3 หมวก + 3 เทคนิค (choice close/ดีขึ้น/say no) + 3C", () => {
+    const s = buildAssistantSystem("KB");
+    expect(s).toContain("หมวก1 นักแก้ปัญหา");
+    expect(s).toContain("หมวก2 นักสร้างความต้องการ");
+    expect(s).toContain("หมวก3 นักสร้างทางเลือก");
+    expect(s).toContain("choice close");
+    expect(s, "ห้าม รับมั้ยคะ").toContain("ห้ามเด็ดขาด: 'รับมั้ยคะ");
+    expect(s).toContain("ดี→ดีขึ้น→ดีที่สุด");
+    expect(s).toContain("say no but never say no");
+    expect(s).toContain("3C");
+  });
+});
+
+describe("D-60เกลา · lint close-style (choice close · warn ไม่ block)", () => {
+  async function lint(p: string) {
+    const lib = (await loadBotLibrary())!;
+    return lintPattern(p, { config: await getConfig(), lib, payment: "", now: new Date() });
+  }
+  it("🔴 'สนใจรับมั้ยคะ' → warn close-style (ไม่ block)", async () => {
+    const f = await lint("สินค้าดีมากค่ะ สนใจรับมั้ยคะ");
+    expect(f.find((x) => x.kind === "close-style")?.level).toBe("warn");
+    expect(f.some((x) => x.level === "block")).toBe(false);
+  });
+  it("'รับไปเลยนะคะ' / 'รับเลยนะคะ' → close-style", async () => {
+    expect((await lint("รับไปเลยนะคะ")).some((x) => x.kind === "close-style")).toBe(true);
+    expect((await lint("รับเลยนะคะ")).some((x) => x.kind === "close-style")).toBe(true);
+  });
+  it("choice close ('วันไหนดีคะ') + 'รับออเดอร์แล้วค่ะ' → ไม่มี close-style (ไม่ false-positive)", async () => {
+    expect((await lint("สะดวกให้จัดส่งวันไหนดีคะ")).some((x) => x.kind === "close-style")).toBe(false);
+    expect((await lint("รับออเดอร์แล้วค่ะ ได้รับสลิปแล้วนะคะ")).some((x) => x.kind === "close-style")).toBe(false);
   });
 });
 

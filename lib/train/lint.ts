@@ -11,10 +11,13 @@ import type { BotLibrary } from "@/lib/sheets/loader";
 export interface LintFinding {
   /** block = 🔴 ปิดปุ่มเขียน (เฟส ค) · warn = เตือน */
   level: "block" | "warn";
-  kind: "unknown-var" | "claims" | "price" | "bubbles" | "image-last" | "health-h1";
+  kind: "unknown-var" | "claims" | "price" | "bubbles" | "image-last" | "health-h1" | "close-style";
   message: string;
   hits: string[];
 }
+
+/** D-60เกลา: ประโยคปิดแบบ "รับมั้ย/รับเลยนะคะ" — กฎเหล็กห้าม (ลูกค้ารู้สึกถูกกดดัน) · warn เตือน ไม่ block */
+const BANNED_CLOSE = [/รับ(ไป)?(เลย)?(ไหม|มั้ย)/g, /รับ(ไป)?เลยนะคะ/g];
 
 const VAR_TOKEN = /\{[^}]+\}/g;
 
@@ -106,6 +109,13 @@ export function lintPattern(
 
   // 5) 🔴 H1 สุขภาพ/แพ้อาหาร (พ.ร.บ.อาหาร) — trigger-aware · gate: คำตอบต้องเป็น handoff (ยกเว้นประตู handoff/notify · D-58)
   findings.push(...lintHealthH1(opts.trigger ?? "", pattern, { exempt: opts.h1Exempt, notify: opts.h1Notify }));
+
+  // 6) 🔴 D-60เกลา: ประโยคปิดแบบ "รับมั้ยคะ/รับเลยนะคะ" — กฎเหล็กห้าม · ใช้ choice close แทน (warn ไม่ block)
+  const closeHits: string[] = [];
+  for (const re of BANNED_CLOSE) for (const m of pattern.matchAll(re)) closeHits.push(m[0]);
+  if (closeHits.length > 0) {
+    findings.push({ level: "warn", kind: "close-style", hits: [...new Set(closeHits)], message: `⚠︎ ประโยคปิดแบบ "รับมั้ย/รับเลยนะคะ" (${[...new Set(closeHits)].join(", ")}) — กฎเหล็กห้าม (ลูกค้ารู้สึกถูกกดดัน) · ใช้ choice close แทน เช่น "สะดวกให้จัดส่งวันไหนดีคะ" หรือ "รับตามที่เลือก หรือแพ็คที่แนะนำดีคะ"` });
+  }
 
   return findings;
 }
