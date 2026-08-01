@@ -756,6 +756,7 @@ export async function processMessage(
         payment: customer?.pendingOrder["การชำระเงิน"] ?? "",
         now: nowDate,
         methodDescription: readConfigDescription(lib.CSV_Config, "จำนวนที่ไม่มีโปร_คิดยังไง"),
+        includeAllergen: v3, // D-61.B เคาะ #4ก — v3 เปิดสารก่อภูมิแพ้เข้า prompt
       })
     : "(ไม่มีข้อมูลสินค้า)";
   // D-27 Objections: keyword match → verbatim/จำแนก · cap จากชีต (ไม่ hardcode) · v2.0 (D-41): เลิก Examples

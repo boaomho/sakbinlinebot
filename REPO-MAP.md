@@ -130,6 +130,7 @@ scripts/sheet-lint.mjs  D-45 · lint keyword ชีตจริง (คำโด
 | `META_APP_SECRET` · `META_VERIFY_TOKEN` · `META_APP_ID`(optional) | **`lib/channel/pages.ts resolveAppContext` เท่านั้น** (M-2 · verify webhook + echo filter) |
 | `META_PAGE_ID` · `META_PAGE_ACCESS_TOKEN` | **`lib/channel/pages.ts resolvePageContext` เท่านั้น** (M-2 · 🔴 ห้ามอ่าน META_* นอก pages.ts) |
 | `SHEET_SCHEMA` | **`lib/schema-mode.ts sheetSchema()` เท่านั้น** (D-61 · `v2`(default)/`v3` · env-only ถาวร — สลับ = deliberate act ใน Vercel · v3 = สมองใหม่ D-61.A) |
+| `SHEET_BOTLIB_V3_ID` | loader (โหมด v3 เท่านั้น · D-61.B) — ไฟล์ `SakbinBotLibrary-v3` (เจ้าของ own · แชร์ Editor ให้ SA) · แท็บ v3 → `lib/sheets/adapter-v3.ts adaptV3Bundle` → BotLibrary shape เดิม (สถานะ normalize "ว่าง=draft"→canonical ที่ adapter) · seed: `scripts/seed-v3-sheet.ts` (idempotent) · mapping: docs/D61-MIGRATION.md |
 > ⚠️ `SHEET_STEP/FAQ/CONFIG/FOLLOW_URL` **โค้ดไม่อ่านแล้ว** (Step 1 ย้ายไป BOTLIB) — ลบได้ (Phase C ยังไม่ทำ)
 > 🔴 **ทะเบียนรูปแบบ customer id (user_id):** `U`+32hex = **LINE** (raw) · `fb:<pageId>:<psid>` = **Messenger** (M-2) · `TRAIN:<session>` = **T-STUDIO sandbox** · โค้ดที่ push/แยก channel ดู prefix (เช่น cron D-50 ข้าม `fb:`)
 

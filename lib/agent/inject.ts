@@ -65,6 +65,8 @@ interface StepRow {
   name: string;
   /** "กรณี" (v2.0) — คำอธิบายเคสย่อยของประตู · optional · inject เป็น routing hint */
   caseText: string;
+  /** "สาระที่ต้องสื่อ" (D-61.B v3 · checklist เนื้อหาที่บอทต้องสื่อ) — optional แบบเดียวกับ "กรณี" · ชีต v2 ไม่มีคอลัมน์ = ว่าง (พฤติกรรมเดิม 100%) */
+  essence: string;
   entryWhen: string;
   nextWhen: string;
   collect: string;
@@ -100,6 +102,7 @@ function parseStepRows(rows: string[][]): ParsedSteps | null {
   const header = rows[0].map(cleanHeader);
   const thinkIdx = header.indexOf("คิดเอง");
   const caseIdx = header.indexOf("กรณี");
+  const essenceIdx = header.indexOf("สาระที่ต้องสื่อ"); // D-61.B (v3) — optional · v2 ไม่มี = -1
   const statusIdx = statusColumnIndex(header); // status/สถานะ (single source)
 
   const steps: StepRow[] = [];
@@ -113,6 +116,7 @@ function parseStepRows(rows: string[][]): ParsedSteps | null {
       funnelStage: cleanCell(cell(r, cols, "funnel_stage")).toLowerCase(),
       name: cell(r, cols, "ชื่อประตู").trim(),
       caseText: caseIdx >= 0 ? (r[caseIdx] ?? "").trim() : "",
+      essence: essenceIdx >= 0 ? (r[essenceIdx] ?? "").trim() : "",
       entryWhen: cell(r, cols, "เข้าเมื่อ").trim(),
       nextWhen: cell(r, cols, "ไปประตูถัดไปเมื่อ").trim(),
       collect: cell(r, cols, "ต้องเก็บข้อมูล").trim(),
@@ -238,6 +242,7 @@ function fullSalesBlock(s: StepRow): string {
     `[${s.stepId}] ${s.name} (funnel: ${s.funnelStage})`,
     s.caseText && `กรณี: ${s.caseText}`,
     `เข้าเมื่อ: ${s.entryWhen}`,
+    s.essence && `สาระที่ต้องสื่อ: ${s.essence}`, // D-61.B (v3 checklist) — v2 ไม่มีคอลัมน์ = ไม่แสดง
     s.collect && `ต้องเก็บข้อมูล: ${s.collect}`,
     `ไปต่อ: ${s.nextWhen}`,
   ];
@@ -374,6 +379,8 @@ import { buildPriceTable, liveProductSkus, PriceTable } from "@/lib/core/pricing
 
 /** คอลัมน์สินค้าที่ยัด (ไม่รวมราคา — ราคาทุกตัวมาจากตารางราคาสำเร็จรูปที่เดียว กันบอทหยิบเลขผิดตาราง) */
 const CATALOG_PRODUCT_COLS = ["sku", "ชื่อสินค้า", "หน่วย", "สถานะ"];
+/** D-61.B (v3): +สารก่อภูมิแพ้ เข้า prompt (ยกเลิกการจงใจกันของ D-43 — v3 มี assurance guard คุมฝั่ง output แทน) */
+const CATALOG_PRODUCT_COLS_V3 = ["sku", "ชื่อสินค้า", "หน่วย", "สารก่อภูมิแพ้", "สถานะ"];
 
 /** project ตารางเหลือเฉพาะคอลัมน์ที่ระบุ (จับหัวด้วย cleanHeader · ไม่เจอ = ข้าม) */
 function projectColumns(rows: string[][], keep: string[]): string[][] {
@@ -422,6 +429,8 @@ export interface CatalogInput {
   now?: Date;
   /** วิธีคิด (คอลัมน์คำอธิบายของ `จำนวนที่ไม่มีโปร_คิดยังไง` ในชีต) — บอทใช้อธิบายลูกค้าเท่านั้น */
   methodDescription?: string;
+  /** D-61.B (v3 · เคาะ #4ก): เปิดคอลัมน์สารก่อภูมิแพ้เข้า prompt — handler ส่ง true เฉพาะโหมด v3 (v2 = เดิม 100%) */
+  includeAllergen?: boolean;
 }
 
 /**
@@ -450,7 +459,8 @@ function formatPriceTable(t: PriceTable): string {
  * ⚠️ ตาราง enumerate ได้เพราะสินค้า live ตัวเดียว · หลาย sku (ตะกร้าผสม) = ต้องใช้ function calling (ดู DECISIONS D-24)
  */
 export function buildCatalogInjection(productsRows: string[][], promoRows: string[][], input: CatalogInput): string {
-  const products = productsRows.length > 0 ? tabToText(projectColumns(productsRows, CATALOG_PRODUCT_COLS)) : "(ไม่มีข้อมูลสินค้า)";
+  const productCols = input.includeAllergen ? CATALOG_PRODUCT_COLS_V3 : CATALOG_PRODUCT_COLS; // เลือกต้นทาง (D-61.B)
+  const products = productsRows.length > 0 ? tabToText(projectColumns(productsRows, productCols)) : "(ไม่มีข้อมูลสินค้า)";
 
   // ตารางราคาของสินค้า live ทุกตัว (ปัจจุบันตัวเดียว) — คำนวณจริงจาก calculatePrice
   const liveSkus = productsRows.length > 0 ? liveProductSkus(productsRows) : [];

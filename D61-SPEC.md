@@ -2,7 +2,8 @@
 
 > **โมเดล: Fable** (รื้อ invariants หลายชั้น + ออกแบบ prompt ใหม่)
 > **สถานะ: อนุมัติจากเจ้าของ + แชทภาพรวมแล้ว** — เอกสารนี้คือ contract · CC ห้ามเปลี่ยน design เอง ติดอะไรให้หยุดถาม
-> **ความคืบหน้า: เฟส A ✅ (D-61.A · สวิตช์ SHEET_SCHEMA default v2 — สมองใหม่ยังไม่ถูกใช้จริงจน cutover เฟส C) · B/C/D ยังไม่เริ่ม**
+> **ความคืบหน้า: เฟส A ✅ · เฟส B ✅ (D-61.B · ชีต v3+adapter+seed · "ว่าง=draft" isolate ที่ adapter · mapping ใน docs/D61-MIGRATION.md) · C/D ยังไม่เริ่ม**
+> เคาะเพิ่มตอนเฟส B: (1) ก้อนความรู้ ลำดับ กังวล→ข้อเท็จจริง→แนวตอบ (2) funnel map ตายตัว S1-S4+นอกลิสต์→qualified+log (3) สาระที่ต้องสื่อ = optional col แบบ "กรณี" (4) allergen ก+ข — ยกเลิกการกันของ D-43 (5) ฟ้อง schema = log เฟสนี้ · การ์ด dashboard เฟส C (6) write path studio บนชีต v3 → เฟส D · แท็บ "วิธีใช้" มีคำเตือนว่าง=draft
 > เคาะเพิ่มตอนเฟส A: (1) DEFAULT_HANDOFF 2 ค่าตามโหมด (2) regenerate ล้ม→ตัดประโยค→ว่าง→fallback ห้ามเงียบ (3) marker `__HEALTH_NOTIFY__` (4) สวิตช์ env-only ถาวร · หมายเหตุ: payment pre-check "ข้าม AI" = v2 เท่านั้น (v3 AI ต้องเขียน reply · lock payment ยังคุมทั้งคู่)
 > ฐานข้อมูลอ้างอิง: AUDIT report (ส่วน 1 คอลัมน์ / ส่วน 2 ด่าน / ส่วน 3 Config) ที่ทำก่อนหน้า
 

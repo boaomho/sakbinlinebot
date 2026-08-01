@@ -51,6 +51,8 @@ export interface AppConfig {
   assuranceBannedPhrases: string[];
   /** D-61.A (v3): ข้อความ_แจ้งแอดมิน_notify — เนื้อ 🔔 แจ้งกลุ่มตอนติดธงสุขภาพ */
   notifyAdminHealthTemplate: string;
+  /** D-61.B (B5): key ที่ติ๊กคอลัมน์ "เข้า prompt" — header-driven: ชีตไม่มีคอลัมน์นี้ (v2) = null = ดัมพ์ทุกแถวเหมือนเดิม */
+  promptVisibleKeys: Set<string> | null;
   /** คืนสิทธิ์บอท_หลังแชทเงียบ (นาที) — ถ้าลูกค้าเงียบเกินเวลานี้ในโหมดแอดมิน บอทคืนมาดูแลเอง */
   adminSilenceReturnMinutes: number;
   /** ประโยคเปลี่ยนมือ_บอทรับต่อ — ข้อความบอกลูกค้าตอนบอทรับช่วงต่อจากแอดมิน */
@@ -180,9 +182,14 @@ export async function getConfig(): Promise<AppConfig> {
   const rows = lib?.CSV_Config ?? null;
   const raw = new Map<string, string>();
   let loadFailed = false;
+  let promptVisibleKeys: Set<string> | null = null; // D-61.B: null = ชีตไม่มีคอลัมน์ "เข้า prompt" (v2) → ดัมพ์หมดเหมือนเดิม
 
   if (rows && rows.length > 0) {
     const { keyCol, valCol, headerRowIndex } = findKeyValueCols(rows);
+    // D-61.B (B5 · header-driven ไม่ผูกโหมด): มีคอลัมน์ "เข้า prompt" → เก็บเฉพาะ key ที่ติ๊ก
+    const promptColIdx = (rows[headerRowIndex] ?? []).findIndex((c) => cleanCell(c).toLowerCase().includes("เข้า prompt"));
+    if (promptColIdx >= 0) promptVisibleKeys = new Set();
+    const PROMPT_TICK = new Set(["ใช่", "true", "yes", "1", "✓", "เปิด", "y"]);
     for (let i = 0; i < rows.length; i++) {
       if (i === headerRowIndex) continue; // ข้ามแถวหัวตาราง
       const row = rows[i];
@@ -193,6 +200,9 @@ export async function getConfig(): Promise<AppConfig> {
       const keyLower = key.toLowerCase();
       if (keyLower === "key" || keyLower === "ค่า") continue; // กันแถว header ซ้ำ/เผื่อ detect ไม่เจอ
       raw.set(key, value);
+      if (promptVisibleKeys && promptColIdx >= 0 && PROMPT_TICK.has(cleanCell(row[promptColIdx]).toLowerCase())) {
+        promptVisibleKeys.add(key);
+      }
     }
   } else {
     loadFailed = true;
@@ -273,6 +283,7 @@ export async function getConfig(): Promise<AppConfig> {
     healthFlagKeywords: splitList(raw.get("คำ_ธงสุขภาพ")) ?? [...DEFAULT_HEALTH_FLAG_KEYWORDS],
     assuranceBannedPhrases: splitList(raw.get("คำรับรอง_ต้องห้าม")) ?? [...DEFAULT_ASSURANCE_PHRASES],
     notifyAdminHealthTemplate: strOf("ถามเรื่องสุขภาพ/แพ้อาหาร — บอทให้ข้อมูลตามข้อเท็จจริงแล้ว ยังคุยต่อ (ไม่ได้ปิดบอท) รบกวนช่วยดูให้ด้วยค่ะ", "ข้อความ_แจ้งแอดมิน_notify"),
+    promptVisibleKeys, // D-61.B
     adminSilenceReturnMinutes: numOf(45, "คืนสิทธิ์บอท_หลังแชทเงียบ", "คืนสิทธิ์บอท_หลังแชทเงียบ_นาที"),
     botResumeMessage: strOf("ปลาทูมาดูแลต่อเองนะคะ", "ประโยคเปลี่ยนมือ_บอทรับต่อ"),
     testCommandsEnabled: boolOf(true, "เปิด_คำสั่งเทสต์", "เปิด_คำสั่งเทส"),
@@ -290,6 +301,8 @@ export async function getConfig(): Promise<AppConfig> {
 export function formatConfigForPrompt(config: AppConfig): string {
   const lines: string[] = [];
   for (const [key, value] of config.raw.entries()) {
+    // D-61.B (B5): ชีตมีคอลัมน์ "เข้า prompt" → เฉพาะแถวที่ติ๊กถึงเข้า prompt ขาย · ไม่มีคอลัมน์ (v2) = ดัมพ์หมดเหมือนเดิม
+    if (config.promptVisibleKeys && !config.promptVisibleKeys.has(key)) continue;
     lines.push(`${key}: ${value}`);
   }
   if (lines.length === 0) {

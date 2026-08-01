@@ -525,7 +525,9 @@ export function resolveRuntimeVars(text: string, ctx: RuntimeVarContext): string
 export const CATALOG_TEXT_VARS = [
   "{ชื่อสินค้า}", "{วิธีเก็บรักษา}", "{โปรโมชั่นทั้งหมด}",
   "{เลข อย.}", "{ส่วนประกอบตามฉลาก}", "{รูปสินค้า}", "{ราคาต่อหน่วย}", "{โปรแนะนำ}",
-  // 🔴 ไม่มี {สารก่อภูมิแพ้} — ช่องนั้นให้แอดมิน ไม่ใช่บอท (H1 · D-43)
+  // D-61.B (เคาะ #4ข): เปิด {สารก่อภูมิแพ้} — ยกเลิกการจงใจกันของ D-43 (v3 มี assurance guard คุมฝั่ง output แทน)
+  // pattern-driven ทั้งสองโหมด: ชีต v2 ไม่มี token นี้ = ไม่มีผลใดๆ (ไม่ต้อง branch)
+  "{สารก่อภูมิแพ้}",
 ] as const;
 /** token time ที่ resolveDeliveryVar จัดการ */
 export const DELIVERY_VARS = ["{วันจัดส่ง}"] as const;
@@ -588,13 +590,14 @@ function firstLiveProductVars(productRows: string[][]): Record<string, string> |
   const header = productRows[pCols.headerRow].map(normHeader);
   const gi = (h: string) => header.indexOf(h);
   const nameI = gi(PRODUCT_COLS.name), storI = gi("วิธีเก็บรักษา"), fdaI = gi("เลข อย."),
-    ingI = gi("ส่วนประกอบตามฉลาก"), imgI = gi("รูปสินค้า"), priceI = gi(PRODUCT_COLS.normalPrice);
+    ingI = gi("ส่วนประกอบตามฉลาก"), imgI = gi("รูปสินค้า"), priceI = gi(PRODUCT_COLS.normalPrice),
+    allergenI = gi("สารก่อภูมิแพ้"); // D-61.B เคาะ #4ข
   for (let i = pCols.headerRow + 1; i < productRows.length; i++) {
     const row = productRows[i];
     const sku = cleanCell(row[pCols.cols[PRODUCT_COLS.sku]]);
     if (!sku || cleanCell(row[pCols.cols[PRODUCT_COLS.status]]) !== STATUS_LIVE) continue;
     const get = (j: number) => (j >= 0 ? cleanCell(row[j]) : "");
-    return { name: get(nameI), storage: get(storI), fda: get(fdaI), ingredients: get(ingI), imageUrl: get(imgI), unitPrice: get(priceI) };
+    return { name: get(nameI), storage: get(storI), fda: get(fdaI), ingredients: get(ingI), imageUrl: get(imgI), unitPrice: get(priceI), allergen: get(allergenI) };
   }
   return null;
 }
@@ -614,6 +617,7 @@ export function resolveCatalogVars(text: string, productRows: string[][], promoR
     if (p.fda) out = out.split("{เลข อย.}").join(p.fda);
     if (p.ingredients) out = out.split("{ส่วนประกอบตามฉลาก}").join(p.ingredients);
     if (p.unitPrice) out = out.split("{ราคาต่อหน่วย}").join(p.unitPrice);
+    if (p.allergen) out = out.split("{สารก่อภูมิแพ้}").join(p.allergen); // D-61.B เคาะ #4ข (ว่าง = คงวงเล็บ → var-guard เดิมจับ)
     if (out.includes("{รูปสินค้า}")) {
       if (p.imageUrl) out = out.split("{รูปสินค้า}").join(p.imageUrl); // URL ดิบ
       else {

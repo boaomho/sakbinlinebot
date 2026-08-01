@@ -54,6 +54,7 @@ export function testConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     healthFlagKeywords: [], // D-61.A (v3): default ปิดในเทส — เทส v3 override เอง (โค้ดจริง default = DEFAULT_HEALTH_FLAG_KEYWORDS)
     assuranceBannedPhrases: [...DEFAULT_ASSURANCE_PHRASES],
     notifyAdminHealthTemplate: "ถามเรื่องสุขภาพ/แพ้อาหาร — บอทให้ข้อมูลตามข้อเท็จจริงแล้ว ยังคุยต่อ (ไม่ได้ปิดบอท) รบกวนช่วยดูให้ด้วยค่ะ",
+    promptVisibleKeys: null, // D-61.B: v2 ไม่มีคอลัมน์ "เข้า prompt" = ดัมพ์หมดเดิม
     adminSilenceReturnMinutes: 45,
     botResumeMessage: "ปลาทูมาดูแลต่อเองนะคะ",
     testCommandsEnabled: true,

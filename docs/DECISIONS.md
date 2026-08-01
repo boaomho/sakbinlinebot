@@ -861,6 +861,18 @@ Dashboard คุมบอทได้จริง: สวิตช์ราย�
 - **harness:** `deriveOrderStatus` **ครบทุก combination** N/M/O/P+notified (6 สถานะ + cancelled precedence) · route: TRAIN กรอง default/toggle · สถานะถูกทุกแถว · sort ใหม่สุดก่อน · counts · shipped_pending vs notified · auth 401 · **462 passed** · build เขียว · v1 fidelity เดิมเขียว
 - **ไม่ทำในเฟสนี้:** ปุ่มกระทำ (คอนเฟิร์ม/ยกเลิก) จาก UI = อนาคต (write phase) · ลิงก์แถวชีต = T2-ค
 
+### D-61.B · v3.0 เฟส B — ชีต v3 + adapter loader (1 commit) — mapping: [D61-MIGRATION.md](D61-MIGRATION.md)
+ไฟล์ชีตใหม่ `SakbinBotLibrary-v3` (เจ้าของสร้าง+แชร์ Editor ให้ SA · ENV `SHEET_BOTLIB_V3_ID`) + adapter อ่านสอง schema — v2 ไม่แตะ
+- **adapter (`lib/sheets/adapter-v3.ts` · pure):** `adaptV3Bundle` — จุดแปลงเดียว: `เส้นทางขาย`→CSV_Step (header v2-compatible + optional `สาระที่ต้องสื่อ`) · `ความรู้`→CSV_FAQ (คำตอบ=ก้อน **ความกังวลจริง→ข้อเท็จจริง→แนวตอบ** เคาะ #1 · CSV_Objections=[]) · Products/Promo/Vars pass-through · CSV_Follow=[] (B7)
+- 🔴 **"ว่าง=draft" isolate ที่ adapter บรรทัดเดียว:** normalize สถานะทุกแถว → canonical `live`/`draft` ก่อนคืน bundle — `isActiveStatus` (ว่าง=live ของ v2) ไม่มีวันเจอค่าว่างจาก v3 · Products/Promo (`==="live"`) ถูกด้วย · แถว draft ไม่ถูกกรองทิ้ง (studio เห็น) · KI-08 ปิดถาวรฝั่ง v3
+- **funnel map ตายตัวใน adapter (เคาะ #2):** S1→lead · S2/S2Q→qualified · S3→quoted · S4→won · flag handoff→handoff · **นอกลิสต์→qualified+log** — region routing + dashboard ทำงานต่อครบ · ชีต v3 ไม่มีคอลัมน์ funnel
+- **loader dispatch:** โหมด v3 → `SHEET_BOTLIB_V3_ID` + แท็บ v3 → adapter · v2 path เดิมทุกบรรทัด · header หลักขาด → แท็บ degrade ว่าง + log `sheets-v3` (**ห้าม fallback ยัดดิบ** B1 · การ์ด dashboard = เฟส C เคาะ #5)
+- **`สาระที่ต้องสื่อ` (เคาะ #3):** optional col แบบ "กรณี" ใน `fullSalesBlock` — v2 ไม่มีคอลัมน์ = ไม่แสดง (zero change)
+- **สารก่อภูมิแพ้ (เคาะ #4):** (ก) `includeAllergen` param ใน buildCatalogInjection (handler ส่ง v3) (ข) `{สารก่อภูมิแพ้}` เข้า CATALOG_TEXT_VARS+resolver ทั้งสองโหมด (pattern-driven · ชีต v2 ไม่มี token=ไม่มีผล) — 🔴 **จดตามเคาะ: ยกเลิกการจงใจตัด {สารก่อภูมิแพ้} ของ D-43** เพราะ v3 มี assurance guard คุมฝั่ง output แทน
+- **Config `เข้า prompt` (B5 · header-driven ไม่ผูกโหมด):** มีคอลัมน์→`promptVisibleKeys` กรอง formatConfigForPrompt · ไม่มี (v2)→null=ดัมพ์หมดเดิม
+- **seed (`scripts/seed-v3-sheet.ts` · idempotent — แท็บมีแล้ว=ข้าม):** แท็บ **วิธีใช้** (คำเตือน "ยังไม่ live · ว่าง=draft กลับด้าน!" เคาะ #6) · เส้นทางขาย S1-S4+S2Q (live · สาระร่างจาก A3) · ความรู้ (K001 ตัวอย่าง draft) · Products (allergen ค่า B4 ของเจ้าของ) · Promo P1-P10 · Vars · Config canonical (ตัด key ตาย · เลขบัญชี=placeholder ต้องกรอกก่อน cutover)
+- **harness:** adapter (normalize ว่าง→draft ทุกแท็บ · funnel map+นอกลิสต์ · ก้อนความรู้ลำดับเคาะ · degrade header ขาด · ผ่าน buildStepInjection ได้+draft ถูกกรอง) · loader dispatch v3 (range แท็บ v3 · id ไม่ตั้ง→null) · allergen ก/ข · config เข้า prompt (parse+filter+v2 null) · **v2 full suite เขียว**
+
 ### D-61.A · v3.0 "บอทนักขาย CX" เฟส A — สมองใหม่ (1 commit) — contract เต็ม: [D61-SPEC.md](../D61-SPEC.md)
 รื้อใหญ่ที่สุดของโปรเจกต์ เฟสแรก: prompt ขายเขียนใหม่ + โหมดเรียบเรียงสด + assurance guard + แปลง คำ_notify เป็นธงสุขภาพ
 - 🔴 **สวิตช์ `SHEET_SCHEMA` (env-only ถาวร · เจ้าของเคาะ #4) — default `v2` = โค้ดเดินเส้นเดิมทุกบรรทัด** · v3 ยังไม่มีทางถูกใช้จริงจนเฟส C cutover · full suite ทั้ง repo รันใน v2 = บทพิสูจน์ v2-frozen ในตัว
