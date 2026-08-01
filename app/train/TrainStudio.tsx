@@ -20,6 +20,8 @@ interface Turn {
   dropped: { text: string; vars: string[] }[];
   /** UX: echo user ทันทีที่ส่ง · true = รอบอทตอบ (โชว์ typing) */
   pending?: boolean;
+  /** X-ray ของเทิร์นนี้ (เก็บใน memory ของ session · ดูย้อนหลังได้ตลอด · ไม่ persist) */
+  xray?: Record<string, unknown> | null;
 }
 interface TurnResult {
   bubbles: { via: string; messages: Msg[] }[];
@@ -102,6 +104,7 @@ export default function TrainStudio() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [xray, setXray] = useState<Record<string, unknown> | null>(null);
+  const [xrayTurn, setXrayTurn] = useState<number | null>(null); // ปักหมุดดู X-ray เทิร์นย้อนหลัง (null = เทิร์นล่าสุด)
   const [orderRows, setOrderRows] = useState<Record<string, string>[]>([]);
   const [adminPushes, setAdminPushes] = useState<{ to: string; text?: string }[]>([]);
   const [overlay, setOverlay] = useState<OverlayEntry[]>([]);
@@ -158,8 +161,8 @@ export default function TrainStudio() {
   // เติมผลลงเทิร์นที่ค้าง (pending) ตัวสุดท้าย — เทิร์นเรียงตามลำดับ + busy กันยิงซ้อน จึงชี้ตัวท้ายได้
   function fillPendingTurn(data: TurnResult) {
     const bot = data.bubbles.flatMap((b) => b.messages.map((m) => m.type === "text" ? { text: m.text ?? "" } : { text: `🖼 [รูป] ${m.originalContentUrl ?? ""}`, image: true }));
-    setTurns((prev) => prev.map((t, i) => (i === prev.length - 1 ? { ...t, bot, sources: data.sources ?? [], dropped: data.droppedBubbles ?? [], pending: false } : t)));
-    setXray(data.xray); setOrderRows(data.orderRows ?? []); setAdminPushes(data.adminPushes ?? []);
+    setTurns((prev) => prev.map((t, i) => (i === prev.length - 1 ? { ...t, bot, sources: data.sources ?? [], dropped: data.droppedBubbles ?? [], pending: false, xray: data.xray } : t)));
+    setXray(data.xray); setXrayTurn(null); setOrderRows(data.orderRows ?? []); setAdminPushes(data.adminPushes ?? []);
   }
   const clearPending = () => setTurns((prev) => prev.map((t, i) => (i === prev.length - 1 && t.pending ? { ...t, pending: false } : t)));
 
@@ -198,17 +201,17 @@ export default function TrainStudio() {
       const r = await fetch("/train/api/cron", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId, tracking }) });
       const data = (await r.json()) as TurnResult;
       if (r.ok) {
-        setXray(data.xray); setOrderRows(data.orderRows ?? []); setAdminPushes(data.adminPushes ?? []);
+        setXray(data.xray); setXrayTurn(null); setOrderRows(data.orderRows ?? []); setAdminPushes(data.adminPushes ?? []);
         // D-50: ข้อความแจ้งพัสดุ push เข้า collector (bubbles) → โชว์ในแชท
         const bot = (data.bubbles ?? []).flatMap((b) => b.messages.map((m) => m.type === "text" ? { text: m.text ?? "" } : { text: `🖼 [รูป]`, image: true }));
-        if (bot.length > 0) setTurns((prev) => [...prev, { user: "⚙️ (ระบบ: cron แจ้งพัสดุ)", bot, sources: [], dropped: [] }]);
+        if (bot.length > 0) setTurns((prev) => [...prev, { user: "⚙️ (ระบบ: cron แจ้งพัสดุ)", bot, sources: [], dropped: [], xray: data.xray }]);
       }
     } finally { setBusy(false); }
   }
   async function reset() {
     if (busy) return; setBusy(true);
     await fetch("/train/api/reset", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId }) });
-    setTurns([]); setSys(["🔄 ล้างความจำลูกค้าจำลองแล้ว"]); setXray(null); setOrderRows([]); setAdminPushes([]); setEditor(null); setPreview(null); setBusy(false);
+    setTurns([]); setSys(["🔄 ล้างความจำลูกค้าจำลองแล้ว"]); setXray(null); setXrayTurn(null); setOrderRows([]); setAdminPushes([]); setEditor(null); setPreview(null); setBusy(false);
   }
 
   // ---- เฟส ข: editor ----
@@ -467,7 +470,18 @@ export default function TrainStudio() {
               {t.bot.map((b, bi) => (
                 <div key={bi} style={{ ...S.botB, ...(t.sources.length ? S.botEditable : {}) }} onClick={() => t.sources.length && openEditor(ti)} title={t.sources.length ? "แตะเพื่อดูที่มา + แก้" : ""}>
                   {b.text}
-                  {t.sources.length > 0 && bi === t.bot.length - 1 && <div style={{ fontSize: 10, color: "#8aa", marginTop: 3 }}>✎ {t.sources.map((s) => s.label).join(" + ")}</div>}
+                  {bi === t.bot.length - 1 && (
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 3 }}>
+                      {t.sources.length > 0 && <span style={{ fontSize: 10, color: "#8aa" }}>✎ {t.sources.map((s) => s.label).join(" + ")}</span>}
+                      {t.xray && (
+                        <span
+                          style={{ fontSize: 11, color: xrayTurn === ti ? "#06735c" : "#8aa", cursor: "pointer", fontWeight: xrayTurn === ti ? 700 : 400 }}
+                          onClick={(e) => { e.stopPropagation(); setXrayTurn(ti); if (isMobile) setShowX(true); }}
+                          title="ดู X-ray ของเทิร์นนี้"
+                        >🔬 X-ray</span>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
               {t.dropped.map((d, di) => (
@@ -737,11 +751,18 @@ export default function TrainStudio() {
   }
 
   function renderXray() {
+    // ปักหมุดเทิร์นย้อนหลัง (กด 🔬 ท้ายบอลลูน) → โชว์ของเทิร์นนั้น · ไม่ปัก = เทิร์นล่าสุด
+    const pinned = xrayTurn !== null ? turns[xrayTurn] : null;
+    const xr = pinned?.xray ?? (xrayTurn !== null ? null : xray);
     return (
       <div>
-        <div style={S.title}>🔬 X-ray เทิร์นล่าสุด</div>
-        {!xray && <div>ยังไม่มีเทิร์น</div>}
-        {xray && (
+        <div style={{ ...S.title, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+          <span>🔬 X-ray {pinned ? `เทิร์น #${xrayTurn! + 1}` : "เทิร์นล่าสุด"}</span>
+          {pinned && <button style={{ ...S.toolBtn, padding: "2px 8px", fontSize: 11 }} onClick={() => setXrayTurn(null)}>→ ล่าสุด</button>}
+        </div>
+        {pinned && <div style={{ fontSize: 11, color: "#888", marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>ลูกค้า: {pinned.user}</div>}
+        {!xr && <div>ยังไม่มีเทิร์น</div>}
+        {xr && (() => { const xray = xr; return (
           <>
             <div style={S.title}>ประตู</div>
             <pre style={S.pre}>{`${xray.stage ?? "-"} · ${xray.stageName ?? ""}\nfunnel: ${xray.funnel ?? "-"} · human_mode: ${xray.humanMode}`}</pre>
@@ -757,7 +778,7 @@ export default function TrainStudio() {
               <><div style={S.title}>⚠️ blocked / extraction</div><pre style={S.pre}>{JSON.stringify({ blocked: xray.blocked, extraction: xray.extraction, degraded: xray.degraded }, null, 1)}</pre></>
             )}
           </>
-        )}
+        ); })()}
         {orderRows.length > 0 && (
           <>
             <div style={S.title}>🧾 แถว &quot;จะถูกเขียน&quot; (ไม่เขียนจริง)</div>
