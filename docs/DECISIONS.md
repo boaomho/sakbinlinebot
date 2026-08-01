@@ -861,6 +861,15 @@ Dashboard คุมบอทได้จริง: สวิตช์ราย�
 - **harness:** `deriveOrderStatus` **ครบทุก combination** N/M/O/P+notified (6 สถานะ + cancelled precedence) · route: TRAIN กรอง default/toggle · สถานะถูกทุกแถว · sort ใหม่สุดก่อน · counts · shipped_pending vs notified · auth 401 · **462 passed** · build เขียว · v1 fidelity เดิมเขียว
 - **ไม่ทำในเฟสนี้:** ปุ่มกระทำ (คอนเฟิร์ม/ยกเลิก) จาก UI = อนาคต (write phase) · ลิงก์แถวชีต = T2-ค
 
+### D-60.2 · bugfix กติกา 11 — ผู้ช่วยเทรนไม่เข้า flow สัมภาษณ์ + greeting "ผม" (1 commit)
+**อาการจริง:** สั่ง "เพิ่ม Step H5 handoff_notify เรื่องสุขภาพ" (งานใหม่ ข้อมูลไม่ครบ) → ออก proposal เต็มใบทันที ไม่ถามกลับ · greeting UI ใช้ "ผม"
+- **วินิจฉัย (ก):** prompt บน deploy = ล่าสุด (มี 11/12/persona ครบ) · "ผม" = **hardcode ใน UI 2 จุด** (TrainStudio greeting + ข้อความ error) คนละที่กับ prompt
+- **วินิจฉัย (ข) ทำไมโมเดลข้ามกติกา 11:** (1) กติกาจมกลางลิสต์ + ข้อยกเว้น "ข้อมูลครบ→ข้ามได้" หลวม — คำสั่งสุขภาพชนกับ template ในกติกา 2 → โมเดลตีความว่า "ครบ" (2) responseSchema บังคับ field `proposals` → JSON-mode เติม array (3) ไม่มีสัญญาณโครงสร้าง — server validate ไม่ได้
+- **วินิจฉัย (ค) ทำไมเทสไม่จับ:** เทสเดิม assert "prompt มีข้อความ" + parser JSON สังเคราะห์ — ไม่เทสพฤติกรรมโมเดล (Gemini mocked) และ **invariant "เทิร์นสัมภาษณ์ห้ามมี proposals" ไม่เคยอยู่ในโค้ด** (อยู่แค่ prompt = เทสไม่ได้)
+- **แก้ 3 ชั้น:** (1) **FLOW ย้ายขึ้นต้น prompt** + few-shot (เทิร์นแรกงานใหม่→`{"phase":"interview",proposals:[]}`) + ข้อยกเว้นแคบลง ("แค่บอกหัวข้อ/ชื่อประตู = ไม่ครบ ต้อง interview") (2) **schema +`phase`** enum `interview|draft|proposal` (required) (3) 🔴 **server gate ใน parser**: phase ≠ proposal → **ทิ้ง proposals ทั้งหมด + log `phase-gate`** (invariant อยู่ในโค้ด · phase หาย = proposal compat)
+- **UI:** greeting + error message → persona ค่ะ ("บอกได้เลยค่ะ…" / "บอกให้ผู้ช่วยปรับได้เลยค่ะ")
+- **harness:** phase gate (interview/draft ทิ้ง · proposal/หาย ผ่าน · เคส H5 จริง) · FLOW index ก่อนกติกาเหล็ก + few-shot + ข้อยกเว้นแคบ · file-guard UI ไร้ "ผม" (แบบ prompt-lint) · **real-Gemini skip-gated**: เคส H5 เป๊ะ → proposals ว่าง+ถามกลับ
+
 ### D-60 · คำ_notify รายประตู + เกลาผู้ช่วยเทรน (system prompt CX + โหมดเกลาเสียง · 1 commit)
 ต่อยอด D-58 (notify) + D-59 (ผู้ช่วยเทรน) — 3 ส่วนในคอมมิตเดียว
 - **ส่วน 1 · per-door `คำ_notify_<step_id>`:** config `parseNotifyDoors(raw)` แปลง key `คำ_notify_H5`→`{door:"H5", keywords}` (alias `คำ_notify` ไม่มี suffix → handler รวมเป็น `NOTIFY_DOOR=H1` เดิม · backward compat) · handler **loop ทุกประตู** (notifyDoors + alias) · match แรกชนะ · **fail-safe/dedup ต่อประตู** (funnelStageOf(door)=handoff_notify+pattern · dedup ผ่าน delivered_steps=stage) · 🔴 lint exempt **ผูก funnel อยู่แล้ว** (`h1FlagsForRow` เช็ค funnel_stage ไม่ผูกชื่อแถว — ไม่ต้องแก้)

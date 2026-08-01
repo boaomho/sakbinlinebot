@@ -379,7 +379,7 @@ export default function TrainStudio() {
   function asstErr(d: { status?: string; lint?: LintFinding[]; message?: string; error?: string }) {
     const lint = (d.lint ?? []).filter((f) => f.level === "block").map((f) => f.message).join(" · ");
     const msg = lint || d.message || (d.status === "dup" ? "key นี้มีอยู่แล้ว" : d.error || "เขียนไม่ได้");
-    setAsstMsgs((m) => [...m, { role: "assistant", text: `⚠️ เขียนไม่ได้: ${msg}\n(แก้ในการ์ด หรือบอกผมให้ปรับ)` }]);
+    setAsstMsgs((m) => [...m, { role: "assistant", text: `⚠️ เขียนไม่ได้: ${msg}\n(แก้ในการ์ด หรือบอกให้ผู้ช่วยปรับได้เลยค่ะ)` }]);
   }
   const markHandled = (p: AsstProposal) => setSkipKeys((s) => new Set(s).add(`${p.tab}::${p.key}`));
   function skipProp(p: AsstProposal) { markHandled(p); setProposals((ps) => ps.filter((x) => x.id !== p.id)); flash("ข้ามแถวนี้ (ไม่เสนอซ้ำในรอบนี้)"); }
@@ -544,7 +544,7 @@ export default function TrainStudio() {
               <button style={{ ...S.toolBtn, background: "transparent", color: "#fff", border: "1px solid rgba(255,255,255,.5)" }} onClick={() => setAsstOpen(false)}>✕ ปิด</button>
             </div>
             <div style={{ flex: 1, overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
-              {asstMsgs.length === 0 && <div style={S.sysB}>บอกผมได้เลย เช่น &quot;เพิ่ม FAQ ว่าส่งต่างจังหวัดกี่วัน&quot; หรือ &quot;แก้คำตอบเรื่องการเก็บรักษา&quot; · เรื่องสุขภาพผมจะเสนอเป็นประตูส่งต่อแอดมินให้</div>}
+              {asstMsgs.length === 0 && <div style={S.sysB}>บอกได้เลยค่ะ เช่น &quot;เพิ่ม FAQ ว่าส่งต่างจังหวัดกี่วัน&quot; หรือ &quot;แก้คำตอบเรื่องการเก็บรักษา&quot; · เรื่องสุขภาพผู้ช่วยจะเสนอเป็นประตูส่งต่อแอดมินให้ค่ะ</div>}
               {asstMsgs.map((m, i) => <div key={i} style={m.role === "user" ? S.userB : { ...S.botB, cursor: "default" }}>{m.text}</div>)}
               {proposals.map((p) => {
                 const isLiveEdit = p.action === "edit-row" && liveKeys[p.tab]?.has(p.key);

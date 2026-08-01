@@ -40,7 +40,7 @@ app/api/
   cron/follow/route.ts    cron ตามลูกค้า (Follow — dormant)
 app/train/        # T-STUDIO UI (TrainStudio client · +📚 คลังความรู้ +🤖 ผู้ช่วยเทรน) + api/{login,turn,reset,cron,preview,write,rows,assistant}
 # api/write โหมด: diff·commit·add-row·status (T2-ค) +origin ai (D-59 · TRAIN_LOG ai-draft/ai-edit) · api/rows = list แถว · api/assistant = ผู้ช่วยเทรน (D-59)
-lib/train/assistant.ts   # D-59/60 จ1: runTrainAssistant (Gemini call แยก · GEMINI_API_KEY_TRAIN optional · +excludeKeys) + parseAssistantResponse (schema/cap3/scope) + buildAssistantSystem (12 กติกา · flow สัมภาษณ์/เสียงนักขาย/persona ค่ะ/เกลาเสียง)
+lib/train/assistant.ts   # D-59/60 จ1: runTrainAssistant (Gemini call แยก · GEMINI_API_KEY_TRAIN optional · +excludeKeys) + parseAssistantResponse (schema/cap3/scope · D-60.2 **phase gate**: phase interview|draft → ทิ้ง proposals) + buildAssistantSystem (FLOW สัมภาษณ์ขึ้นต้น+few-shot · 12 กติกา · เสียงนักขาย/persona ค่ะ/เกลาเสียง)
 lib/train/rewrite-safety.ts # D-60: rewriteSafety(old,new) จับ {var} หาย/ตัวเลขเปลี่ยน (import-free · client+server+เทส ใช้ร่วม)
 lib/train/assistant-kb.ts # D-59: buildAssistantKB (header/keys/keywords ทุกแท็บ + claims + สินค้า/ตัวแปร read-only · loader cache 60วิ)
 # lib/gemini.ts export MODEL/SAFETY_SETTINGS (reuse โดย assistant · ไม่ diverge) · proposal → เขียนผ่าน /train/api/write เดิม (AI ไม่มีเส้นทางเขียนตรง)

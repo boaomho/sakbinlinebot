@@ -54,6 +54,54 @@ describe("D-59 · parseAssistantResponse", () => {
   });
 });
 
+// ---------- D-60.2 · phase gate (invariant flow สัมภาษณ์อยู่ในโค้ด — บั๊กที่เทสเดิมจับไม่ได้เพราะ invariant อยู่แค่ใน prompt) ----------
+describe("D-60.2 · phase gate — จังหวะสัมภาษณ์ห้ามมี proposals", () => {
+  const prop = { action: "add-row", tab: "CSV_Step", key: "H5", note: "n", cols: [{ name: "funnel_stage", value: "handoff_notify" }] };
+  it('🔴 phase="interview" + โมเดลแอบส่ง proposals → server ทิ้งทั้งหมด (เคสบั๊กจริง H5)', () => {
+    const out = parseAssistantResponse(JSON.stringify({ reply: "ขอถามก่อนค่ะ", phase: "interview", proposals: [prop] }));
+    expect(out.phase).toBe("interview");
+    expect(out.proposals, "gate ทิ้ง proposals").toHaveLength(0);
+    expect(out.reply).toContain("ขอถาม");
+  });
+  it('phase="draft" → ทิ้งเหมือนกัน (จังหวะเสนอ 3 แบบใน reply)', () => {
+    expect(parseAssistantResponse(JSON.stringify({ reply: "3 แบบค่ะ...", phase: "draft", proposals: [prop] })).proposals).toHaveLength(0);
+  });
+  it('phase="proposal" → ผ่านปกติ · phase หาย = proposal (compat)', () => {
+    expect(parseAssistantResponse(JSON.stringify({ reply: "x", phase: "proposal", proposals: [prop] })).proposals).toHaveLength(1);
+    expect(parseAssistantResponse(JSON.stringify({ reply: "x", proposals: [prop] })).proposals).toHaveLength(1);
+  });
+});
+
+describe("D-60.2 · prompt: FLOW ขึ้นต้น + few-shot + ข้อยกเว้นแคบ", () => {
+  it("🔴 FLOW สัมภาษณ์อยู่ก่อนกติกาเหล็ก (ไม่จมกลางลิสต์)", () => {
+    const s = buildAssistantSystem("KB");
+    expect(s.indexOf("FLOW สัมภาษณ์"), "FLOW มาก่อน").toBeLessThan(s.indexOf("กติกาเหล็ก"));
+    expect(s).toContain('"phase":"interview"'); // few-shot ตัวอย่างเทิร์นแรกงานใหม่
+    expect(s, "ข้อยกเว้นแคบ: แค่บอกหัวข้อ/ชื่อประตู = ไม่ครบ").toContain("แค่บอกหัวข้อ/ชื่อประตู");
+    expect(s, "บอกโมเดลว่า server จะทิ้ง").toContain("ระบบจะทิ้ง proposals อัตโนมัติ");
+  });
+});
+
+describe("D-60.2 · UI persona — ไม่มี 'ผม' hardcode ใน TrainStudio (guard แบบ prompt-lint)", () => {
+  it("🔴 greeting/ข้อความผู้ช่วยใน UI ต้องไม่ใช้ ผม", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("app/train/TrainStudio.tsx", "utf8");
+    expect(src).not.toMatch(/บอกผม|ผมจะ|ผมช่วย|ผมให้/);
+  });
+});
+
+// real-Gemini (skip-gated เหมือน golden): เคสบั๊กจริง — เทิร์นแรกงานใหม่ H5 ต้องไม่ออกใบ
+const RUN_REAL = process.env.HARNESS_REAL_GEMINI === "1" && Boolean(process.env.GEMINI_API_KEY);
+describe.skipIf(!RUN_REAL)("D-60.2 · real Gemini — เทิร์นแรกงานใหม่ = interview (ไม่มี proposal)", () => {
+  it("สั่ง 'เพิ่ม Step H5 handoff_notify เรื่องสุขภาพ' (ไม่มีตัวอย่าง/คำตอบ) → proposals ว่าง + ถามกลับ", async () => {
+    const { runTrainAssistant } = await import("@/lib/train/assistant");
+    const kb = await buildAssistantKB();
+    const out = await runTrainAssistant([{ role: "user", text: "เพิ่ม Step H5 เป็น handoff_notify เวลาลูกค้ามีคำถามหรือแจ้งเกี่ยวกับสุขภาพ" }], kb);
+    expect(out.proposals, "เทิร์นแรกงานใหม่ห้ามออกใบ").toHaveLength(0);
+    expect(out.reply.length, "ต้องถามกลับ ไม่ใช่ตอบเปล่า").toBeGreaterThan(20);
+  }, 45_000);
+});
+
 // ---------- KB ----------
 describe("D-59 · buildAssistantKB", () => {
   it("มี header/keys 4 แท็บ + วิธีใช้ + claims", async () => {

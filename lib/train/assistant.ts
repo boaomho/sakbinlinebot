@@ -15,7 +15,9 @@ export interface AssistantProposal {
   cols: Record<string, string>;
   note: string;
 }
-export interface AssistantResult { reply: string; proposals: AssistantProposal[] }
+/** D-60.2: จังหวะของ flow สัมภาษณ์ — โมเดลประกาศเอง · server gate: ≠"proposal" → proposals ถูกทิ้ง */
+export type AssistantPhase = "interview" | "draft" | "proposal";
+export interface AssistantResult { reply: string; phase: AssistantPhase; proposals: AssistantProposal[] }
 
 const MAX_PROPOSALS = 3; // กติกา 10: ≤3 ต่อเทิร์น
 const MAX_HISTORY = 12; // cost cap
@@ -25,6 +27,17 @@ const VALID_TABS = new Set<string>(ASSISTANT_TABS);
 export function buildAssistantSystem(kb: string, excludeKeys: string[] = []): string {
   const lines = [
     'คุณคือ "ผู้ช่วยเทรน" ของร้านสากบิน — ช่วยเจ้าของเพิ่ม/แก้ "คลังความรู้" ของบอทขาย "ปลาทู" (คุณไม่ใช่บอทขาย ไม่ได้คุยกับลูกค้า) ตอบเจ้าของสั้น กระชับ เป็นกันเอง',
+    "",
+    "🔴🔴 FLOW สัมภาษณ์ — ตัดสินใจข้อนี้ก่อนกติกาอื่นทุกข้อ · ทุกเทิร์นต้องประกาศ phase:",
+    '· phase="interview" (จังหวะ1): งานใหม่/รีไรต์ที่ยังไม่รู้บริบท → **proposals ต้องเป็น [] ว่างเสมอ** · ถามกลับใน reply: "ลูกค้าจะพิมพ์ประมาณไหน (2-3 ประโยค)" + ข้อเท็จจริงร้านที่ยังไม่มีใน KB',
+    '· phase="draft" (จังหวะ2): เสนอร่างคำตอบ 3 แบบใน reply — **proposals ยังต้องเป็น []** · ทุกแบบคุณภาพเต็ม (ดี/ดีขึ้น/ดีที่สุด) ผสม 3 องค์ประกอบ: (ก) ให้ทางเลือก-เห็นสองมุม (ข) social proof/ภาพการใช้จริง (ค) ถามกลับแบบมีตัวเลือก — ต่างกันที่น้ำหนักการผสมตามการอ่านความกังวล (ระบุหัวแต่ละแบบว่าเน้นอะไร) · ห้ามต่างแค่ความยาว/โทน · ห้ามสั้นกุด',
+    '· phase="proposal" (จังหวะ3): เจ้าของเคาะคำตอบแล้ว → อนุมานคอลัมน์ที่เหลือ+เคสทดสอบ → ออก proposal',
+    '🔴 ข้าม flow ไป phase="proposal" ได้เฉพาะเมื่อเจ้าของให้ครบทั้งสองอย่าง: (1) ตัวอย่างคำพูด/คำถามลูกค้า (2) เนื้อคำตอบหรือข้อเท็จจริงที่จะใช้ตอบ · **แค่บอกหัวข้อ/ชื่อประตู/funnel_stage = ยังไม่ครบ ต้อง interview ก่อน** · ยกเว้นแก้เล็ก (พิมพ์ผิด/เปลี่ยนคำเดียว) = proposal ได้เลย',
+    "🔴 ระบบจะทิ้ง proposals อัตโนมัติถ้า phase ไม่ใช่ proposal — อย่าออกใบก่อนถึงจังหวะ",
+    "ตัวอย่าง (เทิร์นแรกงานใหม่ · ข้อมูลไม่ครบ):",
+    'เจ้าของ: "เพิ่ม Step H5 เป็น handoff_notify เวลาลูกค้าถามเรื่องสุขภาพ"',
+    'คุณ: {"phase":"interview","reply":"ได้เลยค่ะ ขอเก็บข้อมูลก่อนนะคะ — ลูกค้าจะพิมพ์มาประมาณไหนคะ (ขอ 2-3 ประโยคตัวอย่าง) และมีข้อเท็จจริงเรื่องส่วนผสม/ข้อควรระวังที่อยากให้บอทพูดถึงเป็นพิเศษไหมคะ","proposals":[]}',
+    "",
     'สิ่งที่ทำได้: เสนอ (ก) ร่างแถวใหม่ หรือ (ข) แก้แถวเดิม ของ 4 แท็บ: CSV_FAQ / CSV_Objections / CSV_Step / CSV_Vars — เสนอเป็น proposal เท่านั้น เจ้าของกดยืนยันเอง',
     "กติกาเหล็ก:",
     "1. 🔴 ทุกแถวใหม่/แก้ = draft เสมอ — บอกเจ้าของให้ทดสอบในห้องซ้อมก่อน แล้วค่อยกดเผยแพร่ (live) · ห้ามพูดว่า 'เพิ่มขึ้นหน้าร้านแล้ว'",
@@ -37,11 +50,7 @@ export function buildAssistantSystem(kb: string, excludeKeys: string[] = []): st
     "8. 🔴 ถามก่อนเดา — ข้อมูลไม่พอ = ห้ามออก proposal ให้ถามกลับใน reply · ช่องที่ไม่รู้ = เว้นว่าง + บอกเจ้าของกรอกเอง ห้ามแต่ง",
     "9. ทุก proposal ใส่ note พร้อมเคสทดสอบจริง ≥2: (+1) ประโยคที่ต้องจุดแถวนี้ · (−1) ประโยคใกล้เคียงที่ต้องไม่จุด (เช่นคำชน substring หรือเคสสุขภาพที่ควรไป handoff_notify)",
     `10. เสนอไม่เกิน ${MAX_PROPOSALS} proposals ต่อเทิร์น · งานใหญ่ให้แบ่งเป็นหลายรอบ`,
-    "11. 🔴 FLOW สัมภาษณ์ (งานใหม่/รีไรต์ที่ยังไม่รู้บริบท): เทิร์นแรก **ห้ามออก proposal** —",
-    "    · จังหวะ1: ถามกลับใน reply ว่า 'ลูกค้าจะพิมพ์ประมาณไหน (2-3 ประโยค)' + ข้อเท็จจริงร้านที่ยังไม่มีใน KB (ตามกติกา 8)",
-    "    · จังหวะ2: เสนอร่างคำตอบ 3 แบบใน reply — **ทุกแบบคุณภาพเต็ม** (ดี/ดีขึ้น/ดีที่สุด) ทุกแบบผสม 3 องค์ประกอบ: (ก) ให้ทางเลือก-เห็นสองมุม (ข) social proof/ภาพการใช้จริง (ค) ถามกลับแบบมีตัวเลือก — ต่างกันที่ 'น้ำหนักการผสม' ตามการอ่านความกังวล (ระบุหัวแต่ละแบบว่าเน้นอะไร) · ห้ามต่างแค่ความยาว/โทน · ห้ามสั้นกุด (ความสบายใจต้องการเนื้อ)",
-    "    · จังหวะ3: เจ้าของเคาะคำตอบแล้ว → อนุมานคอลัมน์ที่เหลือ+เคสทดสอบ → ออก proposal เดียว",
-    "    · ยกเว้น: เจ้าของให้ข้อมูลครบแต่ต้น → ข้ามไปจังหวะ3 ได้ · แก้เล็ก (พิมพ์ผิด/คำเดียว) → ไม่ต้องเข้า flow",
+    "11. 🔴 FLOW สัมภาษณ์ — ดูบล็อกบนสุด (ตัดสิน phase ก่อนทุกอย่าง · เทิร์นแรกงานใหม่ = interview เสมอ)",
     "12. 🔴 เสียงนักขาย CX — สวมหมวก 3 ใบทุกคำตอบ:",
     "    · หมวก1 นักแก้ปัญหา: อ่าน 'ความต้องการ/กังวลแท้จริง' ก่อนร่างเสมอ (บอกเจ้าของในจังหวะ2 ให้แก้ได้ถ้าอ่านผิด)",
     "    · หมวก2 นักสร้างความต้องการ: เชื่อมสินค้าเข้า 'ชีวิตลูกค้า' — แก้ปัญหา/ทำให้ชีวิตดีขึ้นยังไง ไม่ใช่แค่ข้อมูลถูก",
@@ -66,6 +75,8 @@ const PROPOSAL_SCHEMA = {
   type: Type.OBJECT,
   properties: {
     reply: { type: Type.STRING },
+    // D-60.2: โมเดลประกาศจังหวะ flow — server gate ทิ้ง proposals เมื่อ ≠ "proposal"
+    phase: { type: Type.STRING, enum: ["interview", "draft", "proposal"] },
     proposals: {
       type: Type.ARRAY,
       items: {
@@ -84,17 +95,24 @@ const PROPOSAL_SCHEMA = {
       },
     },
   },
-  required: ["reply", "proposals"],
+  required: ["reply", "phase", "proposals"],
 };
 
-/** 🔴 parser บริสุทธิ์ (unit-test) — กรอง action/tab ผิด · cols array→record · cap 3 · reply เสมอ */
+/** 🔴 parser บริสุทธิ์ (unit-test) — กรอง action/tab ผิด · cols array→record · cap 3 · reply เสมอ
+ *  D-60.2: phase gate — โมเดลประกาศ phase ≠ "proposal" → **ทิ้ง proposals ทั้งหมด** (invariant flow สัมภาษณ์อยู่ในโค้ด ไม่ใช่แค่ prompt)
+ *  phase หาย/ไม่รู้จัก = "proposal" (compat การตอบเก่า · schema บังคับ enum อยู่แล้ว) */
 export function parseAssistantResponse(raw: string | undefined): AssistantResult {
-  if (!raw) return { reply: "ขออภัยค่ะ ระบบสะดุด ลองพิมพ์ใหม่อีกครั้งนะคะ", proposals: [] };
+  if (!raw) return { reply: "ขออภัยค่ะ ระบบสะดุด ลองพิมพ์ใหม่อีกครั้งนะคะ", phase: "proposal", proposals: [] };
   let parsed: unknown;
-  try { parsed = JSON.parse(raw); } catch { return { reply: raw.slice(0, 500), proposals: [] }; }
+  try { parsed = JSON.parse(raw); } catch { return { reply: raw.slice(0, 500), phase: "proposal", proposals: [] }; }
   const obj = (parsed && typeof parsed === "object" ? parsed : {}) as Record<string, unknown>;
   const reply = typeof obj.reply === "string" ? obj.reply : "";
+  const phase: AssistantPhase = obj.phase === "interview" || obj.phase === "draft" ? obj.phase : "proposal";
   const rawList = Array.isArray(obj.proposals) ? obj.proposals : [];
+  if (phase !== "proposal") {
+    if (rawList.length > 0) console.warn(JSON.stringify({ scope: "train-assistant", event: "phase-gate", phase, dropped: rawList.length }));
+    return { reply: reply || "ค่ะ", phase, proposals: [] }; // จังหวะสัมภาษณ์/ร่าง = ห้ามมีใบ proposal
+  }
   const proposals: AssistantProposal[] = [];
   for (const p of rawList) {
     if (!p || typeof p !== "object") continue;
@@ -115,7 +133,7 @@ export function parseAssistantResponse(raw: string | undefined): AssistantResult
     proposals.push({ action, tab, key, cols, note: typeof o.note === "string" ? o.note : "" });
     if (proposals.length >= MAX_PROPOSALS) break; // กติกา 10
   }
-  return { reply: reply || "ค่ะ", proposals };
+  return { reply: reply || "ค่ะ", phase, proposals };
 }
 
 let client: GoogleGenAI | null = null;
@@ -146,6 +164,6 @@ export async function runTrainAssistant(messages: AssistantMessage[], kb: string
     return parseAssistantResponse(response.text);
   } catch (error) {
     console.error(JSON.stringify({ scope: "train-assistant", warning: "assistant call failed", error: String(error).slice(0, 100) }));
-    return { reply: "ขออภัยค่ะ ผู้ช่วยขัดข้องชั่วคราว ลองใหม่อีกครั้งนะคะ", proposals: [] };
+    return { reply: "ขออภัยค่ะ ผู้ช่วยขัดข้องชั่วคราว ลองใหม่อีกครั้งนะคะ", phase: "proposal", proposals: [] };
   }
 }
