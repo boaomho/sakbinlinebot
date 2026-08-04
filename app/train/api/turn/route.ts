@@ -26,7 +26,9 @@ export async function POST(req: NextRequest) {
     imageBase64?: string;
     imageMime?: string;
     overlay?: unknown;
+    schema?: string; // D-61.C: ซ้อมชีต v2/v3 ต่อ session (undefined = ตาม env)
   };
+  const schema = body.schema === "v3" ? "v3" : body.schema === "v2" ? "v2" : undefined;
   if (!body.sessionId || !SESSION_RE.test(body.sessionId)) {
     return NextResponse.json({ error: "sessionId ไม่ถูกต้อง" }, { status: 400 });
   }
@@ -43,7 +45,7 @@ export async function POST(req: NextRequest) {
   if (!text) return NextResponse.json({ error: "ไม่มีข้อความ" }, { status: 400 });
 
   try {
-    const result = await runTrainTurn(body.sessionId, text, image, overlay);
+    const result = await runTrainTurn(body.sessionId, text, image, overlay, schema);
     return NextResponse.json(result);
   } catch (error) {
     console.error(JSON.stringify({ scope: "train", warning: "turn failed", error: String(error).slice(0, 200) }));

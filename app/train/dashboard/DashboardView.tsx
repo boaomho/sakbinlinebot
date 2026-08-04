@@ -32,6 +32,9 @@ interface Ord {
   phone: string; address: string; status: OrderStatus;
 }
 interface OrdData { orders: Ord[]; counts: Record<OrderStatus, number>; total: number }
+/** D-61.C: การ์ดสุขภาพชีต v3 */
+interface SchemaTab { tab: string; ok: boolean; missing: string[]; rows: number; live: number; draft: number }
+interface SchemaData { mode: string; v3Configured: boolean; tabs: SchemaTab[]; placeholders: string[]; ready?: boolean; error?: string }
 
 const C = { prod: "#c0392b", prodBg: "#fdecea", card: "#fff", border: "#e2e2e2", ink: "#1a1a1a", sub: "#666" };
 const S: Record<string, React.CSSProperties> = {
@@ -81,6 +84,7 @@ export default function DashboardView() {
   const [channelF, setChannelF] = useState<Channel | "all">("all");
   const [detail, setDetail] = useState<Detail | null>(null);
   const [tab, setTab] = useState<"customers" | "orders">("customers");
+  const [schema, setSchema] = useState<SchemaData | null>(null); // D-61.C
   const [ordData, setOrdData] = useState<OrdData | null>(null);
   const [ordStatusF, setOrdStatusF] = useState<OrderStatus | "all">("all");
   const [ordDetail, setOrdDetail] = useState<Ord | null>(null);
@@ -97,6 +101,15 @@ export default function DashboardView() {
   }, [range, includeTrain]);
 
   useEffect(() => { load(); }, [load]);
+
+  // D-61.C: การ์ดสุขภาพชีต v3 (โหลดครั้งเดียวตอนเข้า · เช็คก่อน cutover)
+  useEffect(() => {
+    if (authed !== true) return;
+    fetch("/train/api/dashboard/schema", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d && setSchema(d as SchemaData))
+      .catch(() => { /* การ์ดเสริม — ล้มไม่กระทบ dashboard */ });
+  }, [authed]);
 
   const loadOrders = useCallback(async () => {
     setBusy(true);
@@ -165,6 +178,26 @@ export default function DashboardView() {
       </div>
 
       <div style={S.wrap}>
+        {schema && schema.v3Configured && (
+          <div style={{ ...S.card, marginBottom: 12, borderColor: schema.ready ? "#9dd6b3" : "#e0b400", background: schema.ready ? "#f2fbf5" : "#fffbe6" }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <b style={{ fontSize: 13 }}>{schema.ready ? "✅" : "⚠️"} ชีต v3 (D-61)</b>
+              <span style={{ ...S.chip, background: schema.mode === "v3" ? "#ffe3e3" : "#eef" }}>โหมดที่ระบบใช้จริง: {schema.mode}</span>
+              {schema.error && <span style={{ fontSize: 12, color: C.prod }}>{schema.error}</span>}
+            </div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+              {schema.tabs.map((t) => (
+                <span key={t.tab} style={{ ...S.chip, background: t.ok ? "#e7f6ec" : "#fbe6e6", color: t.ok ? "#1e7e42" : "#b00" }}
+                  title={t.missing.length ? `header ขาด: ${t.missing.join(", ")}` : `${t.rows} แถว`}>
+                  {t.ok ? "✅" : "⚠️"} {t.tab} · live {t.live}/draft {t.draft}{t.missing.length ? ` · ขาด ${t.missing.join(",")}` : ""}
+                </span>
+              ))}
+            </div>
+            {schema.placeholders.length > 0 && (
+              <div style={{ fontSize: 12, color: C.prod, marginTop: 6 }}>🔴 ยังเป็น placeholder ต้องกรอกก่อน cutover: {schema.placeholders.join(" · ")}</div>
+            )}
+          </div>
+        )}
         <div style={S.controls}>
           <button style={{ ...S.btn, ...(tab === "customers" ? S.btnOn : {}) }} onClick={() => setTab("customers")}>👥 ลูกค้า</button>
           <button style={{ ...S.btn, ...(tab === "orders" ? S.btnOn : {}) }} onClick={() => setTab("orders")}>🧾 ออเดอร์</button>

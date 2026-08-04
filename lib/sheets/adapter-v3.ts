@@ -140,6 +140,51 @@ function adaptPassthrough(tab: string, rows: string[][]): string[][] {
   });
 }
 
+// ---- D-61.C: ตรวจสุขภาพชีต v3 (การ์ดใน /train/dashboard · ไม่ silent ตาม B1) ----
+
+export interface V3TabStat {
+  tab: string;
+  ok: boolean;
+  /** header หลักที่ขาด (ทำให้แท็บ degrade) */
+  missing: string[];
+  /** จำนวนแถวข้อมูล (ไม่นับ header/แถวว่าง) */
+  rows: number;
+  live: number;
+  draft: number;
+}
+
+/** header หลักต่อแท็บ — ขาด = แท็บ degrade (ฟีเจอร์ที่พึ่งตัวนั้นปิด · ห้าม fallback ยัดดิบ) */
+const REQUIRED_HEADERS: Record<string, string[]> = {
+  เส้นทางขาย: ["step_id", "เข้าเมื่อ", "สถานะ"],
+  ความรู้: ["ลูกค้าพูดยังไง", "สถานะ"],
+  CSV_Products: ["sku", "ชื่อสินค้า", "ราคาปกติ_ต่อหน่วย", "สถานะ"],
+  CSV_Promo: ["promo_id", "sku", "จำนวน", "ราคาโปร", "สถานะ"],
+  CSV_Vars: ["ตัวแปร", "ค่า", "สถานะ"],
+  CSV_Config: ["key"],
+};
+
+/** สถิติ+ปัญหาต่อแท็บ (pure) — dashboard ใช้โชว์ ✅/⚠️ ก่อน cutover */
+export function validateV3Bundle(rawByTab: Record<string, string[][]>): V3TabStat[] {
+  return V3_SHEET_TABS.map((tab) => {
+    const rows = rawByTab[tab] ?? [];
+    if (rows.length === 0) return { tab, ok: false, missing: ["(แท็บว่าง/ไม่พบ)"], rows: 0, live: 0, draft: 0 };
+    const { idx } = headerIndex(rows);
+    const missing = (REQUIRED_HEADERS[tab] ?? []).filter((h) => idx(h) === -1);
+    const statusIdx = idx("สถานะ");
+    const keyIdx = idx(tab === "เส้นทางขาย" ? "step_id" : tab === "ความรู้" ? "ลูกค้าพูดยังไง" : tab === "CSV_Config" ? "key" : tab === "CSV_Vars" ? "ตัวแปร" : tab === "CSV_Promo" ? "promo_id" : "sku");
+    let live = 0;
+    let draft = 0;
+    let count = 0;
+    for (let i = 1; i < rows.length; i++) {
+      const key = keyIdx >= 0 ? cleanCell(rows[i][keyIdx] ?? "") : "";
+      if (!key) continue;
+      count += 1;
+      if (statusIdx >= 0) (normalizeStatus(rows[i][statusIdx]) === "live" ? live++ : draft++);
+    }
+    return { tab, ok: missing.length === 0 && count > 0, missing, rows: count, live, draft };
+  });
+}
+
 /** ประกอบ bundle v3 → BotLibrary shape เดิม (CSV_Objections=[] แท็บรวมแล้ว · CSV_Follow=[] ไม่ยกมา B7) */
 export function adaptV3Bundle(rawByTab: Record<string, string[][]>): BotLibrary {
   const get = (tab: V3Tab) => rawByTab[tab] ?? [];

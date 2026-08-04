@@ -106,8 +106,9 @@ async function rowsAsObjects(ctx: TrainSandbox): Promise<Record<string, string>[
   });
 }
 
-async function withSession<T>(sessionId: string, fn: (ctx: TrainSandbox) => Promise<T>): Promise<T> {
+async function withSession<T>(sessionId: string, fn: (ctx: TrainSandbox) => Promise<T>, schema?: "v2" | "v3"): Promise<T> {
   const ctx = createSandbox(sessionId);
+  ctx.schema = schema; // D-61.C: ตั้งก่อนเข้า ALS → ทุก await ข้างในเห็นโหมดเดียวกัน (loader/config/prompt/guard)
   return runInSandbox(ctx, async () => {
     const saved = await loadTrainSession(sessionId); // train DB (อยู่ใน sandbox แล้ว)
     if (saved) {
@@ -139,6 +140,7 @@ export async function runTrainTurn(
   text: string,
   image?: DownloadedContent,
   overlay: OverlayEntry[] = [],
+  schema?: "v2" | "v3", // D-61.C: ซ้อมชีต v3 ได้โดยไม่แตะ prod (undefined = ตาม env)
 ): Promise<TrainTurnResult> {
   return withSession(sessionId, async (ctx) => {
     ctx.overlay = overlay; // draft มีผลตั้งแต่ loadBotLibrary (bypass cache ใน sandbox)
@@ -147,7 +149,7 @@ export async function runTrainTurn(
     await processMessage(ctx.userId, text, new LineTransport("TRAIN-REPLY-TOKEN", ctx.userId), config, switches, image);
     const customer = await getCustomer(ctx.userId);
     return buildResult(ctx, customer, text);
-  });
+  }, schema);
 }
 
 /** เฟส ข: render preview 1 แถว+draft สด (สำหรับ editor · reuse resolver production) */
@@ -156,8 +158,10 @@ export async function runTrainPreview(
   tab: string,
   key: string,
   draft: Record<string, string>,
+  schema?: "v2" | "v3", // D-61.C
 ): Promise<RenderResult> {
   const ctx = createSandbox(sessionId);
+  ctx.schema = schema;
   return runInSandbox(ctx, async () => {
     const config = await getConfig();
     const lib = await loadBotLibrary();
@@ -169,7 +173,7 @@ export async function runTrainPreview(
 
 /** ปุ่ม "ติ๊ก M + cron แจกเลข" — ติ๊กคอนเฟิร์มทุกแถวค้าง แล้วเรียก handler cron จริงใน sandbox
  *  opts.tracking (D-50): จำลองทีมแพ็คกรอกเลขพัสดุ(P) + ติ๊ก M → cron รอบเดียวแจกเลข(O)+แจ้งพัสดุลูกค้า */
-export async function runTrainCron(sessionId: string, opts: { tracking?: string } = {}): Promise<TrainTurnResult> {
+export async function runTrainCron(sessionId: string, opts: { tracking?: string; schema?: "v2" | "v3" } = {}): Promise<TrainTurnResult> {
   return withSession(sessionId, async (ctx) => {
     const header = await readOrdersHeader();
     const mIdx = header.indexOf("คอนเฟิร์ม");
@@ -199,7 +203,7 @@ export async function runTrainCron(sessionId: string, opts: { tracking?: string 
     await cronOrdersGET(req as unknown as NextRequest);
     const customer = await getCustomer(ctx.userId);
     return buildResult(ctx, customer, ""); // system event — ไม่มี userMessage
-  });
+  }, opts.schema);
 }
 
 /** ปุ่ม /reset — ล้างความจำลูกค้าจำลอง (พฤติกรรมเดียวกับคำสั่ง /reset จริง) + ล้าง fake grid */

@@ -134,6 +134,7 @@ export default function TrainStudio() {
   const [proposals, setProposals] = useState<AsstProposal[]>([]);
   const [liveKeys, setLiveKeys] = useState<Record<string, Set<string>>>({});
   const [skipKeys, setSkipKeys] = useState<Set<string>>(new Set()); // D-60: แถวที่จัดการ/ข้าม (ไม่วนเสนอซ้ำ)
+  const [schema, setSchema] = useState<"v2" | "v3">("v2"); // D-61.C: ซ้อมชีตเก่า/ใหม่ (ปุ่มถาวร · ไม่กระทบ prod)
   const chatRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const previewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -170,13 +171,13 @@ export default function TrainStudio() {
     setBusy(true);
     setTurns((prev) => [...prev, { user, userImage, bot: [], sources: [], dropped: [], pending: true }]); // optimistic: echo ทันที + typing
     try {
-      const r = await fetch("/train/api/turn", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId, overlay, ...body }) });
+      const r = await fetch("/train/api/turn", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId, overlay, schema, ...body }) });
       const data = (await r.json()) as TurnResult;
       if (!r.ok) { setSys((p) => [...p, `⚠️ ${data.error ?? r.status}`]); clearPending(); return; }
       fillPendingTurn(data);
     } catch (e) { setSys((p) => [...p, `⚠️ ${String(e)}`]); clearPending(); }
     finally { setBusy(false); }
-  }, [sessionId, overlay]);
+  }, [sessionId, overlay, schema]);
 
   async function send() {
     const text = input.trim(); if (!text || busy) return;
@@ -198,7 +199,7 @@ export default function TrainStudio() {
     if (busy) return; setBusy(true);
     setSys((p) => [...p, tracking ? `📦 จำลอง: กรอกเลขพัสดุ ${tracking} + cron → แจ้งลูกค้า` : "⚙️ จำลอง: ติ๊ก M + cron แจกเลข"]);
     try {
-      const r = await fetch("/train/api/cron", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId, tracking }) });
+      const r = await fetch("/train/api/cron", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId, tracking, schema }) });
       const data = (await r.json()) as TurnResult;
       if (r.ok) {
         setXray(data.xray); setXrayTurn(null); setOrderRows(data.orderRows ?? []); setAdminPushes(data.adminPushes ?? []);
@@ -242,7 +243,7 @@ export default function TrainStudio() {
     if (previewTimer.current) clearTimeout(previewTimer.current);
     previewTimer.current = setTimeout(async () => {
       const draft = Object.fromEntries(cols.map((c) => [c.name, c.value]));
-      const r = await fetch("/train/api/preview", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId, tab, key, draft }) });
+      const r = await fetch("/train/api/preview", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId, tab, key, draft, schema }) });
       setPreview((await r.json()) as PreviewResult);
     }, 350);
   }, [sessionId]);
@@ -456,6 +457,12 @@ export default function TrainStudio() {
         <header style={S.header}>
           <span>🐟 ปลาทู · 🧪 ห้องซ้อม</span>
           <span style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            {/* D-61.C: สลับชีตที่ห้องซ้อมอ่าน (เฉพาะ session ซ้อม · prod ไม่กระทบ) — ปุ่มถาวร */}
+            <button
+              onClick={() => { const next = schema === "v3" ? "v2" : "v3"; setSchema(next); setSys((p) => [...p, `🔀 ห้องซ้อมสลับไปอ่านชีต ${next === "v3" ? "v3 (ใหม่)" : "v2 (เดิม)"} — reset เพื่อเริ่มบทใหม่จะแม่นสุด`]); }}
+              style={{ color: "#fff", background: schema === "v3" ? "rgba(255,255,255,.3)" : "rgba(0,0,0,.18)", border: "none", padding: "5px 10px", borderRadius: 8, fontSize: 12, cursor: "pointer", fontWeight: 700 }}
+              title="ชีตที่ห้องซ้อมอ่าน (ไม่กระทบลูกค้าจริง)"
+            >ชีต: {schema}</button>
             <button onClick={() => setAsstOpen(true)} style={{ color: "#fff", background: "rgba(0,0,0,.18)", border: "none", padding: "5px 10px", borderRadius: 8, fontSize: 12, cursor: "pointer" }}>🤖 ผู้ช่วยเทรน</button>
             <button onClick={openMgmt} style={{ color: "#fff", background: "rgba(0,0,0,.18)", border: "none", padding: "5px 10px", borderRadius: 8, fontSize: 12, cursor: "pointer" }}>📚 คลังความรู้</button>
             <a href="/train/dashboard" style={{ color: "#fff", textDecoration: "none", background: "rgba(0,0,0,.18)", padding: "4px 10px", borderRadius: 8, fontSize: 12 }}>🔴 ร้านจริง →</a>

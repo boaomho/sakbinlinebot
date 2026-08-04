@@ -15,12 +15,14 @@ export async function POST(req: NextRequest) {
     tab?: string;
     key?: string;
     draft?: Record<string, string>;
+    schema?: string; // D-61.C
   };
   if (!body.sessionId || !SESSION_RE.test(body.sessionId)) return NextResponse.json({ error: "sessionId ไม่ถูกต้อง" }, { status: 400 });
   if (!body.tab || !body.key) return NextResponse.json({ error: "ต้องมี tab + key" }, { status: 400 });
 
   try {
-    const result = await runTrainPreview(body.sessionId, body.tab, body.key, body.draft ?? {});
+    const schema = body.schema === "v3" ? "v3" : body.schema === "v2" ? "v2" : undefined;
+    const result = await runTrainPreview(body.sessionId, body.tab, body.key, body.draft ?? {}, schema);
     return NextResponse.json(result);
   } catch (error) {
     console.error(JSON.stringify({ scope: "train", warning: "preview failed", error: String(error).slice(0, 200) }));

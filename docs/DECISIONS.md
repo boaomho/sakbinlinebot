@@ -861,6 +861,16 @@ Dashboard คุมบอทได้จริง: สวิตช์ราย�
 - **harness:** `deriveOrderStatus` **ครบทุก combination** N/M/O/P+notified (6 สถานะ + cancelled precedence) · route: TRAIN กรอง default/toggle · สถานะถูกทุกแถว · sort ใหม่สุดก่อน · counts · shipped_pending vs notified · auth 401 · **462 passed** · build เขียว · v1 fidelity เดิมเขียว
 - **ไม่ทำในเฟสนี้:** ปุ่มกระทำ (คอนเฟิร์ม/ยกเลิก) จาก UI = อนาคต (write phase) · ลิงก์แถวชีต = T2-ค
 
+### D-61.C · v3.0 เฟส C — golden + การ์ด schema + เตรียม cutover (1 commit) — checklist: [D61-CUTOVER.md](D61-CUTOVER.md)
+- 🔴 **sandbox schema override (เจ้าของเคาะ ก):** `TrainSandbox.schema` + `sheetSchema()` เช็ค ALS ก่อน env → **ห้องซ้อมสลับ v2/v3 ได้เองไม่ต้อง deploy** · prod ไม่มี context = อ่าน env เสมอ (pattern guard เดิม) · **ปุ่ม "ชีต: v2/v3" ใน /train ถาวรหลัง cutover** · thread ผ่าน turn/preview/cron routes
+- 🔴 **แก้ config memo leak (คู่กัน):** `getConfig` memo 5 วิ เป็น global → เทิร์นซ้อม v3 เคยรั่วให้ prod เห็น 5 วิ · แก้แบบ loader (sandbox: อ่านสด + ไม่เขียน cache)
+- **golden 2 ชั้น:** **D** `v3-golden.test.ts` (18 เคส · รันทุก npm test · scripted): payment-first (โอนต้องมีสลิปก่อน · COD ครบเขียนได้) · ราคาจาก engine + price guard จับเลขมั่ว · **choice-close ban** (matcher + สแกนชีต) · สุขภาพ (ไม่ปิดบอท+🔔 ครั้งเดียว+ไม่มีคำรับรอง+ตัดประโยค+fallback) · handoff (ขอคน/เคลม K017/ขายส่ง K018) · claims/บอลลูน/สลิป invariant · sandbox override + memo · validateV3Bundle
+  · **G** `v3-golden-live.test.ts` (gated `HARNESS_REAL_GEMINI=1 HARNESS_REAL_SHEET=1`): 9 บทสนทนา (ทักเปล่า/กลางทาง/S2Q/ตอบแทรก-พากลับ/โอน/COD) + **เคสสุขภาพ+ส่งต่อรัน `GOLDEN_ROUNDS`=3 รอบ ต้องผ่านครบทุกรอบ** (เจ้าของเคาะ · non-deterministic) → เขียน **scorecard** `tmp/v3-golden-scorecard.md`
+- **การ์ดฟ้อง schema (เคาะ #5 เฟส B):** `validateV3Bundle` (pure · header หลักขาด/แท็บว่าง/นับ live-draft) + route `api/dashboard/schema` (อ่านไฟล์ v3 ตรง + จับ placeholder เลขบัญชี) + การ์ดบนสุดของ dashboard (โหมดที่ระบบใช้จริง · ✅/⚠️ ต่อแท็บ · placeholder ค้าง)
+- **cron ยืนยันสองโหมด (ข้อ 4):** cron orders แตะ schema ทางเดียว = `getConfig` (Orders คนละไฟล์) → **เทสใหม่: โหมด v3 แจกเลข+แจ้งพัสดุ+greeting ครบ** · cron follow: v3 ไม่มีแท็บ Follow (B7) → skip + log `skipped-v3` ชัดเจน
+- **few-shot ราคา (ข้อ 3):** prompt v3 ใช้ placeholder อยู่แล้ว (เลข "29" อยู่ใน SPEC ไม่ใช่ prompt) → เสริมคำสั่ง "ห้ามลอก ... / ห้ามจำเลขจากตัวอย่าง · โครงค่าส่งอ่านจากตารางราคา" + แก้ SPEC ให้ตรงราคานิ่ง (95+30=125 · 3 ถ้วยส่งฟรี · COD ไม่บวก)
+- **draft ในห้องซ้อม v3 (ข้อ 5):** overlay ผูก `TAB_KEY_COL` ที่มีแต่ชื่อ CSV_* → **ยังไม่ทำงานกับแท็บ v3** · เฟสนี้: เจ้าของสลับ K001-K019 เป็น live ก่อนซ้อม (ปลอดภัยเพราะไฟล์ยังไม่ถูกอ่าน) · วงจร draft เต็มกลับมาเฟส D พร้อม write path
+
 ### D-61.B · v3.0 เฟส B — ชีต v3 + adapter loader (1 commit) — mapping: [D61-MIGRATION.md](D61-MIGRATION.md)
 ไฟล์ชีตใหม่ `SakbinBotLibrary-v3` (เจ้าของสร้าง+แชร์ Editor ให้ SA · ENV `SHEET_BOTLIB_V3_ID`) + adapter อ่านสอง schema — v2 ไม่แตะ
 - **adapter (`lib/sheets/adapter-v3.ts` · pure):** `adaptV3Bundle` — จุดแปลงเดียว: `เส้นทางขาย`→CSV_Step (header v2-compatible + optional `สาระที่ต้องสื่อ`) · `ความรู้`→CSV_FAQ (คำตอบ=ก้อน **ความกังวลจริง→ข้อเท็จจริง→แนวตอบ** เคาะ #1 · CSV_Objections=[]) · Products/Promo/Vars pass-through · CSV_Follow=[] (B7)

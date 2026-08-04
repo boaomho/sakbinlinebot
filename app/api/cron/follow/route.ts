@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getConfig, resolveFeatureSwitches } from "@/lib/config";
 import { loadBotLibrary } from "@/lib/sheets/loader";
+import { isSchemaV3 } from "@/lib/schema-mode";
 import { getStaleCustomers, hasFollowedRecently, logFollowSent } from "@/lib/db";
 import { pushRawText } from "@/lib/line";
 
@@ -77,6 +78,11 @@ export async function GET(req: NextRequest) {
 
   const lib = await loadBotLibrary();
   const followRows = lib?.CSV_Follow ?? null;
+  // D-61.C: โหมด v3 ไม่ยกแท็บ Follow มา (spec B7 · dormant) → adapter คืน [] → skip พร้อม log ที่อ่านออก
+  if (lib && (followRows?.length ?? 0) === 0 && isSchemaV3()) {
+    console.log(JSON.stringify({ scope: "cron-follow", event: "skipped-v3", reason: "schema v3 ไม่มีแท็บ Follow (D-61 B7 · dormant)" }));
+    return NextResponse.json({ status: "skipped", reason: "schema v3: ไม่มีแท็บ Follow (dormant ตาม D-61 B7)" }, { status: 200 });
+  }
   if (!followRows || followRows.length === 0) {
     return NextResponse.json({ status: "skipped", reason: "CSV_Follow โหลดไม่ได้ (SHEET_BOTLIB_ID?)" }, { status: 200 });
   }

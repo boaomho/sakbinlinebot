@@ -1,5 +1,6 @@
 import { loadBotLibrary } from "./sheets/loader";
 import { DEFAULT_ASSURANCE_PHRASES } from "./guards/assurance";
+import { getTrainSandbox } from "./train/sandbox";
 // หมายเหตุ: cleanCell/stripKeyAnnotation ยังเป็น copy ในไฟล์นี้ (regex อักขระล่องหนแก้ยาก)
 // ตัวกลางอยู่ lib/sheets/clean.ts แล้ว — ตรงกัน 100% · ถ้าแก้ regex ต้องแก้ทั้ง 2 ที่
 
@@ -174,7 +175,10 @@ export function parseNotifyDoors(raw: Map<string, string>): { door: string; keyw
 
 export async function getConfig(): Promise<AppConfig> {
   const now = Date.now();
-  if (cachedConfig && now - cachedAt < CONFIG_MEMO_MS) {
+  // 🔴 D-61.C: ห้องซ้อมอาจชี้ชีตคนละ schema (sandbox override) → ห้ามใช้/เขียน memo ร่วมกับ prod
+  //    (กัน config v3 จากเทิร์นซ้อมรั่วไปให้ลูกค้าจริงเห็น 5 วินาที) — pattern เดียวกับ loader cache
+  const inSandbox = Boolean(getTrainSandbox());
+  if (!inSandbox && cachedConfig && now - cachedAt < CONFIG_MEMO_MS) {
     return cachedConfig;
   }
 
@@ -293,8 +297,11 @@ export async function getConfig(): Promise<AppConfig> {
     loadFailed,
   };
 
-  cachedConfig = config;
-  cachedAt = now;
+  if (!inSandbox) {
+    // sandbox ไม่เขียน memo (กัน config ของชีตซ้อมรั่วไป prod · D-61.C)
+    cachedConfig = config;
+    cachedAt = now;
+  }
   return config;
 }
 

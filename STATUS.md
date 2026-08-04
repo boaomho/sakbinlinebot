@@ -4,7 +4,9 @@
 - **เฟส A (สมองใหม่) เสร็จ ✅** บน `main` — สวิตช์ `SHEET_SCHEMA` (env-only · default **v2 = พฤติกรรมเดิม 100%**) · prompt v3 (`prompt/system-v3.ts` · หมวก 3 ใบ/3C/ตอบแทรก-พากลับ/4 ประตู/few-shot เจ้าของ) · เรียบเรียงสด (verbatim/precedence ไม่วิ่งใน v3) · ธงสุขภาพ `คำ_ธงสุขภาพ` (hint+🔔 dedup `__HEALTH_NOTIFY__`+ไม่ปิดบอท) · assurance guard (block→regenerate 1→ตัดบรรทัด→fallback · ห้ามเงียบ) · `DEFAULT_HANDOFF_KEYWORDS_V3` (v2 เดิมไม่ขยับ)
 - **เฟส B (ชีต v3 + adapter) เสร็จ ✅** บน `main` — adapter จุดเดียว (`adapter-v3.ts`): map แท็บ (เส้นทางขาย→Step · ความรู้→FAQ รวม OBJ) + **normalize สถานะ "ว่าง=draft" isolate ที่ adapter** + funnel map ตายตัว · loader dispatch `SHEET_BOTLIB_V3_ID` · `สาระที่ต้องสื่อ`/สารก่อภูมิแพ้ เข้า prompt (v3) · Config `เข้า prompt` header-driven · seed script idempotent (แท็บวิธีใช้+คำเตือน) · mapping: [docs/D61-MIGRATION.md](docs/D61-MIGRATION.md)
 - 🔴 **เจ้าของหลัง seed:** เปิดไฟล์ v3 ตรวจ — แท็บวิธีใช้/เส้นทางขาย/Config · **กรอกจริง: เลขที่บัญชี·ชื่อบัญชี·ธนาคาร (ยัง placeholder) + คำต้องห้าม_โฆษณา + รูปสินค้า URL** ก่อน cutover
-- **ต่อไป: เฟส C** (dual-read + golden ≥25 + cutover กับเจ้าของ) → **D** (ผู้ช่วยเทรน v3 + โหมดสัมภาษณ์เซ็ตอัพ)
+- **เฟส C (golden + การ์ด schema + เตรียม cutover) เสร็จ ✅** บน `main` — **ปุ่ม "ชีต: v2/v3" ในห้องซ้อม** (sandbox override ต่อ session · prod ไม่กระทบ · ถาวร) + แก้ config memo leak · golden 2 ชั้น (D 18 เคสรันทุก npm test · G gated real Gemini+ชีตจริง → scorecard) · การ์ดสุขภาพชีต v3 ใน dashboard · cron ยืนยันสองโหมด · **checklist วันสลับ: [docs/D61-CUTOVER.md](docs/D61-CUTOVER.md)**
+- 🔴 **cutover พร้อมเมื่อ:** เจ้าของสลับ K001-K019 → live · กรอกเลขบัญชี/คำต้องห้าม/รูปสินค้า · การ์ด schema เขียวหมด · ซ้อม 5 บทผ่าน · golden G ผ่านเกณฑ์ → ตั้ง `SHEET_SCHEMA=v3` ใน Vercel (rollback = สลับกลับ v2 · ~1 นาที)
+- **ต่อไป: เฟส D** (ผู้ช่วยเทรน v3 + โหมดสัมภาษณ์เซ็ตอัพ + write path/วงจร draft บนชีต v3)
 - 🔴 กติกา: report แผนก่อนทุกเฟส · 1 commit/เฟส · v2 ที่ลูกค้าจริงใช้ห้ามเปลี่ยนจน cutover · ห้ามแตะ pricing/gate semantics/Neon/channel adapters/TRAIN_LOG
 
 > สแนปช็อตสำหรับคนรับช่วงต่อ (ไม่เห็นแชทก็ทำต่อได้) · อัปเดต 2026-07-30

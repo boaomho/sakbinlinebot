@@ -86,6 +86,8 @@ export interface TrainSandbox {
   logs: Record<string, unknown>[];
   /** เฟส ข: draft overlay — ทับค่าชีต BotLibrary ที่ batchGet proxy (เฉพาะ simulator) */
   overlay: OverlayEntry[];
+  /** D-61.C: override schema เฉพาะ session ซ้อม ("v2"|"v3") — undefined = ตาม env (prod) · อ่านผ่าน sheetSchema() เท่านั้น */
+  schema?: "v2" | "v3";
 }
 
 const store = new AsyncLocalStorage<TrainSandbox>();
