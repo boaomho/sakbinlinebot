@@ -78,6 +78,9 @@ web_modules/
 .next
 out
 
+# ผลลัพธ์ชั่วคราวจากเทส (เช่น golden scorecard ชั้น G)
+tmp/
+
 # Vercel
 .vercel
 

@@ -59,7 +59,15 @@ vi.mock("@/lib/config", async () => {
   const { testConfig } = await import("./fixtures");
   const { harnessOverrides } = await import("./state");
   // resolveFeatureSwitches / formatConfigForPrompt / DEFAULT_REPLY = ของจริง
-  return { ...actual, getConfig: async () => testConfig(harnessOverrides.config) };
+  return {
+    ...actual,
+    getConfig: async () => {
+      // 🔴 HARNESS_REAL_SHEET=1 → Config มาจากชีตจริง (getConfig อ่านผ่าน loadBotLibrary → batchGet จริง)
+      //    เป็นส่วนหนึ่งของ read path BotLibrary เดียวกัน — ไม่งั้น golden ชั้น G จะตรวจ Config ของปลอม
+      if (process.env.HARNESS_REAL_SHEET === "1") return actual.getConfig();
+      return testConfig(harnessOverrides.config);
+    },
+  };
 });
 
 // Step 1: route อ่าน Step/FAQ ผ่าน loadBotLibrary (googleapis batchGet ถูก mock) แล้ว
@@ -73,10 +81,34 @@ vi.mock("@/lib/config", async () => {
  * 🔴 บั๊ก P0 (SHEET_ORDERS_ID เป็น CSV URL) รอดมาได้เพราะเมื่อก่อน mock lib/orders ทิ้ง
  */
 vi.mock("googleapis", async () => {
+  const actual = await vi.importActual<typeof import("googleapis")>("googleapis");
   const { sheetsCalls } = await import("./state");
   class FakeJWT {
     constructor(_opts: unknown) {}
   }
+
+  /**
+   * 🔴 HARNESS_REAL_SHEET=1 — อ่านชีตจริง "เฉพาะ read path ของ BotLibrary" (golden ชั้น G · D-61.C)
+   * คู่กับ HARNESS_REAL_GEMINI ของฝั่ง Gemini ข้างล่าง
+   *
+   * ขอบเขตแคบด้วยเมธอด ไม่ใช่ด้วยเงื่อนไข: batchGet = loader.ts ใช้ที่เดียวทั้ง repo (BotLibrary)
+   * ชีต Orders เดินผ่าน values.get / append / batchUpdate → 🔴 mock เสมอแม้เปิด flag
+   * (เทสเขียนออเดอร์ลงไฟล์จริงไม่ได้) · ป้องกันอีกชั้นด้วย scope readonly ที่ client จริง
+   */
+  let realValues: ReturnType<typeof actual.google.sheets>["spreadsheets"]["values"] | null = null;
+  function realBotLibValues() {
+    if (realValues) return realValues;
+    const creds = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT ?? "{}");
+    const auth = new actual.google.auth.JWT({
+      email: creds.client_email,
+      key: creds.private_key,
+      // 🔴 readonly — client ตัวนี้เขียนชีตไม่ได้ต่อให้ถูกเรียกผิดทาง
+      scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
+    });
+    realValues = actual.google.sheets({ version: "v4", auth }).spreadsheets.values;
+    return realValues;
+  }
+
   const values = {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     append: async (p: any) => {
@@ -101,6 +133,8 @@ vi.mock("googleapis", async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     batchGet: async (p: any) => {
       sheetsCalls.lastBatchGetRanges = p.ranges;
+      // BotLibrary read path เท่านั้น — flag เปิด = ยิง Google จริง (อ่านอย่างเดียว)
+      if (process.env.HARNESS_REAL_SHEET === "1") return realBotLibValues().batchGet(p);
       const valueRanges = (p.ranges as string[]).map((range) => ({
         range,
         values: sheetsCalls.botLibReturn[range.split("!")[0]] ?? [],

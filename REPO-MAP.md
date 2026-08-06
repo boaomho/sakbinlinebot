@@ -127,6 +127,7 @@ scripts/sheet-lint.mjs  D-45 · lint keyword ชีตจริง (คำโด
 | `DIAG_PROMPT_TOKENS` | gemini.ts (=1 → log token จริงต่อ segment) |
 | `TRAIN_PASSWORD` | train/auth.ts — คุมฟีเจอร์ /train (ไม่มี = 404 ทั้งก้อน) |
 | `DATABASE_URL_TRAIN` | db.ts getSql() — Neon branch `train` (state ลูกค้าจำลอง · ใน sandbox เท่านั้น) |
+| `GEMINI_API_KEY_TRAIN` | train/assistant.ts getClient() — **optional** · แยกโควตาผู้ช่วยเทรนจากบอทหลัก · ว่าง = fallback `GEMINI_API_KEY` |
 | `META_APP_SECRET` · `META_VERIFY_TOKEN` · `META_APP_ID`(optional) | **`lib/channel/pages.ts resolveAppContext` เท่านั้น** (M-2 · verify webhook + echo filter) |
 | `META_PAGE_ID` · `META_PAGE_ACCESS_TOKEN` | **`lib/channel/pages.ts resolvePageContext` เท่านั้น** (M-2 · 🔴 ห้ามอ่าน META_* นอก pages.ts) |
 | `SHEET_SCHEMA` | **`lib/schema-mode.ts sheetSchema()` เท่านั้น** (D-61 · `v2`(default)/`v3` · env-only ถาวร — สลับ = deliberate act ใน Vercel · v3 = สมองใหม่ D-61.A) |
@@ -158,6 +159,7 @@ scripts/sheet-lint.mjs  D-45 · lint keyword ชีตจริง (คำโด
 ## 7. วิธีรันเทส
 - **harness + unit ทั้งหมด:** `npm test` (vitest · ต้องมี `.env.test` ชี้ Neon branch harness-test) → 90 passed | 5 expected fail
 - **เทส real Gemini:** ตั้ง `HARNESS_REAL_GEMINI=1` (bypass scripted) · วัด token: `DIAG_PROMPT_TOKENS=1`
+- **เทส real ชีต (D-61.C1):** ตั้ง `HARNESS_REAL_SHEET=1` → `setup.ts` ให้ **`values.batchGet` + `getConfig`** ยิง Google จริง (= read path BotLibrary ทั้งเส้น · loader ใช้ batchGet ที่เดียวทั้ง repo) · 🔴 ชีต **Orders (`values.get`/`append`/`batchUpdate`) ยัง mock เสมอ** แม้เปิด flag + client จริงขอ scope `spreadsheets.readonly` → เทสเขียนชีตจริงไม่ได้ · golden ชั้น G: `HARNESS_REAL_GEMINI=1 HARNESS_REAL_SHEET=1 npx vitest run v3-golden-live`
 - **build:** `npm run build` (tsc + next build)
 
 ## 8. Known issues (docs/DECISIONS.md)
