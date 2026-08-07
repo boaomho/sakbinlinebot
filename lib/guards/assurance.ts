@@ -19,8 +19,27 @@ export const DEFAULT_ASSURANCE_PHRASES = [
 /** วรรคตามหลังที่บ่งว่าเป็น "คำถาม" ไม่ใช่คำรับรอง — "ทานได้ไหมคะ" (บอทถาม/ทวนคำถามลูกค้า) ไม่นับผิด */
 const QUESTION_TAIL = /^(ไหม|มั้ย|หรือ|รึ|\?)/;
 
-/** หา "คำรับรอง" ในข้อความ (ข้ามรูปคำถาม) — คืนวลีที่ชน (ไม่ซ้ำ) */
+/**
+ * D-62: allowlist แคบ — "การใช้เชิงระวังที่จบด้วยการส่งไปแพทย์/ทีม" ไม่ใช่คำรับรอง
+ * probe D-61.C3 พบ guard เดิมจับ "เพื่อความปลอดภัยสูงสุด แนะนำปรึกษาแพทย์" แล้ว cut ทิ้ง
+ * = ฆ่าประโยคที่ปลอดภัยที่สุดในคำตอบ (ผลกลับหัว)
+ * เงื่อนไขยกเว้น (ต้องครบทั้งสอง · ต่อ occurrence · ขอบเขต "บรรทัด" เดียวกับหน่วย cut):
+ *   1. คำนั้นเกาะติดโครง "เพื่อความ..." โดยไม่มีช่องว่างคั่น (กัน "เพื่อความสบายใจ ทานได้เลย" หลุด)
+ *   2. บรรทัดเดียวกันมีวลีส่งต่อแพทย์/เภสัชกร/ทีมงาน
+ * คำรับรองตรง ("ปลอดภัยแน่นอน") และแบบมีเงื่อนไข ("ถ้าไม่แพ้ก็ทานได้") ไม่เข้าเงื่อนไข 1 → hit เหมือนเดิม
+ */
+const CAUTIONARY_PREFIX = /เพื่อความ[^\s\n]{0,25}$/;
+const REFERRAL_IN_LINE =
+  /ปรึกษา\s*(แพทย์|คุณหมอ|หมอ|เภสัช)|(สอบถาม|เช็ค|ตรวจสอบ)[^\n]{0,20}(ทีมงาน|ทีมผลิต|แอดมิน)|(ทีมงาน|ทีมผลิต|แอดมิน)[^\n]{0,25}(เช็ค|ตรวจสอบ|ประสานงาน)/;
+
+/** สำเนา text ที่แทนตัวคั่นบอลลูนด้วย \n (ยาวเท่าเดิม index ตรงกัน) — ให้ "บรรทัด" ครอบขอบบอลลูนด้วย */
+function normalizeBubbleBreaks(text: string): string {
+  return text.replace(/\[\[(?:เว้น|แยก)\]\]/g, (m) => "\n".repeat(m.length));
+}
+
+/** หา "คำรับรอง" ในข้อความ (ข้ามรูปคำถาม + การใช้เชิงระวังตาม D-62) — คืนวลีที่ชน (ไม่ซ้ำ) */
 export function findAssuranceHits(text: string, phrases: string[] = DEFAULT_ASSURANCE_PHRASES): string[] {
+  const norm = normalizeBubbleBreaks(text);
   const hits = new Set<string>();
   for (const raw of phrases) {
     const p = raw.trim();
@@ -30,11 +49,20 @@ export function findAssuranceHits(text: string, phrases: string[] = DEFAULT_ASSU
       const i = text.indexOf(p, from);
       if (i === -1) break;
       const tail = text.slice(i + p.length, i + p.length + 6);
-      if (!QUESTION_TAIL.test(tail)) {
-        hits.add(p);
-        break;
+      if (QUESTION_TAIL.test(tail)) {
+        from = i + p.length; // รูปคำถาม — ข้ามไปหาตัวถัดไป
+        continue;
       }
-      from = i + p.length; // รูปคำถาม — ข้ามไปหาตัวถัดไป
+      // D-62: ยกเว้นการใช้เชิงระวัง (เงื่อนไขคู่ · ดูคอมเมนต์บน)
+      const lineStart = norm.lastIndexOf("\n", i - 1) + 1;
+      const lineEndRaw = norm.indexOf("\n", i);
+      const line = norm.slice(lineStart, lineEndRaw === -1 ? norm.length : lineEndRaw);
+      if (CAUTIONARY_PREFIX.test(norm.slice(lineStart, i)) && REFERRAL_IN_LINE.test(line)) {
+        from = i + p.length;
+        continue;
+      }
+      hits.add(p);
+      break;
     }
   }
   return [...hits];

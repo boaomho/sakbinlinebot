@@ -377,9 +377,18 @@ async function applyAssuranceGuardV3(opts: {
   } catch (error) {
     console.error(JSON.stringify({ scope: "assurance-guard", warning: "regenerate failed", error: String(error).slice(0, 80) }));
   }
-  if (candidate && findAssuranceHits(candidate, opts.phrases).length === 0) {
-    console.log(JSON.stringify({ scope: "assurance-guard", event: "regenerated-clean" }));
-    return candidate;
+  if (candidate) {
+    const candHits = findAssuranceHits(candidate, opts.phrases);
+    if (candHits.length === 0) {
+      console.log(JSON.stringify({ scope: "assurance-guard", event: "regenerated-clean" }));
+      return candidate;
+    }
+    // D-62.2: regen ยังมีคำต้องห้าม → ทิ้ง candidate ใช้ต้นฉบับ-ตัดบรรทัด (ดีไซน์เดิม re-check คุมอยู่แล้ว)
+    //   log ให้เห็นชัดโดยเฉพาะเคส "regen แย่ลง" — probe C3 เคยจับ regen แต่งคำรับรองใหม่ที่ต้นฉบับไม่มี
+    console.warn(JSON.stringify({
+      scope: "assurance-guard", event: "regen-dirty",
+      originalHits: hits, regenHits: candHits, worse: candHits.length > hits.length,
+    }));
   }
   const cut = cutAssuranceLines(opts.outReply, opts.phrases);
   console.warn(JSON.stringify({ scope: "assurance-guard", event: "cut", cutLines: cut.cutLines, droppedBubbles: cut.droppedBubbles, empty: cut.text === "" }));
