@@ -21,6 +21,8 @@ const ROUNDS = Number(process.env.GOLDEN_ROUNDS ?? "3");
 
 const BANNED_CLOSE = [/รับ(ไป)?(เลย)?(ไหม|มั้ย)/, /รับ(ไป)?เลยนะคะ/];
 const MALE_WORDS = [/ครับ/, /\bผม\b/];
+/** D-61.C2: คำต้องห้ามในข้อความถึงลูกค้า (กฎเหล็ก CLAUDE.md) — ไม่ใช้กับข้อความแจ้งแอดมิน */
+const BANNED_WORDS = [/รบกวน/];
 
 interface Row { id: string; name: string; pass: boolean; note: string; sample: string }
 const scorecard: Row[] = [];
@@ -42,6 +44,7 @@ function checkInvariants(text: string): string[] {
   const bad: string[] = [];
   if (BANNED_CLOSE.some((re) => re.test(text))) bad.push("มีประโยคปิดแบบ รับ/ไม่รับ");
   if (MALE_WORDS.some((re) => re.test(text))) bad.push("ใช้ ครับ/ผม");
+  if (BANNED_WORDS.some((re) => re.test(text))) bad.push('ใช้คำว่า "รบกวน"');
   return bad;
 }
 
@@ -108,6 +111,26 @@ describe.skipIf(!RUN)("D-61.C golden ชั้น G — ชีต v3 จริ�
     expect(cfg.raw.get("เลขที่บัญชี"), "🔴 เลขบัญชียัง placeholder — กรอกก่อน cutover").not.toMatch(/^\(/);
   }, 60_000);
 
+  // 🔴 D-61.C2: สแกน "แนวตอบ" ในชีตจริง — v3 ไม่ใช้ verbatim แต่ AI ลอกสำนวนจากตัวอย่าง
+  //    แนวตอบมีคำต้องห้าม = บอทจะพ่นคำนั้นออกไปหาลูกค้า (ที่มาของ "รบกวน" ใน G21 รอบ D-61.C1)
+  it("S01 · แนวตอบในชีต v3 ต้องไม่มีคำต้องห้าม (รบกวน / ปิดการขายแบบรับ-ไม่รับ)", async () => {
+    const lib = await loadBotLibrary();
+    expect(lib).not.toBeNull();
+    const stepExamples = lib!.CSV_Step.slice(1).map((r) => r[7] ?? ""); // adapter: แนวตอบ → "ตัวอย่างคำตอบ"
+    const knowGuides = lib!.CSV_FAQ.slice(1).map((r) => {
+      const answer = r[3] ?? ""; // ก้อนประกอบ: ความกังวลจริง / ข้อเท็จจริง / แนวตอบ
+      const i = answer.indexOf("แนวตอบ");
+      return i === -1 ? "" : answer.slice(i); // เอาเฉพาะท่อนแนวตอบ (ข้อเท็จจริงไม่อยู่ในกฎสำนวน)
+    });
+    const offenders: string[] = [];
+    for (const c of [...stepExamples, ...knowGuides]) {
+      const bad = checkInvariants(c);
+      if (c && bad.length > 0) offenders.push(`${bad.join(" · ")} → "${c.slice(0, 80)}"`);
+    }
+    record("S01", "แนวตอบในชีตสะอาด", offenders.length === 0, offenders.join(" | ") || "ไม่พบคำต้องห้าม");
+    expect(offenders, `แนวตอบในชีตมีคำต้องห้าม:\n${offenders.join("\n")}`).toHaveLength(0);
+  }, 60_000);
+
   // ---- G01-G13: บทสนทนา (คุณภาพ = เจ้าของตัดสิน · invariant = บังคับ) ----
   const convos: { id: string; name: string; turns: string[]; expect?: (t: string) => string[] }[] = [
     { id: "G01", name: "ทักเปล่า → S1+S2", turns: ["สวัสดีค่ะ"], expect: (t) => (/\?|คะ|ไหม|ดีคะ/.test(t) ? [] : ["ไม่จบด้วยคำถาม"]) },
@@ -129,6 +152,29 @@ describe.skipIf(!RUN)("D-61.C golden ชั้น G — ชีต v3 จริ�
       expect(bad, `${c.id}: ${bad.join(" · ")}`).toHaveLength(0);
     }, 90_000);
   }
+
+  // ---- D-61.C2 · G29/G30 กติกาทักทาย (prompt v3 <กติกาทักทาย>) ----
+  it("G29 · เปิดบทสนทนาใหม่ + มาพร้อมจำนวน (เข้า S2Q) → ต้องทัก และห้ามทักซ้อน", async () => {
+    await sendText(U, "น้ำพริก 2 ถ้วยเท่าไหร่คะ");
+    const t = lastReply();
+    const bad = checkInvariants(t);
+    if (!/สวัสดี/.test(t)) bad.push("เปิดบทสนทนาใหม่แต่ไม่ทักทาย");
+    // 🔴 ทักซ้อน = prompt ทัก + D-51 เติม prefix `ทักทายรายวัน` ทับอีกชั้น → เว้น key นั้นว่างในชีต
+    if (/สวัสดีค่ะ\s*สวัสดี/.test(t)) bad.push("ทักซ้อน 2 ครั้ง — เช็ค Config `ทักทายรายวัน` (ควรเว้นว่างใน v3)");
+    record("G29", "เปิดบทใหม่ต้องทัก", bad.length === 0, bad.join(" · ") || "ทักครั้งเดียว ถูกต้อง", t);
+    expect(bad, `G29: ${bad.join(" · ")}`).toHaveLength(0);
+  }, 90_000);
+
+  it("G30 · เทิร์นกลางบท → ห้ามขึ้นต้นด้วยสวัสดีอีก", async () => {
+    await sendText(U, "สวัสดีค่ะ");
+    lineCalls.replies.length = 0; // ดูเฉพาะเทิร์นที่ 2
+    await sendText(U, "เอา 3 ถ้วยค่ะ");
+    const t = lastReply();
+    const bad = checkInvariants(t);
+    if (/^\s*สวัสดี/.test(t)) bad.push("ทักซ้ำกลางบท (บทสนทนาต่อเนื่องห้ามทักใหม่)");
+    record("G30", "กลางบทห้ามทักซ้ำ", bad.length === 0, bad.join(" · ") || "ไม่ทักซ้ำ ถูกต้อง", t);
+    expect(bad, `G30: ${bad.join(" · ")}`).toHaveLength(0);
+  }, 90_000);
 
   // ---- G14-G19 สุขภาพ · G21-G22 ส่งต่อ: รัน ROUNDS รอบ ต้องผ่านครบ (เจ้าของเคาะ) ----
   const risky: { id: string; name: string; msg: string; expectHandoff: boolean }[] = [

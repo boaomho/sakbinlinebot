@@ -73,6 +73,12 @@ const BANNED_CLOSE = [/รับ(ไป)?(เลย)?(ไหม|มั้ย)/, 
 function hasBannedClose(text: string): boolean {
   return BANNED_CLOSE.some((re) => re.test(text));
 }
+/** D-61.C2: คำต้องห้ามในข้อความถึงลูกค้า (กฎเหล็ก CLAUDE.md) — คุมทั้งข้อความในโค้ดและแนวตอบในชีต
+ *  🔴 ใช้กับ "บอลลูนที่ส่งหาลูกค้า" เท่านั้น — ข้อความแจ้งแอดมิน (🔔/footer) ไม่อยู่ในขอบเขตกฎนี้ */
+const BANNED_WORDS = [/รบกวน/];
+function hasBannedWord(text: string): boolean {
+  return BANNED_WORDS.some((re) => re.test(text));
+}
 
 beforeAll(() => { process.env.SHEET_SCHEMA = "v3"; });
 afterAll(() => { delete process.env.SHEET_SCHEMA; });
@@ -123,6 +129,23 @@ describe("D-61.C golden · G23 choice-close ban", () => {
       expect(hasBannedClose(ok), ok).toBe(false);
     }
   });
+
+  // 🔴 D-61.C2: คำว่า "รบกวน" — กฎเหล็กเดียวกัน สแกนแบบเดียวกับ choice-close
+  it("🔴 แนวตอบในชีต v3 (ทุกแถว) ต้องไม่มีคำว่า 'รบกวน'", () => {
+    const cells = [...V3_STEP.slice(1).map((r) => r[6]), ...V3_KNOW.slice(1).map((r) => r[4])];
+    for (const c of cells) expect(hasBannedWord(c), `พบ "รบกวน" ในแนวตอบชีต: "${c}"`).toBe(false);
+  });
+  it("🔴 ข้อความ degraded ในโค้ด (ถึงลูกค้าจริง) ต้องไม่มีคำว่า 'รบกวน'", async () => {
+    scriptGemini([turn({ degraded: true, stage: "S2" })]);
+    await sendText(U, "สวัสดีค่ะ");
+    const t = allText();
+    expect(t.trim().length, "degraded ต้องยังมีข้อความถึงลูกค้า").toBeGreaterThan(0);
+    expect(hasBannedWord(t), `พบ "รบกวน" ในข้อความถึงลูกค้า: ${t}`).toBe(false);
+  });
+  it("ban matcher คำต้องห้ามจับถูก", () => {
+    for (const bad of ["รบกวนพิมพ์ใหม่", "รบกวนแจ้งชื่อค่ะ"]) expect(hasBannedWord(bad), bad).toBe(true);
+    for (const ok of ["ช่วยพิมพ์ส่งมาอีกครั้งนะคะ", "ขอชื่อผู้สั่งด้วยนะคะ"]) expect(hasBannedWord(ok), ok).toBe(false);
+  });
 });
 
 // ═══ กลุ่ม D · สุขภาพ + assurance ═══
@@ -159,6 +182,45 @@ describe("D-61.C golden · G14-G19 สุขภาพ/assurance", () => {
     await sendText(U, "แพ้อาหารทะเลรุนแรงทานได้ไหม");
     expect(allText().trim().length, "ต้องมีข้อความถึงลูกค้าเสมอ").toBeGreaterThan(0);
     expect(findAssuranceHits(allText())).toHaveLength(0);
+  });
+});
+
+// ═══ กลุ่ม D2 · D-61.C2 · 🔔 ธงสุขภาพต้องแจ้งเสมอ (แยกด่วน/ไม่ด่วน) ═══
+function bells(): string[] {
+  return adminPushes()
+    .flatMap((p) => p.messages)
+    .filter((m) => m.type === "text" && (m as { text: string }).text.includes("🔔"))
+    .map((m) => (m as { text: string }).text);
+}
+
+describe("D-61.C2 golden · 🔔 ธงสุขภาพ ไม่ผูกกับผลของเทิร์น", () => {
+  it("🔴 เทิร์นธงสุขภาพที่ AI ล้ม (degraded) → 🔔 แบบด่วนยิง 1 ครั้ง (เดิมเงียบสนิท)", async () => {
+    scriptGemini([turn({ degraded: true, stage: "S2" })]);
+    await sendText(U, "แพ้กุ้งทานได้ไหมคะ");
+    const b = bells();
+    expect(b, "AI ล้มก็ต้องแจ้ง — H1 ห้ามเงียบ").toHaveLength(1);
+    expect(b[0], "ต้องบอกชัดว่าบอทยังไม่ได้ตอบ").toContain("บอทยังไม่ได้ตอบ");
+    expect((await readCustomer(U))?.human_mode, "ธงสุขภาพไม่ปิดบอท").toBe(false);
+  });
+
+  it("เทิร์นปกติ → 🔔 แบบเดิม (ไม่ใช่ข้อความด่วน)", async () => {
+    scriptGemini([turn({ reply: "มีกะปิซึ่งทำจากกุ้งค่ะ ขอให้แอดมินเช็คไลน์ผลิตให้นะคะ", stage: "S2" })]);
+    await sendText(U, "แพ้กุ้งทานได้ไหมคะ");
+    const b = bells();
+    expect(b).toHaveLength(1);
+    expect(b[0], "เทิร์นปกติห้ามขึ้นข้อความด่วน").not.toContain("บอทยังไม่ได้ตอบ");
+  });
+
+  it("🔴 degraded ก่อน → เทิร์นปกติตามมา: dedup ข้ามชนิด ไม่ยิงซ้ำ", async () => {
+    scriptGemini([
+      turn({ degraded: true, stage: "S2" }),
+      turn({ reply: "มีกะปิซึ่งทำจากกุ้งค่ะ", stage: "S2" }),
+    ]);
+    await sendText(U, "แพ้กุ้งทานได้ไหมคะ");
+    await sendText(U, "แล้วแพ้ปลาล่ะคะ");
+    const b = bells();
+    expect(b, "marker เดียวคุมทั้ง 2 แบบ").toHaveLength(1);
+    expect(b[0], "ตัวที่ยิงคือตัวแรก (แบบด่วน)").toContain("บอทยังไม่ได้ตอบ");
   });
 });
 

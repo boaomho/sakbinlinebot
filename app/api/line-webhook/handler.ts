@@ -388,7 +388,14 @@ async function pushNotifyDoorV2(args: { userId: string; userMessage: string; sta
   await pushRawText(adminGroupId, `🔔 ${channelLabel(args.userId)} ${name} ถามเรื่องสุขภาพ/แพ้อาหาร — บอทตอบข้อมูลตามชีตแล้ว ยังคุยต่อ (ไม่ได้ปิดบอท) รบกวนช่วยดูให้ด้วยค่ะ\nข้อความ: ${args.userMessage}`);
 }
 
-/** D-61.A (v3): 🔔 ธงสุขภาพ — ครั้งเดียวต่อเคสผ่าน HEALTH_NOTIFY_MARKER (mark ก่อน push กันยิงซ้ำ) · เนื้อจาก Config ข้อความ_แจ้งแอดมิน_notify */
+/**
+ * D-61.A (v3): 🔔 ธงสุขภาพ — ครั้งเดียวต่อเคสผ่าน HEALTH_NOTIFY_MARKER (mark ก่อน push กันยิงซ้ำ)
+ * 🔴 D-61.C2: แยก 2 แบบตามว่าลูกค้าได้คำตอบไหม
+ *   - ตอบแล้ว    → เนื้อจาก Config `ข้อความ_แจ้งแอดมิน_notify` (ตามได้ ไม่ด่วน · ของเดิมเป๊ะ)
+ *   - ยังไม่ตอบ → เนื้อในโค้ด HEALTH_NOTIFY_UNANSWERED (ด่วน) — template ในชีตเขียนไว้สำหรับเคส
+ *     "บอทตอบแล้ว" เอามาใช้ตอนบอทยังไม่ตอบจะสื่อผิดและทำให้แอดมินไม่รีบ
+ * dedup marker ตัวเดียวคุมทั้งสองแบบ → 1 เคสได้ 🔔 ครั้งเดียว ไม่ว่าเทิร์นแรกจบแบบไหน
+ */
 async function pushHealthNotifyV3(args: {
   userId: string;
   userMessage: string;
@@ -396,14 +403,19 @@ async function pushHealthNotifyV3(args: {
   customer: CustomerState;
   config: AppConfig;
   transport: ChannelTransport;
+  /** เทิร์นนี้ลูกค้าไม่ได้คำตอบจริง (AI ล้ม / อ่านรูปไม่ได้ / ส่งไม่สำเร็จ) */
+  unanswered: boolean;
 }): Promise<void> {
   if (!args.healthFlagged) return;
-  if (args.customer.deliveredSteps.includes(HEALTH_NOTIFY_MARKER)) return; // dedup ต่อเคส
+  if (args.customer.deliveredSteps.includes(HEALTH_NOTIFY_MARKER)) return; // dedup ต่อเคส (คุมทั้ง 2 แบบ)
   await addDeliveredStep(args.userId, HEALTH_NOTIFY_MARKER);
   const adminGroupId = process.env.ADMIN_GROUP_ID;
   if (!adminGroupId) return;
   const name = await args.transport.getProfileName();
-  await pushRawText(adminGroupId, `🔔 ${channelLabel(args.userId)} ${name} ${args.config.notifyAdminHealthTemplate}\nข้อความ: ${args.userMessage}`);
+  const head = args.unanswered ? "🔴🔔" : "🔔";
+  const body = args.unanswered ? HEALTH_NOTIFY_UNANSWERED : args.config.notifyAdminHealthTemplate;
+  console.log(JSON.stringify({ scope: "health-notify", event: "push", unanswered: args.unanswered }));
+  await pushRawText(adminGroupId, `${head} ${channelLabel(args.userId)} ${name} ${body}\nข้อความ: ${args.userMessage}`);
 }
 
 /** ข้อความสบายใจตอน AI อ่านรูปไม่สำเร็จ — รับรูปแล้ว กำลังตรวจสอบ (ไม่ทำให้ลูกค้ากังวล) */
@@ -1136,12 +1148,19 @@ export async function processMessage(
   // D-45b: ตั้งธง "ส่งเนื้อหา step นี้แล้ว" เฉพาะเมื่อ deliver สำเร็จจริง + เทิร์นนี้มีเนื้อเต็มก้อนของ step อยู่ในข้อความ
   if (deliveredOk && deliverMarksStep && switches.memory && customer) {
     await addDeliveredStep(userId, geminiOutput.stage);
-    // 🔔 dispatch ตามโหมด (D-61.A): v2 = ประตู notify (D-58 dedup ผ่านธง step) · v3 = ธงสุขภาพ (dedup ผ่าน HEALTH_NOTIFY_MARKER ต่อเคส)
-    if (v3) {
-      await pushHealthNotifyV3({ userId, userMessage, healthFlagged, customer, config, transport });
-    } else {
-      await pushNotifyDoorV2({ userId, userMessage, stageFunnelReply, transport });
-    }
+    // 🔔 v2 = ประตู notify (D-58 dedup ผ่านธง step) · v3 ย้ายออกไปนอกบล็อกแล้ว (D-61.C2 ข้างล่าง)
+    if (!v3) await pushNotifyDoorV2({ userId, userMessage, stageFunnelReply, transport });
+  }
+
+  // 🔴 D-61.C2 (v3): ธงสุขภาพต้องแจ้ง "เสมอ" — healthFlagged ตัดสินจาก keyword ตั้งแต่ก่อนเรียก AI
+  //    เดิมผูกอยู่ในบล็อก deliverMarksStep ข้างบน → เทิร์นที่ AI ล้ม (degraded) / อ่านรูปไม่ได้ / ส่งไม่สำเร็จ
+  //    = แอดมินไม่รู้เลยว่ามีคนถามเรื่องแพ้อาหาร (H1 = ความเสี่ยงอันดับ 1 · golden ชั้น G จับได้ D-61.C1)
+  //    ลูกค้าไม่ได้คำตอบ → 🔔 แบบด่วน · dedup marker เดิมคุมทั้ง 2 แบบ (ถามซ้ำไม่ยิงซ้ำ)
+  if (v3 && switches.memory && customer) {
+    await pushHealthNotifyV3({
+      userId, userMessage, healthFlagged, customer, config, transport,
+      unanswered: geminiOutput.degraded || imageFallback || !deliveredOk,
+    });
   }
 
   // D-34/D-35: handoff_after_intake — คุยก่อนค่อยส่งคน · นับเทิร์น + reset (ออกประตู/handoff/เงียบนาน) + เพดาน/ขั้นต่ำ
@@ -1497,7 +1516,12 @@ const PRICE_BAD_REPLY = "ขอสักครู่นะคะ ปลาทู
 const VAR_FALLBACK_REPLY = "ขอสักครู่นะคะ ปลาทูขอเช็คข้อมูลให้เรียบร้อยก่อน เดี๋ยวรีบแจ้งกลับเลยค่ะ 🙏";
 // 🔴 D-46: เทิร์นข้อความล้วนที่ Gemini ไม่ตอบ (blocked/timeout/parse-fail) — บอกตรงว่ายังไม่ได้รับ + ขอให้ส่งใหม่
 //    (ต่างจาก DEFAULT_REPLY "รอสักครู่แล้วทักใหม่" ที่ทำให้ลูกค้านั่งรอเฉยๆ ทั้งที่ข้อมูลเมื่อกี้ไม่ถึง)
-const DEGRADED_NO_INPUT_REPLY = "ขออภัยค่ะ ระบบสะดุดนิดหน่อย ปลาทูยังไม่ได้รับข้อความล่าสุดของลูกค้านะคะ รบกวนพิมพ์ส่งมาอีกครั้งได้เลยค่ะ 🙏";
+//    🔴 D-61.C2: ห้ามมีคำว่า "รบกวน" (กฎเหล็ก CLAUDE.md) — golden ชั้น D/G มี invariant คุมแล้ว
+const DEGRADED_NO_INPUT_REPLY = "ขออภัยค่ะ ระบบสะดุดนิดหน่อย ปลาทูยังไม่ได้รับข้อความล่าสุดของลูกค้านะคะ ช่วยพิมพ์ส่งมาอีกครั้งนะคะ 🙏";
+
+/** D-61.C2: เนื้อ 🔔 กรณีเทิร์นธงสุขภาพจบแบบลูกค้าไม่ได้คำตอบ — แอดมินต้องตามด่วน (แยกจาก template ในชีต) */
+const HEALTH_NOTIFY_UNANSWERED =
+  "ถามเรื่องสุขภาพ/แพ้อาหาร แต่ระบบสะดุด — 🔴 บอทยังไม่ได้ตอบคำถามนี้ ช่วยตามด่วนค่ะ (ลูกค้าอาจกำลังรออยู่)";
 
 /** อ่านค่าตัวเลขจาก CSV_Config (config.raw) · ไม่มี/อ่านไม่ได้ = fallback */
 function numFromRaw(config: AppConfig, key: string, fallback: number): number {
