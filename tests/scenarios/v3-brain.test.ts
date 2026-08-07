@@ -81,7 +81,9 @@ describe("D-61.A · buildSalesSystemV3 (โครง + few-shot คำต่อ�
     expect(s).toContain("3C");
     expect(s).toContain("ตอบแทรก-แล้วพากลับ");
     expect(s).toContain("ชำระเงินมาก่อนที่อยู่");
-    expect(s).toContain("ห้ามพูดประโยครับรองแทนลูกค้า");
+    // D-61.C3: เส้นห้ามสุขภาพยกระดับจาก "ห้ามประโยครับรอง" → "ห้ามคำ แม้เชิงแนะนำ" + ประโยคแทน
+    expect(s).toContain("ห้ามใช้ \"คำ\" เหล่านี้ในทุกรูปประโยค");
+    expect(s).toContain("แนะนำนำข้อมูลส่วนผสมนี้ปรึกษาแพทย์เพื่อความสบายใจค่ะ");
     expect(s).toContain("objection_detected"); // JSON contract เดิม
     expect(s).toContain("ค่ะ/นะคะ");
   });

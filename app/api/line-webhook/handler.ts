@@ -272,7 +272,11 @@ function buildV3StateHints(customer: CustomerState | null, healthFlagged: boolea
   const sent = (customer?.deliveredSteps ?? []).filter((s) => !s.startsWith("__"));
   if (sent.length > 0) parts.push(`(เคยส่งสาระของประตูเหล่านี้ให้ลูกค้าแล้ว อย่าทวนซ้ำยาว สรุปสั้นพอ: ${sent.join(", ")})`);
   if (healthFlagged) {
-    parts.push("🔴 บริบทสุขภาพเทิร์นนี้: ให้ข้อเท็จจริงจากข้อมูลสินค้า ถามกลับเพื่อเข้าใจได้ ห้ามประโยครับรองแทนลูกค้า (ทานได้/ปลอดภัย/ไม่เป็นไร) · ไม่รู้ = บอกตรงๆ + เสนอให้แอดมินเช็ค");
+    // D-61.C3: ห้าม "คำ" ไม่ใช่แค่ประโยครับรอง — probe พบ hit ส่วนใหญ่มาจากการใช้เชิงระวัง ("เพื่อความปลอดภัย แนะนำปรึกษาแพทย์")
+    //   ซึ่ง guard แยกบริบทไม่ได้ → ให้ประโยคแทนที่ไม่มีคำต้องห้ามไปเลย (บวก ไม่ใช่ห้ามเปล่า)
+    parts.push(
+      "🔴 บริบทสุขภาพเทิร์นนี้: ให้ข้อเท็จจริงจากข้อมูลสินค้า ถามกลับเพื่อเข้าใจได้ · ห้ามใช้คำ ทานได้/กินได้/ปลอดภัย/ไม่เป็นไร/หายห่วง/ไม่มีปัญหา ทุกรูปประโยค (แม้เชิงแนะนำ เช่น \"เพื่อความปลอดภัย...\" — ระบบตัดประโยคที่มีคำพวกนี้ทิ้ง) · ประโยคปิดให้ใช้ \"แนะนำนำข้อมูลส่วนผสมนี้ปรึกษาแพทย์เพื่อความสบายใจค่ะ\" · ไม่รู้ = บอกตรงๆ + เสนอให้แอดมินเช็ค",
+    );
   }
   return parts.length > 0 ? `\n${parts.join("\n")}` : "";
 }
@@ -365,7 +369,10 @@ async function applyAssuranceGuardV3(opts: {
   console.warn(JSON.stringify({ scope: "assurance-guard", event: "hit", hits }));
   let candidate: string | null = null;
   try {
-    const regen = await opts.regenerate(`มีประโยครับรองเรื่องสุขภาพแทนลูกค้า (${hits.join(", ")}) — ห้ามใช้ทุกรูปแบบ ให้ข้อเท็จจริงแล้วลูกค้าตัดสินใจเอง`);
+    // D-61.C3: correction บอก "ประโยคแทน" ไม่ใช่ห้ามเปล่า — regen เดิมแกว่ง (บางรอบแต่งคำรับรองใหม่แทนที่จะเลี่ยงคำ)
+    const regen = await opts.regenerate(
+      `คำตอบมีคำต้องห้ามเรื่องสุขภาพ (${hits.join(", ")}) — เขียนใหม่โดยห้ามใช้คำ ทานได้/กินได้/ปลอดภัย/ไม่เป็นไร/หายห่วง/ไม่มีปัญหา ทุกรูปประโยค แม้เชิงแนะนำ · คงข้อเท็จจริงเดิมไว้ แล้วปิดด้วยรูปประโยค "แนะนำนำข้อมูลส่วนผสมนี้ปรึกษาแพทย์เพื่อความสบายใจค่ะ" · ลูกค้าตัดสินใจเอง`,
+    );
     if (regen && !regen.degraded && regen.reply.trim() !== "") candidate = opts.resolveReply(regen.reply);
   } catch (error) {
     console.error(JSON.stringify({ scope: "assurance-guard", warning: "regenerate failed", error: String(error).slice(0, 80) }));
