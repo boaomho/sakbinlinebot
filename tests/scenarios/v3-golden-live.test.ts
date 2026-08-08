@@ -48,6 +48,30 @@ function checkInvariants(text: string): string[] {
   return bad;
 }
 
+/**
+ * 🔴 D-61.C5: บอลลูนสุดท้ายของเทิร์น = คำถามพาไปต่อ แยกเดี่ยว
+ * ตรวจบอลลูนสุดท้ายเท่านั้น (บอลลูนที่ลูกค้าเห็นท้ายสุด) — ต้องลงท้ายด้วยคำถาม และไม่มีรายละเอียด/ราคาปน
+ * ใช้เฉพาะเทิร์นที่ยังอยู่ใน funnel (ไม่ใช่ handoff/ปิดเคส)
+ */
+function checkClosingBubble(bs: string[]): string[] {
+  const texts = bs.filter((b) => b !== "[IMG]" && b.trim() !== "");
+  if (texts.length === 0) return ["ไม่มีบอลลูนข้อความเลย"];
+  const last = texts[texts.length - 1].trim();
+  const bad: string[] = [];
+  const QUESTION = /(ไหมคะ|มั้ยคะ|ดีคะ|ไหนคะ|กี่|อะไรคะ|\?)/;
+  // 1) บอลลูนปิดต้องมีคำถามพาไปต่อ
+  if (!QUESTION.test(last)) bad.push(`บอลลูนปิดไม่มีคำถามพาไปต่อ: "${last.slice(-45)}"`);
+  // 2) คำถามต้องเป็น "บรรทัดสุดท้าย" ของบอลลูนปิด — ลูกค้าเห็นคำถามท้ายสุด ไม่ถูกฝังกลางข้อความ
+  //    ⚠️ ยังไม่บังคับ "แยกเป็นบอลลูนของตัวเอง" — โมเดลยังผูกรายการโปรกับคำถามไว้ด้วยกัน (ดู DECISIONS D-61.C5 ช่องที่เหลือ)
+  else {
+    const lines = last.split("\n").map((l) => l.trim()).filter(Boolean);
+    if (lines.length > 0 && !QUESTION.test(lines[lines.length - 1])) {
+      bad.push(`คำถามไม่ได้อยู่บรรทัดสุดท้าย — ปิดด้วย: "${lines[lines.length - 1].slice(0, 45)}"`);
+    }
+  }
+  return bad;
+}
+
 let U = "";
 let n = 0;
 function nextUser(): string {
@@ -132,8 +156,19 @@ describe.skipIf(!RUN)("D-61.C golden ชั้น G — ชีต v3 จริ�
   }, 60_000);
 
   // ---- G01-G13: บทสนทนา (คุณภาพ = เจ้าของตัดสิน · invariant = บังคับ) ----
-  const convos: { id: string; name: string; turns: string[]; expect?: (t: string) => string[] }[] = [
-    { id: "G01", name: "ทักเปล่า → S1+S2", turns: ["สวัสดีค่ะ"], expect: (t) => (/\?|คะ|ไหม|ดีคะ/.test(t) ? [] : ["ไม่จบด้วยคำถาม"]) },
+  const convos: { id: string; name: string; turns: string[]; expect?: (t: string) => string[]; expectBubbles?: (bs: string[]) => string[] }[] = [
+    {
+      id: "G01",
+      name: "ทักเปล่า → S1+S2",
+      turns: ["สวัสดีค่ะ"],
+      expect: (t) => (/\?|คะ|ไหม|ดีคะ/.test(t) ? [] : ["ไม่จบด้วยคำถาม"]),
+      // 🔴 D-61.C5 (เคสจากแคปซ้อมจริง): ทักเปล่าต้องได้เห็นรูปโปรก่อน แล้วค่อย choice close
+      expectBubbles: (bs) => {
+        const img = bs.indexOf("[IMG]");
+        if (img === -1) return ["ไม่ส่งรูปสินค้า/โปรเลย"];
+        return img === bs.length - 1 ? ["รูปเป็นบอลลูนสุดท้าย (ต้องปิดด้วยข้อความ)"] : [];
+      },
+    },
     { id: "G06", name: "เข้ากลางทาง: ถามราคา", turns: ["ราคาเท่าไหร่คะ"] },
     { id: "G07", name: "มาพร้อมชื่อสินค้า", turns: ["สนใจน้ำพริกปลาทูค่ะ"] },
     { id: "G09", name: "S2Q: 1 ถ้วยเท่าไหร่", turns: ["น้ำพริก 1 ถ้วยเท่าไหร่คะ"], expect: (t) => (t.includes("125") || t.includes("95") ? [] : ["ไม่มีเลขราคาจากตาราง"]) },
@@ -145,9 +180,21 @@ describe.skipIf(!RUN)("D-61.C golden ชั้น G — ชีต v3 จริ�
   ];
   for (const c of convos) {
     it(`${c.id} · ${c.name}`, async () => {
-      for (const msg of c.turns) await sendText(U, msg);
-      const t = lastReply();
-      const bad = [...checkInvariants(t), ...(c.expect ? c.expect(t) : [])];
+      // เก็บบอลลูนแยกต่อเทิร์น — invariant บอลลูนปิดต้องดู "เทิร์นสุดท้าย" ไม่ใช่ทุกเทิร์นรวมกัน
+      const all: string[] = [];
+      for (const msg of c.turns) {
+        lineCalls.replies.length = 0;
+        await sendText(U, msg);
+        all.push(...bubbles());
+      }
+      const lastTurn = bubbles();
+      const t = all.join("\n");
+      const bad = [
+        ...checkInvariants(t),
+        ...(c.expect ? c.expect(t) : []),
+        ...(c.expectBubbles ? c.expectBubbles(lastTurn) : []),
+        ...checkClosingBubble(lastTurn), // 🔴 D-61.C5 · ทุกเทิร์น funnel
+      ];
       record(c.id, c.name, bad.length === 0, bad.join(" · ") || "ผ่าน invariant", t);
       expect(bad, `${c.id}: ${bad.join(" · ")}`).toHaveLength(0);
     }, 90_000);

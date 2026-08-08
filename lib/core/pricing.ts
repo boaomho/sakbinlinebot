@@ -355,6 +355,12 @@ export interface PriceTableRow {
   shippingFee: number;
   total: number; // ยอดที่ลูกค้าจ่ายจริง (= เลขที่ gate เขียนชีต)
   freeShip: boolean;
+  /**
+   * D-61.C5: qty นี้ตรง "ชั้นโปรใน CSV_Promo" พอดีหรือไม่
+   * ตารางแจกแจงทุกจำนวน 1..เพดาน (ราคาถูกทุกแถว) แต่มีแค่บางแถวที่เป็นโปรจริง
+   * ถ้าไม่บอก บอทจะโชว์ทุกแถวเป็น "รายการโปรโมชั่น" → ลูกค้าเห็นโปรที่ร้านไม่ได้ตั้ง
+   */
+  isPromoTier: boolean;
 }
 
 export interface PriceTable {
@@ -392,7 +398,14 @@ export function buildPriceTable(
       name = p.lines[0].name;
       unit = p.lines[0].unit;
     }
-    rows.push({ qty, subtotal: p.subtotal, shippingFee: p.shippingFee, total: p.total, freeShip: p.shippingFee === 0 });
+    rows.push({
+      qty,
+      subtotal: p.subtotal,
+      shippingFee: p.shippingFee,
+      total: p.total,
+      freeShip: p.shippingFee === 0,
+      isPromoTier: p.lines[0]?.isExactTier === true, // D-61.C5: ตรงชั้นโปรพอดี = โปรจริงในชีต
+    });
   }
   if (rows.length === 0) return { sku, name, unit, ceiling: 0, rows: [], error: "คำนวณราคาไม่ได้ (ไม่มีโปร live/เพดานเป็น 0)" };
   return { sku, name, unit, ceiling: rows[rows.length - 1].qty, rows, error: null };
