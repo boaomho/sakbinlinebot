@@ -7,6 +7,7 @@ import { readCustomer, resetDb } from "../harness/db";
 import { findAssuranceHits } from "@/lib/guards/assurance";
 import { loadBotLibrary, __resetBotLibraryCache } from "@/lib/sheets/loader";
 import { getConfig, __resetConfigCache } from "@/lib/config";
+import { isClosingQuestion } from "@/lib/line";
 
 /**
  * D-61.C · golden ชั้น G — บทสนทนาจริง (Gemini จริง + ชีต v3 จริง) · ใช้ก่อน cutover
@@ -58,15 +59,17 @@ function checkClosingBubble(bs: string[]): string[] {
   if (texts.length === 0) return ["ไม่มีบอลลูนข้อความเลย"];
   const last = texts[texts.length - 1].trim();
   const bad: string[] = [];
-  const QUESTION = /(ไหมคะ|มั้ยคะ|ดีคะ|ไหนคะ|กี่|อะไรคะ|\?)/;
-  // 1) บอลลูนปิดต้องมีคำถามพาไปต่อ
-  if (!QUESTION.test(last)) bad.push(`บอลลูนปิดไม่มีคำถามพาไปต่อ: "${last.slice(-45)}"`);
-  // 2) คำถามต้องเป็น "บรรทัดสุดท้าย" ของบอลลูนปิด — ลูกค้าเห็นคำถามท้ายสุด ไม่ถูกฝังกลางข้อความ
-  //    ⚠️ ยังไม่บังคับ "แยกเป็นบอลลูนของตัวเอง" — โมเดลยังผูกรายการโปรกับคำถามไว้ด้วยกัน (ดู DECISIONS D-61.C5 ช่องที่เหลือ)
+  // 1) บอลลูนปิดต้องมีคำถามพาไปต่อ (ใช้ตัวตรวจตัวเดียวกับ delivery splitter D-61.C6 — แหล่งเดียว)
+  if (!isClosingQuestion(last)) bad.push(`บอลลูนปิดไม่มีคำถามพาไปต่อ: "${last.slice(-45)}"`);
   else {
     const lines = last.split("\n").map((l) => l.trim()).filter(Boolean);
-    if (lines.length > 0 && !QUESTION.test(lines[lines.length - 1])) {
+    // 2) คำถามต้องอยู่บรรทัดสุดท้าย
+    if (!isClosingQuestion(lines[lines.length - 1])) {
       bad.push(`คำถามไม่ได้อยู่บรรทัดสุดท้าย — ปิดด้วย: "${lines[lines.length - 1].slice(0, 45)}"`);
+    }
+    // 3) 🔴 D-61.C6: ต้องเป็นบอลลูน "เดี่ยว" — splitter ที่ delivery การันตี (v3 ปิดโหมดประหยัดโควตาแล้ว)
+    else if (lines.length > 1) {
+      bad.push(`คำถามไม่ได้แยกบอลลูนเดี่ยว (${lines.length} บรรทัดในบอลลูนปิด)`);
     }
   }
   return bad;

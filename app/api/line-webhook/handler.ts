@@ -59,6 +59,7 @@ import {
   startLoadingIndicator,
   downloadMessageContent,
   DownloadedContent,
+  splitClosingQuestion,
 } from "@/lib/line";
 import { ChannelTransport, LineTransport } from "@/lib/channel/transport";
 import { channelLabel } from "@/lib/channel/label";
@@ -1157,6 +1158,16 @@ export async function processMessage(
     if (greet && isFirstMessageOfDay(historyLen, customer.lastSeen, nowDate)) {
       outReply = prependToFirstTextBubble(outReply, greet);
       console.log(JSON.stringify({ scope: "greeting", event: "daily-first", historyLen }));
+    }
+  }
+  // 🔴 D-61.C6 (v3): ดันคำถามพาไปต่อออกเป็นบอลลูนสุดท้ายเดี่ยว — deterministic ที่ delivery layer
+  //   (prompt ดันแล้วไม่ขยับ · LINE มือถือโชว์ noti จากข้อความสุดท้าย → คำถามต้องอยู่ลำพัง)
+  //   หลัง guards ทั้งหมด + greeting = ตัดจากข้อความที่ผ่านตาข่ายแล้ว · v2 ไม่แตะ
+  if (v3 && !imageFallback && !geminiOutput.degraded && !isHandoffTurn) {
+    const split = splitClosingQuestion(outReply);
+    if (split.changed) {
+      console.log(JSON.stringify({ scope: "closing-split", event: "split", mergedHead: split.mergedHead }));
+      outReply = split.text;
     }
   }
   const assistantSaved = outReply;

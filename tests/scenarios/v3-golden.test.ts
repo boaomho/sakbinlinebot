@@ -185,6 +185,37 @@ describe("D-61.C golden · G14-G19 สุขภาพ/assurance", () => {
   });
 });
 
+// ═══ กลุ่ม C6 · คำถามพาไปต่อ = บอลลูนเดี่ยว (delivery layer · end-to-end) ═══
+describe("D-61.C6 golden · splitter ต่อสายจริงใน pipeline v3", () => {
+  it("🔴 คำตอบที่คำถามติดท้ายรายการโปร → ส่งถึงลูกค้าเป็นบอลลูนคำถามเดี่ยว", async () => {
+    scriptGemini([
+      turn({
+        reply: "โปรโมชั่นค่ะ\n- 1 ถ้วย: สินค้า 95 + ค่าส่ง 30 = รวม 125 บาท\n- 3 ถ้วย: สินค้า 275 + ส่งฟรี = รวม 275 บาท\nลูกค้ารับเป็นโปรโมชั่นไหนดีคะ",
+        stage: "S2",
+      }),
+    ]);
+    await sendText(U, "ราคาเท่าไหร่คะ");
+    const bs = bubbles();
+    expect(bs[bs.length - 1], "บอลลูนสุดท้าย = คำถามล้วน").toBe("ลูกค้ารับเป็นโปรโมชั่นไหนดีคะ");
+    expect(bs[bs.length - 2], "รายการโปรอยู่บอลลูนก่อนหน้า ครบ").toContain("- 3 ถ้วย");
+  });
+
+  it("คำถามเป็นบอลลูนเดี่ยวอยู่แล้ว → ไม่เปลี่ยนรูป", async () => {
+    scriptGemini([turn({ reply: "โปรโมชั่นค่ะ\n- 1 ถ้วย: 125 บาท[[เว้น]]รับเป็นโปรไหนดีคะ", stage: "S2" })]);
+    await sendText(U, "ราคาเท่าไหร่คะ");
+    const bs = bubbles();
+    expect(bs[bs.length - 1]).toBe("รับเป็นโปรไหนดีคะ");
+    expect(bs.filter((b) => b !== "[IMG]"), "ไม่งอกบอลลูนเกิน").toHaveLength(2);
+  });
+
+  it("คำตอบไม่จบด้วยคำถาม → ไม่ตัด (ปล่อยตามเดิม)", async () => {
+    scriptGemini([turn({ reply: "รับทราบค่ะ\nทีมแอดมินกำลังแพ็คของเตรียมส่งพอดีเลยค่ะ", stage: "S3" })]);
+    await sendText(U, "โอนแล้วค่ะ");
+    const bs = bubbles().filter((b) => b !== "[IMG]");
+    expect(bs, "ยังเป็นบอลลูนเดียว").toHaveLength(1);
+  });
+});
+
 // ═══ กลุ่ม D2 · D-61.C2 · 🔔 ธงสุขภาพต้องแจ้งเสมอ (แยกด่วน/ไม่ด่วน) ═══
 function bells(): string[] {
   return adminPushes()

@@ -1,6 +1,7 @@
 import { loadBotLibrary } from "./sheets/loader";
 import { DEFAULT_ASSURANCE_PHRASES } from "./guards/assurance";
 import { getTrainSandbox } from "./train/sandbox";
+import { isSchemaV3 } from "./schema-mode";
 // หมายเหตุ: cleanCell/stripKeyAnnotation ยังเป็น copy ในไฟล์นี้ (regex อักขระล่องหนแก้ยาก)
 // ตัวกลางอยู่ lib/sheets/clean.ts แล้ว — ตรงกัน 100% · ถ้าแก้ regex ต้องแก้ทั้ง 2 ที่
 
@@ -293,7 +294,12 @@ export async function getConfig(): Promise<AppConfig> {
     adminSilenceReturnMinutes: numOf(45, "คืนสิทธิ์บอท_หลังแชทเงียบ", "คืนสิทธิ์บอท_หลังแชทเงียบ_นาที"),
     botResumeMessage: strOf("ปลาทูมาดูแลต่อเองนะคะ", "ประโยคเปลี่ยนมือ_บอทรับต่อ"),
     testCommandsEnabled: boolOf(true, "เปิด_คำสั่งเทสต์", "เปิด_คำสั่งเทส"),
-    quotaSaver: boolOf(true, "โหมดประหยัดโควตา"),
+    // 🔴 D-61.C6: v3 ปิดโหมดประหยัดโควตา "โดยเจตนา" ที่ระดับโหมด (เจ้าของเคาะ)
+    //   เหตุผล: จังหวะบอลลูนคือดีไซน์ CX (ทักทาย/เนื้อ/รูป/คำถามปิดเดี่ยว) + ห้องซ้อมต้องเหมือนของจริง 100%
+    //   ยุบบอลลูน = คำถามปิดหายจาก noti มือถือ (เหตุผลระดับ conversion) และ splitter C6 ถูกลบล้าง
+    //   🔴 v2 (prod ปัจจุบัน) อ่านค่าจากชีตเหมือนเดิมทุกบรรทัด — ห้ามเปลี่ยนพฤติกรรม
+    //   ถ้าอนาคตต้นทุน push สูงจริง → เปิดเป็น scope เฉพาะ push (ว่าที่ D-63) ไม่ใช่ยุบทั้งเทิร์น
+    quotaSaver: isSchemaV3() ? false : boolOf(true, "โหมดประหยัดโควตา"),
     rawSwitches,
     raw,
     loadFailed,

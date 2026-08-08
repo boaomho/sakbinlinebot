@@ -20,7 +20,7 @@ lib/
   gemini.ts       runSalesTurn() — เรียก Gemini, parse JSON output
   config.ts       getConfig()/resolveFeatureSwitches() — CSV_Config + สวิตช์
   db.ts           Neon Postgres — customer state, messages, pending_order, ฯลฯ
-  line.ts         LINE Messaging API — reply/push/download/parseReply
+  line.ts         LINE Messaging API — reply/push/download/parseReply · **D-61.C6** `splitClosingQuestion` (ดันคำถามพาไปต่อเป็นบอลลูนเดี่ยว · ตัดที่ขอบบรรทัด · ชน cap 5 → รวมสองบอลลูนแรก) + `isClosingQuestion`/`CLOSING_QUESTION_RE` (**แหล่งเดียว** · golden ชั้น G import ใช้ร่วม)
   orders.ts       Google Sheet Orders — append/list/mark (header-driven)
   handoff.ts      keyword pre-check ส่งต่อแอดมิน (D-44: default 19 คำ ตรงชีต v2.0 — H1 สุขภาพ+ขอคุยกับคน+ฟ้อง เท่านั้น · เคลม/ขายส่ง/สื่อ → intake)
   blob.ts         Vercel Blob — สลิป (private) + สินค้า (public)
@@ -136,7 +136,7 @@ scripts/sheet-lint.mjs  D-45 · lint keyword ชีตจริง (คำโด
 > 🔴 **ทะเบียนรูปแบบ customer id (user_id):** `U`+32hex = **LINE** (raw) · `fb:<pageId>:<psid>` = **Messenger** (M-2) · `TRAIN:<session>` = **T-STUDIO sandbox** · โค้ดที่ push/แยก channel ดู prefix (เช่น cron D-50 ข้าม `fb:`)
 
 ## 6. CSV_Config keys ที่โค้ดอ่าน (ชื่อตรงตัว · มี alias)
-`ชื่อบอท` · `ชื่อร้าน`(/`ชื่อร้าน/แบรนด์`) · `เพศบอท` · `ใช้ emoji`(/`ใช้_emoji`/`emoji`) · `temperature`(default **0.2** · D-44 เครื่องจำแนก · ชีตตั้งทับได้) · `maxOutputTokens`(พื้น 4096) · `แสดง_typing`(/`typing`) · `debounce_รวบคำถาม`(prefix `debounce`) · `หน่วง_ระหว่างบอลลูน`(/`หน่วง_ระหว่างข้อความ`) · `อายุลิงก์สลิป_วัน` · `เวลาตัดรอบออเดอร์`(/`เวลารอบตัดออเดอร์`) · `เลขออเดอร์_รีเซ็ตทุกวัน` · `คำ_handoff`(/`คำ_ส่งต่อแอดมิน`/`keyword_handoff`) · `คืนสิทธิ์บอท_หลังแชทเงียบ` · `ประโยคเปลี่ยนมือ_บอทรับต่อ` · `เปิด_คำสั่งเทสต์` · `โหมดประหยัดโควตา`
+`ชื่อบอท` · `ชื่อร้าน`(/`ชื่อร้าน/แบรนด์`) · `เพศบอท` · `ใช้ emoji`(/`ใช้_emoji`/`emoji`) · `temperature`(default **0.2** · D-44 เครื่องจำแนก · ชีตตั้งทับได้) · `maxOutputTokens`(พื้น 4096) · `แสดง_typing`(/`typing`) · `debounce_รวบคำถาม`(prefix `debounce`) · `หน่วง_ระหว่างบอลลูน`(/`หน่วง_ระหว่างข้อความ`) · `อายุลิงก์สลิป_วัน` · `เวลาตัดรอบออเดอร์`(/`เวลารอบตัดออเดอร์`) · `เลขออเดอร์_รีเซ็ตทุกวัน` · `คำ_handoff`(/`คำ_ส่งต่อแอดมิน`/`keyword_handoff`) · `คืนสิทธิ์บอท_หลังแชทเงียบ` · `ประโยคเปลี่ยนมือ_บอทรับต่อ` · `เปิด_คำสั่งเทสต์` · `โหมดประหยัดโควตา`(default **true** · 🔴 **D-61.C6: v3 บังคับ false ที่ `config.ts` ระดับโหมด** — จังหวะบอลลูนคือดีไซน์ CX + ซ้อม=จริง · v2 อ่านจากชีตเหมือนเดิม · เปิด=ยุบ `[[เว้น]]` ทุกตัวเป็น `\n\n` เหลือ message เดียว)
 **pricing (D-15/D-22 · lib/core/pricing อ่านจาก config.raw):** `ยอดขั้นต่ำส่งฟรี_บาท`(275) · `ค่าส่ง_มาตรฐาน`(30) · `ค่าส่ง_COD_เพิ่ม`(0) · `เพดานจำนวน_คูณโปรใหญ่สุด`(2) · `จำนวนที่ไม่มีโปร_คิดยังไง`(ค่า: `เทียบโปรฐาน`=default/ว่าง · `ราคาปกติ` · อื่น→handoff)
 > ⚠️ 4 คีย์แรก: ว่าง/อ่านไม่ได้ → error+handoff (ไม่มี fallback) · `จำนวนที่ไม่มีโปร_คิดยังไง`: ว่าง/ไม่มี key → default `เทียบโปรฐาน` (เลือกวิธี ไม่ใช่ตัวเลข) · ค่าที่พิมพ์ผิด(ไม่ว่าง) → handoff
 **โอนเงิน (D-25 · resolve ฝั่งโค้ด quote.ts):** `เลขที่บัญชี`(alias `เลขพร้อมเพย์`) · `ชื่อบัญชี` · `ธนาคาร` — resolve ไม่ได้ → บล็อกส่ง+push

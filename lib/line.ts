@@ -119,6 +119,75 @@ export function parseReplyIntoMessages(reply: string, collapseBubbles = false): 
   return messages;
 }
 
+/**
+ * D-61.C5/C6 · ตัวตรวจ "บรรทัดนี้คือคำถามพาไปต่อ" — **แหล่งเดียว**
+ * ใช้ร่วมกัน: delivery splitter (C6 ข้างล่าง) + invariant บอลลูนปิดของ golden ชั้น G (C5)
+ */
+export const CLOSING_QUESTION_RE = /(ไหมคะ|มั้ยคะ|ดีคะ|ไหนคะ|กี่|อะไรคะ|\?)/;
+export function isClosingQuestion(line: string): boolean {
+  return CLOSING_QUESTION_RE.test(line);
+}
+
+const BUBBLE_SPLIT_RE = /\[\[(?:เว้น|แยก)\]\]/;
+const IMAGE_ONLY_LINE_RE = /^\s*\[\[รูป:[^\]]*\]\]\s*$/;
+
+/**
+ * นับ message จริง "แบบไม่ตัดเพดาน" — ใช้ตัดสินว่าการแยกบอลลูนจะทำให้ล้น 5 ไหม
+ * 🔴 ห้ามใช้ parseReplyIntoMessages นับ: มันตัดเหลือ 5 ให้แล้ว จึงไม่มีวันรายงานว่าเกิน
+ * ใช้ parseSegmentToMessages/enforceTextLast ตัวเดียวกับของจริง (ไม่ทำ logic ซ้ำ)
+ */
+function countMessagesUncapped(reply: string): number {
+  const msgs: Message[] = [];
+  for (const seg of reply.split(BUBBLE_SPLIT_RE)) msgs.push(...parseSegmentToMessages(seg));
+  return enforceTextLast(msgs).length;
+}
+
+/**
+ * 🔴 D-61.C6 · ดัน "คำถามพาไปต่อ" ออกเป็นบอลลูนสุดท้ายเดี่ยว ๆ (deterministic ไม่พึ่ง LLM)
+ * เหตุผลระดับ conversion: LINE มือถือโชว์ preview/notification จาก "ข้อความสุดท้าย"
+ * ถ้าคำถามถูกผูกท้ายรายการโปรยาว ๆ ลูกค้าจะเห็น noti เป็นเศษราคา ไม่ใช่คำถามที่ต้องตอบ
+ *
+ * จุดตัด = **ขอบบรรทัด** (ไม่ใช้ regex หาประโยค): บรรทัดสุดท้ายที่มีเนื้อของบอลลูนสุดท้าย
+ * ตัดเมื่อครบทุกข้อ:
+ *   - บอลลูนสุดท้ายมีเนื้อ > 1 บรรทัด (บรรทัดเดียว = เดี่ยวอยู่แล้ว ไม่ทำอะไร)
+ *   - บรรทัดนั้นเป็นคำถาม (`isClosingQuestion`) และไม่ใช่ `[[รูป:...]]` ล้วน
+ *   - ตัดแล้วบอลลูนเดิมยังเหลือเนื้อ (ไม่สร้างบอลลูนว่าง)
+ * เพดาน ≤5: นับ message จริงด้วย `parseReplyIntoMessages` (บอลลูนที่มีรูปแตกเป็นหลาย message)
+ *   เกิน → รวมสองบอลลูน "แรก" เข้าด้วยกัน แทนการทิ้งคำถาม
+ */
+export function splitClosingQuestion(reply: string): { text: string; changed: boolean; mergedHead: number } {
+  const unchanged = { text: reply, changed: false, mergedHead: 0 };
+  const bubbles = reply.split(BUBBLE_SPLIT_RE);
+  const lastIdx = bubbles.length - 1;
+  if (lastIdx < 0) return unchanged;
+
+  const lines = bubbles[lastIdx].split("\n");
+  let li = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (lines[i].trim() !== "") {
+      li = i;
+      break;
+    }
+  }
+  if (li <= 0) return unchanged; // ว่าง หรือมีบรรทัดเนื้อเดียว = เดี่ยวอยู่แล้ว
+
+  const question = lines[li].trim();
+  if (IMAGE_ONLY_LINE_RE.test(question)) return unchanged; // รูปไม่นับเป็นบรรทัดคำถาม
+  if (!isClosingQuestion(question)) return unchanged;
+
+  const head = lines.slice(0, li).join("\n").trim();
+  if (head === "") return unchanged; // กันบอลลูนว่าง
+
+  let out = [...bubbles.slice(0, lastIdx), head, question];
+  let mergedHead = 0;
+  // เกินเพดาน → รวมหัวเข้าหากัน (ห้ามแตะคู่ท้าย head+question)
+  while (out.length > 2 && countMessagesUncapped(out.join("[[เว้น]]")) > MAX_MESSAGES_PER_SEND) {
+    out = [`${out[0]}\n${out[1]}`, ...out.slice(2)];
+    mergedHead += 1;
+  }
+  return { text: out.join("[[เว้น]]"), changed: true, mergedHead };
+}
+
 export async function replyMessages(replyToken: string, reply: string, collapseBubbles = false): Promise<boolean> {
   const messages = parseReplyIntoMessages(reply, collapseBubbles);
   if (messages.length === 0) return false;
