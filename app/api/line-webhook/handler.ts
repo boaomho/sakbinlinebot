@@ -3,7 +3,7 @@ import {
   getConfig,
   formatConfigForPrompt,
   resolveFeatureSwitches,
-  DEFAULT_REPLY,
+  defaultReply,
   AppConfig,
   FeatureSwitches,
 } from "@/lib/config";
@@ -317,7 +317,7 @@ function composeReplyV2(args: {
   if (geminiOutput.degraded) {
     // 🔴 D-46: เทิร์นข้อความล้วนที่ Gemini ไม่ตอบ → บอกตรงว่า "ยังไม่ได้รับข้อความล่าสุด รบกวนส่งใหม่" · ห้าม verbatim/resend step
     console.warn(JSON.stringify({ scope: "degraded", reason: "gemini-no-output", stage: geminiOutput.stage }));
-    return { baseReply: DEGRADED_NO_INPUT_REPLY, verbatimMode: false, deliverMarksStep: false };
+    return { baseReply: degradedNoInputReply(config.botName), verbatimMode: false, deliverMarksStep: false };
   }
   if (!isHandoffTurn && !orderCompleteThisTurn && objection.verbatim) {
     console.log(JSON.stringify({ scope: "verbatim", source: "objection", id: objection.verbatim.id, homeFull: homeIsFull }));
@@ -347,7 +347,7 @@ function composeReplyV3(args: { geminiOutput: GeminiTurnOutput; imageFallback: b
   if (imageFallback) return { baseReply: imageReceivedReply(config), verbatimMode: false, deliverMarksStep: false };
   if (geminiOutput.degraded) {
     console.warn(JSON.stringify({ scope: "degraded", reason: "gemini-no-output", stage: geminiOutput.stage }));
-    return { baseReply: DEGRADED_NO_INPUT_REPLY, verbatimMode: false, deliverMarksStep: false };
+    return { baseReply: degradedNoInputReply(config.botName), verbatimMode: false, deliverMarksStep: false };
   }
   // delivered_steps ใน v3 = hint + dedup 🔔 เท่านั้น (A1) — mark ทุกเทิร์นที่เนื้อหาถึงลูกค้าจริง
   return { baseReply: geminiOutput.reply, verbatimMode: false, deliverMarksStep: true };
@@ -857,7 +857,7 @@ export async function processMessage(
       }),
       GEMINI_TIMEOUT_MS,
       {
-        reply: DEFAULT_REPLY,
+        reply: defaultReply(config.botName),
         stage: previousStage ?? "1",
         tagsAdd: [] as string[],
         handoff: false,
@@ -1057,7 +1057,7 @@ export async function processMessage(
         `⚠️ ข้อมูลโอนเงิน resolve ไม่ได้: ${unresolvedTransfer.join(" ")} — บอทงดส่งข้อความโอนให้ลูกค้า\nตรวจ CSV_Config: เลขที่บัญชี / ชื่อบัญชี / ธนาคาร\n———\nLineOA: ${channelLabel(userId)} ${name}`,
       );
     }
-    outReply = TRANSFER_UNRESOLVED_REPLY;
+    outReply = transferUnresolvedReply(config.botName);
     deliverMarksStep = false; // D-45b: เนื้อหา step ไม่ถึงลูกค้า → ไม่ตั้งธง
   }
   // claims guard (พ.ร.บ.อาหาร · D-26): วลีโฆษณาต้องห้ามจากชีต · โหมด เตือน(default)=ส่ง+log+push · บล็อก=ไม่ส่ง+พักสาย+push
@@ -1080,7 +1080,7 @@ export async function processMessage(
       );
     }
     if (blockClaim) {
-      outReply = CLAIMS_BLOCKED_REPLY;
+      outReply = claimsBlockedReply(config.botName);
       deliverMarksStep = false; // D-45b: บล็อกแล้ว เนื้อหาไม่ถึงลูกค้า
     }
   }
@@ -1104,7 +1104,7 @@ export async function processMessage(
         await pushRawText(adminGroupId, `⚠️ บอทพูดราคานอกระบบ · โหมด: ${priceMode}\nเลขที่ชน: ${badPrices.join(", ")} บาท\nข้อความบอท: ${outReply}\n———\nLineOA: ${channelLabel(userId)} ${name}`);
       }
       if (blockPrice) {
-        outReply = PRICE_BAD_REPLY;
+        outReply = priceBadReply(config.botName);
         deliverMarksStep = false; // D-45b: บล็อกแล้ว เนื้อหาไม่ถึงลูกค้า
       }
     }
@@ -1139,12 +1139,12 @@ export async function processMessage(
         // ปิด + เหลือว่างหมด → fallback AI (resolve reply ของ AI ซ้ำ · เช็คตัวแปรค้างอีกชั้น)
         console.error(JSON.stringify({ scope: "var-guard", event: "all-bubbles-dropped", mode: "ปิด", stage: geminiOutput.stage, fallback: "ai" }));
         const aiResolved = resolveAllVars(geminiOutput.reply, varCtx);
-        outReply = dropUnresolvedVarBubbles(aiResolved).clean || VAR_FALLBACK_REPLY;
+        outReply = dropUnresolvedVarBubbles(aiResolved).clean || varFallbackReply(config.botName);
         deliverMarksStep = false; // D-45b: เนื้อหา step ถูกทิ้งหมด ไม่ถึงลูกค้า
       } else {
         // เปิด + เหลือว่างหมด = เคสแปลก (AI พ่นตัวแปรทุกบอลลูน) → log หนัก + พักสาย
         console.error(JSON.stringify({ scope: "var-guard", event: "all-bubbles-dropped", mode: "เปิด", reply: outReply }));
-        outReply = VAR_FALLBACK_REPLY;
+        outReply = varFallbackReply(config.botName);
         deliverMarksStep = false;
       }
     }
@@ -1520,20 +1520,22 @@ async function handleAdminGroupCommand(
   }
 }
 
+// 🔴 D-61.C4: ข้อความที่ "บอทพูดเอง" ต้องเรียกตัวเองด้วยชื่อจาก Config `ชื่อบอท` — ห้าม hardcode "ปลาทู"
+//    (เจ้าของเปลี่ยนชื่อบอทในชีตแล้วต้องเปลี่ยนทุกที่พร้อมกัน) · คำว่า "แอดมิน/ทีมงาน" = คนจริง คงไว้ตามเดิม
 /** ข้อความพักสายตอนตัวแปรโอนเงิน resolve ไม่ได้ — ไม่ให้ลูกค้าเงียบ แต่ก็ไม่ส่งเลขบัญชีผิด (แอดมินถูก push แล้ว) */
-const TRANSFER_UNRESOLVED_REPLY = "ขอสักครู่นะคะ ปลาทูขอเช็คข้อมูลการโอนให้แน่ใจก่อน เดี๋ยวรีบแจ้งกลับเลยค่ะ 🙏";
+const transferUnresolvedReply = (botName: string) => `ขอสักครู่นะคะ ${botName}ขอเช็คข้อมูลการโอนให้แน่ใจก่อน เดี๋ยวรีบแจ้งกลับเลยค่ะ 🙏`;
 
 /** ข้อความพักสายตอน claims guard โหมด "บล็อก" จับคำโฆษณาต้องห้าม — ไม่ส่งของจริง (แอดมินถูก push แล้ว) */
-const CLAIMS_BLOCKED_REPLY = "ขอสักครู่นะคะ ปลาทูขอเช็คข้อมูลให้ชัดเจนก่อน เดี๋ยวรีบแจ้งกลับค่ะ 🙏";
+const claimsBlockedReply = (botName: string) => `ขอสักครู่นะคะ ${botName}ขอเช็คข้อมูลให้ชัดเจนก่อน เดี๋ยวรีบแจ้งกลับค่ะ 🙏`;
 
 /** ข้อความพักสายตอน price guard โหมด "บล็อก" จับราคานอกระบบ — ไม่ส่งเลขผิด (แอดมินถูก push แล้ว) */
-const PRICE_BAD_REPLY = "ขอสักครู่นะคะ ปลาทูขอเช็คราคาให้แน่ใจก่อน เดี๋ยวรีบแจ้งกลับเลยค่ะ 🙏";
+const priceBadReply = (botName: string) => `ขอสักครู่นะคะ ${botName}ขอเช็คราคาให้แน่ใจก่อน เดี๋ยวรีบแจ้งกลับเลยค่ะ 🙏`;
 // Phase2 var-guard: ทุกบอลลูนโดนทิ้ง (ตัวแปรค้างหมด) → ส่งข้อความพักสายปลอดภัย (ลูกค้าไม่เห็นทั้งของว่าง/ของดิบ)
-const VAR_FALLBACK_REPLY = "ขอสักครู่นะคะ ปลาทูขอเช็คข้อมูลให้เรียบร้อยก่อน เดี๋ยวรีบแจ้งกลับเลยค่ะ 🙏";
+const varFallbackReply = (botName: string) => `ขอสักครู่นะคะ ${botName}ขอเช็คข้อมูลให้เรียบร้อยก่อน เดี๋ยวรีบแจ้งกลับเลยค่ะ 🙏`;
 // 🔴 D-46: เทิร์นข้อความล้วนที่ Gemini ไม่ตอบ (blocked/timeout/parse-fail) — บอกตรงว่ายังไม่ได้รับ + ขอให้ส่งใหม่
-//    (ต่างจาก DEFAULT_REPLY "รอสักครู่แล้วทักใหม่" ที่ทำให้ลูกค้านั่งรอเฉยๆ ทั้งที่ข้อมูลเมื่อกี้ไม่ถึง)
+//    (ต่างจาก defaultReply "รอสักครู่แล้วทักใหม่" ที่ทำให้ลูกค้านั่งรอเฉยๆ ทั้งที่ข้อมูลเมื่อกี้ไม่ถึง)
 //    🔴 D-61.C2: ห้ามมีคำว่า "รบกวน" (กฎเหล็ก CLAUDE.md) — golden ชั้น D/G มี invariant คุมแล้ว
-const DEGRADED_NO_INPUT_REPLY = "ขออภัยค่ะ ระบบสะดุดนิดหน่อย ปลาทูยังไม่ได้รับข้อความล่าสุดของลูกค้านะคะ ช่วยพิมพ์ส่งมาอีกครั้งนะคะ 🙏";
+const degradedNoInputReply = (botName: string) => `ขออภัยค่ะ ระบบสะดุดนิดหน่อย ${botName}ยังไม่ได้รับข้อความล่าสุดของลูกค้านะคะ ช่วยพิมพ์ส่งมาอีกครั้งนะคะ 🙏`;
 
 /** D-61.C2: เนื้อ 🔔 กรณีเทิร์นธงสุขภาพจบแบบลูกค้าไม่ได้คำตอบ — แอดมินต้องตามด่วน (แยกจาก template ในชีต) */
 const HEALTH_NOTIFY_UNANSWERED =
@@ -1594,7 +1596,7 @@ export async function handleEvent(event: webhook.Event, config: AppConfig, switc
     }
 
     if (!switches.salesCore) {
-      await replyMessages(replyToken, DEFAULT_REPLY);
+      await replyMessages(replyToken, defaultReply(config.botName));
       return;
     }
 

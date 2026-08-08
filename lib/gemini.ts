@@ -2,7 +2,7 @@ import { GoogleGenAI, ThinkingLevel, Type, HarmCategory, HarmBlockThreshold } fr
 import { buildStaticSystemInstruction, buildUserContent } from "@/prompt/system";
 import { buildSalesSystemV3 } from "@/prompt/system-v3";
 import { isSchemaV3 } from "@/lib/schema-mode";
-import { AppConfig, DEFAULT_REPLY } from "./config";
+import { AppConfig, defaultReply } from "./config";
 import { AiOrderItem } from "./core/pricing";
 
 /**
@@ -167,9 +167,9 @@ function getClient(): GoogleGenAI {
   return client;
 }
 
-function fallback(stage: string): GeminiTurnOutput {
+function fallback(stage: string, botName: string): GeminiTurnOutput {
   return {
-    reply: DEFAULT_REPLY,
+    reply: defaultReply(botName),
     stage,
     tagsAdd: [],
     handoff: false,
@@ -276,7 +276,7 @@ async function runExtraction(input: GeminiTurnInput): Promise<GeminiTurnOutput |
       keys: Object.keys(orderData), payment: paymentMethod, // sku/qty/payment = ไม่ใช่ PII · เบอร์/ที่อยู่ log แค่ key
     }));
     return {
-      reply: DEFAULT_REPLY, // ไม่ใช้ (verbatim) — stage=current ให้ route ส่ง pattern ประตูปัจจุบัน
+      reply: defaultReply(input.config.botName), // ไม่ใช้ (verbatim) — stage=current ให้ route ส่ง pattern ประตูปัจจุบัน
       stage: input.currentStage,
       tagsAdd: [],
       handoff: false,
@@ -423,7 +423,7 @@ export async function runSalesTurn(input: GeminiTurnInput): Promise<GeminiTurnOu
     if (finishReason === "MAX_TOKENS") {
       // ชนเพดาน = JSON ขาดกลางคัน → ห้าม parse เด็ดขาด (จะได้ค่าครึ่ง ๆ / throw) · extraction ไม่ช่วย (คนละเหตุ)
       console.error(JSON.stringify({ scope: "gemini", warning: "MAX_TOKENS — ตอบไม่จบ ใช้ fallback", ...budget }));
-      return fallback(input.currentStage);
+      return fallback(input.currentStage, input.config.botName);
     }
 
     console.log(JSON.stringify({ scope: "gemini", ...budget }));
@@ -453,13 +453,13 @@ export async function runSalesTurn(input: GeminiTurnInput): Promise<GeminiTurnOu
       // D-48: call หลัก blocked → บันได extraction จิ๋ว (แทน retry prompt เดิม) · อยู่ในงบ withTimeout 8s เดิม
       const extracted = await runExtraction(input);
       if (extracted) return extracted; // สกัดผ่าน → order_data เข้า gate · ลูกค้าได้ flow ต่อ
-      return fallback(input.currentStage); // extraction ก็บล็อก → degraded (ตาข่าย D-46 last resort)
+      return fallback(input.currentStage, input.config.botName); // extraction ก็บล็อก → degraded (ตาข่าย D-46 last resort)
     }
 
     const parsed: Record<string, unknown> = JSON.parse(text);
 
     return {
-      reply: typeof parsed.reply === "string" && parsed.reply.trim() ? parsed.reply.trim() : DEFAULT_REPLY,
+      reply: typeof parsed.reply === "string" && parsed.reply.trim() ? parsed.reply.trim() : defaultReply(input.config.botName),
       stage: typeof parsed.stage === "string" && parsed.stage ? parsed.stage : input.currentStage,
       tagsAdd: Array.isArray(parsed.tags_add) ? parsed.tags_add.filter((t: unknown) => typeof t === "string") : [],
       handoff: Boolean(parsed.handoff),
@@ -474,6 +474,6 @@ export async function runSalesTurn(input: GeminiTurnInput): Promise<GeminiTurnOu
     };
   } catch (error) {
     console.error(JSON.stringify({ scope: "gemini", warning: "request failed", error: String(error) }));
-    return fallback(input.currentStage);
+    return fallback(input.currentStage, input.config.botName);
   }
 }

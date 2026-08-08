@@ -4,8 +4,10 @@ import { getTrainSandbox } from "./train/sandbox";
 // หมายเหตุ: cleanCell/stripKeyAnnotation ยังเป็น copy ในไฟล์นี้ (regex อักขระล่องหนแก้ยาก)
 // ตัวกลางอยู่ lib/sheets/clean.ts แล้ว — ตรงกัน 100% · ถ้าแก้ regex ต้องแก้ทั้ง 2 ที่
 
-export const DEFAULT_REPLY =
-  "ขออภัยค่ะ ตอนนี้ปลาทูขัดข้องนิดหน่อย รอสักครู่แล้วลองทักมาใหม่นะคะ 🙏";
+/** D-61.C4: ข้อความพักสายมาตรฐาน — บอทเรียกตัวเองด้วยชื่อจาก Config `ชื่อบอท` (ห้าม hardcode "ปลาทู") */
+export function defaultReply(botName: string): string {
+  return `ขออภัยค่ะ ตอนนี้${botName}ขัดข้องนิดหน่อย รอสักครู่แล้วลองทักมาใหม่นะคะ 🙏`;
+}
 
 export interface FeatureSwitches {
   /** แกนขาย: Step + FAQ + Config โหลดสำเร็จหรือไม่ (ไม่ใช่สวิตช์ในชีต แต่เป็นผลของการเช็คของจริง) */

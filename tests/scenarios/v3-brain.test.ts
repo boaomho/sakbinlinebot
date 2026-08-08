@@ -6,6 +6,7 @@ import { readCustomer } from "../harness/db";
 import { buildSalesSystemV3 } from "@/prompt/system-v3";
 import { findAssuranceHits, cutAssuranceLines, DEFAULT_ASSURANCE_PHRASES } from "@/lib/guards/assurance";
 import { sheetSchema } from "@/lib/schema-mode";
+import { defaultReply } from "@/lib/config";
 
 /**
  * D-61.A · สมองใหม่ v3 (SHEET_SCHEMA=v3 เฉพาะไฟล์นี้ — afterAll คืนค่า · ชุดเทสที่เหลือทั้ง repo รัน v2 = พิสูจน์ v2 ไม่เปลี่ยน)
@@ -125,6 +126,38 @@ describe("D-61.A · buildSalesSystemV3 (โครง + few-shot คำต่อ�
     expect(s).toContain("ที่อยู่จัดส่งถูกต้องนะคะ");
     expect(s).toContain("ลูกค้าสะดวกโอนเลยมั้ยคะ ทีมแอดมินกำลังแพคของเตรียมส่งพอดีเลยค่ะ");
     expect(s).toContain("รับน้ำพริกปลาทู 1 ถ้วยตามที่แจ้งมา หรือรับเป็นโปรโมชั่น 3 ถ้วยดีคะ");
+  });
+});
+
+// ---------- unit · D-61.C4 persona ชื่อบอทตาม Config ----------
+describe("D-61.C4 · บอทเรียกตัวเองด้วยชื่อจาก Config (ไม่ใช่ 'แอดมิน')", () => {
+  const NAME = "น้องกุ้ง"; // ชื่อสมมติ ไม่ใช่ default — จับ hardcode ได้ทันที
+  const s = buildSalesSystemV3({ botName: NAME, shopName: "สากบิน", personaGender: "หญิง", useEmoji: false });
+
+  it("กติกา identity สั่งให้เรียกแทนตัวเองด้วยชื่อจาก Config", () => {
+    expect(s).toContain(`เรียกแทนตัวเองว่า "${NAME}" เสมอ`);
+    expect(s).toContain("ห้ามเรียกตัวเองว่า \"แอดมิน\" เด็ดขาด");
+  });
+
+  it("🔴 few-shot: บทพูดของบอททุกฉากใช้ชื่อจาก Config — ไม่มี 'แอดมิน' ในบทบอท", () => {
+    // ตัดเอาเฉพาะบล็อกตัวอย่างบทสนทนา (นอกบล็อกเป็นคำสั่ง/กติกา พูดถึงแอดมินมนุษย์ได้)
+    const fewShot = s.slice(s.indexOf("<ตัวอย่างบทสนทนา"), s.indexOf("</ตัวอย่างบทสนทนา>"));
+    expect(fewShot.length).toBeGreaterThan(200);
+    // "แอดมิน" ที่เหลือได้ต้องเป็นทีมมนุษย์เท่านั้น = ขึ้นต้นด้วย "ทีม"
+    const lone = [...fewShot.matchAll(/(.{0,3})แอดมิน/g)].filter((m) => m[1] !== "ทีม");
+    expect(lone.map((m) => m[0]), "บทบอทยังเรียกตัวเองว่าแอดมิน").toHaveLength(0);
+    expect(fewShot).toContain(`${NAME}สรุปยอดให้เลยนะคะ`);
+    expect(fewShot).toContain(`${NAME}ส่งรายละเอียดเพิ่มเติมให้ค่ะ`);
+  });
+
+  it("คงคำว่า 'ทีมแอดมิน' ไว้ตรงที่หมายถึงคนจริง (แพ็คของ/จัดส่ง)", () => {
+    expect(s).toContain("ทีมแอดมินกำลังแพคของเตรียมส่งพอดีเลยค่ะ");
+    expect(s).toContain("ทีมแอดมินจัดส่งของให้ลูกค้า");
+  });
+
+  it("ข้อความ fallback ในโค้ดใช้ชื่อจาก Config ไม่ hardcode", () => {
+    expect(defaultReply(NAME)).toContain(NAME);
+    expect(defaultReply(NAME)).not.toContain("ปลาทู");
   });
 });
 
