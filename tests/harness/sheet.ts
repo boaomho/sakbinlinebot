@@ -19,23 +19,43 @@ export function orderCount(): number {
 }
 
 /**
- * แถวลำดับที่ i แปลงเป็น object ตาม ORDERS_HEADER
+ * 🔴 D-64: helper ทุกตัวอิง "header ที่ mock ตอบให้" (`sheetsCalls.ordersHeader`) ไม่ใช่ `ORDERS_HEADER`
+ * เพราะชีตจริงมีคอลัมน์ที่โค้ดไม่ได้ขอ (เช่น Q "กล่องส่งออเดอร์") → index เลื่อน
+ * ถ้าอิง ORDERS_HEADER จะ assert ผิดช่องตั้งแต่คอลัมน์ที่แทรกเป็นต้นไป
+ */
+export function activeOrdersHeader(): string[] {
+  return sheetsCalls.ordersHeader.length > 0 ? sheetsCalls.ordersHeader : [...ORDERS_HEADER];
+}
+
+/**
+ * แถวลำดับที่ i แปลงเป็น object ตาม header จริงของชีต (mock)
  * = พิสูจน์ว่า "ค่าลงตรงคอลัมน์ที่ header บอก" ไม่ใช่แค่ "ค่าถูก"
  */
 export function orderRowAt(i: number): Record<string, string> {
   const row = appendedRows()[i] ?? [];
   const out: Record<string, string> = {};
-  ORDERS_HEADER.forEach((h, idx) => {
+  activeOrdersHeader().forEach((h, idx) => {
     out[h] = row[idx] ?? "";
   });
   return out;
 }
 
-/** ตัวอักษรคอลัมน์ (A, B, ... X) ของ header ที่ระบุ — ใช้ assert ตำแหน่งจริงในชีต */
+/** ตัวอักษรคอลัมน์ (A, B, … AA) ของ header ที่ระบุ — ใช้ assert ตำแหน่งจริงในชีต */
 export function columnOf(header: string): string {
-  const idx = ORDERS_HEADER.indexOf(header);
-  if (idx < 0) throw new Error(`ไม่มี header "${header}" ใน ORDERS_HEADER`);
-  return String.fromCharCode(65 + idx);
+  const idx = activeOrdersHeader().indexOf(header);
+  if (idx < 0) throw new Error(`ไม่มี header "${header}" ใน header ของชีต (mock)`);
+  return colLetter(idx);
+}
+
+/** index 0-based → ตัวอักษรคอลัมน์ (รองรับเกิน Z → AA) */
+function colLetter(index: number): string {
+  let n = index;
+  let s = "";
+  do {
+    s = String.fromCharCode(65 + (n % 26)) + s;
+    n = Math.floor(n / 26) - 1;
+  } while (n >= 0);
+  return s;
 }
 
 /**
@@ -45,8 +65,9 @@ export function columnOf(header: string): string {
 export function rowByColumn(i: number): Record<string, string> {
   const row = appendedRows()[i] ?? [];
   const out: Record<string, string> = {};
-  for (let idx = 0; idx < ORDERS_HEADER.length; idx++) {
-    out[String.fromCharCode(65 + idx)] = row[idx] ?? "";
+  const header = activeOrdersHeader();
+  for (let idx = 0; idx < header.length; idx++) {
+    out[colLetter(idx)] = row[idx] ?? "";
   }
   return out;
 }

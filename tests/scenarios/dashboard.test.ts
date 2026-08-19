@@ -95,10 +95,12 @@ describe("T2-ก · dashboard DB reads", () => {
 
 // ---------- sales (won ∩ ยอดชีต) ----------
 function orderRow(orderId: string, amount: string, cancelled = ""): string[] {
-  const row = ORDERS_HEADER.map(() => "");
-  row[ORDERS_HEADER.indexOf("order_id")] = orderId;
-  row[ORDERS_HEADER.indexOf("ยอดเงิน")] = amount;
-  row[ORDERS_HEADER.indexOf("ยกเลิก")] = cancelled;
+  // 🔴 D-64: อิง header จริงของ mock (มีคอลัมน์แทรก) ไม่ใช่ ORDERS_HEADER
+  const header = sheetsCalls.ordersHeader.length > 0 ? sheetsCalls.ordersHeader : [...ORDERS_HEADER];
+  const row = header.map(() => "");
+  row[header.indexOf("order_id")] = orderId;
+  row[header.indexOf("ยอดเงิน")] = amount;
+  row[header.indexOf("ยกเลิก")] = cancelled;
   return row;
 }
 
@@ -220,8 +222,10 @@ describe("T2-ข · /switch route", () => {
 
 // ---------- T2-ฉ · แท็บออเดอร์ (read-only · derive จากคอลัมน์จริง) ----------
 function fullRow(o: { orderId: string; userId: string; name?: string; orderNumber?: string; product?: string; total?: string; confirmed?: boolean; sent?: boolean; tracking?: string; cancelled?: boolean }): string[] {
-  const row = ORDERS_HEADER.map(() => "");
-  const set = (h: string, v: string) => { row[ORDERS_HEADER.indexOf(h)] = v; };
+  // 🔴 D-64: อิง header จริงของ mock (มีคอลัมน์ "กล่องส่งออเดอร์" แทรก) ไม่ใช่ ORDERS_HEADER
+  const header = sheetsCalls.ordersHeader.length > 0 ? sheetsCalls.ordersHeader : [...ORDERS_HEADER];
+  const row = header.map(() => "");
+  const set = (h: string, v: string) => { row[header.indexOf(h)] = v; };
   set("order_id", o.orderId);
   set("line_user_id", o.userId);
   set("ชื่อ-นามสกุล", o.name ?? "");
@@ -235,25 +239,26 @@ function fullRow(o: { orderId: string; userId: string; name?: string; orderNumbe
   return row;
 }
 
-describe("T2-ฉ · deriveOrderStatus (ครบทุก combination N/M/O/P + notified)", () => {
-  const base = { cancelled: false, confirmed: false, sent: false, hasTracking: false, notified: false };
+describe("T2-ฉ · deriveOrderStatus (🔴 D-64: อิง A/N/P + notified · ไม่พึ่ง O อีกแล้ว)", () => {
+  const base = { cancelled: false, hasOrderNumber: false, hasTracking: false, notified: false };
   it("N=TRUE → cancelled (precedence สูงสุด แม้คอลัมน์อื่นครบ)", () => {
-    expect(deriveOrderStatus({ cancelled: true, confirmed: true, sent: true, hasTracking: true, notified: true })).toBe("cancelled");
+    expect(deriveOrderStatus({ cancelled: true, hasOrderNumber: true, hasTracking: true, notified: true })).toBe("cancelled");
   });
-  it("ไม่ M → awaiting_confirm", () => {
+  it("A(ลำดับ) ว่าง → awaiting_confirm (Apps Script ยังไม่แจกเลข = ยังไม่ติ๊ก M)", () => {
     expect(deriveOrderStatus({ ...base })).toBe("awaiting_confirm");
   });
-  it("M · ไม่ O → awaiting_number (รอ cron แจกเลข)", () => {
-    expect(deriveOrderStatus({ ...base, confirmed: true })).toBe("awaiting_number");
-  });
-  it("M · O · P ว่าง → awaiting_pack (งานแพ็ค/เลขแทรค)", () => {
-    expect(deriveOrderStatus({ ...base, confirmed: true, sent: true })).toBe("awaiting_pack");
+  it("A มีเลข · P ว่าง → awaiting_pack (งานแพ็ค/เลขแทรค)", () => {
+    expect(deriveOrderStatus({ ...base, hasOrderNumber: true })).toBe("awaiting_pack");
   });
   it("P มี · ยังไม่ notified → shipped_pending_notify", () => {
-    expect(deriveOrderStatus({ ...base, confirmed: true, sent: true, hasTracking: true, notified: false })).toBe("shipped_pending_notify");
+    expect(deriveOrderStatus({ ...base, hasOrderNumber: true, hasTracking: true, notified: false })).toBe("shipped_pending_notify");
   });
   it("P มี · notified → shipped_notified", () => {
-    expect(deriveOrderStatus({ ...base, confirmed: true, sent: true, hasTracking: true, notified: true })).toBe("shipped_notified");
+    expect(deriveOrderStatus({ ...base, hasOrderNumber: true, hasTracking: true, notified: true })).toBe("shipped_notified");
+  });
+  it("🔴 O(ส่งออเดอร์แล้ว) ไม่มีผลต่อสถานะเลย — คนติ๊กเอง ลืมได้", () => {
+    // เดิม O=false จะค้างที่ awaiting_number ตลอดกาล · ตอนนี้ดูแค่ A/P
+    expect(deriveOrderStatus({ ...base, hasOrderNumber: true })).toBe("awaiting_pack");
   });
 });
 
@@ -272,7 +277,7 @@ describe("T2-ฉ · /orders route", () => {
     sheetsCalls.getReturn = [
       fullRow({ orderId: "A", userId: LINE, name: "เอ", confirmed: false }),
       fullRow({ orderId: "B", userId: LINE, name: "บี", orderNumber: "0724-1", confirmed: true, sent: true, tracking: "TH123" }),
-      fullRow({ orderId: "C", userId: FB, name: "ซี", confirmed: true, sent: true, tracking: "" }),
+      fullRow({ orderId: "C", userId: FB, name: "ซี", orderNumber: "0724-2", confirmed: true, sent: true, tracking: "" }),
       fullRow({ orderId: "D", userId: TRAIN, name: "ดี", confirmed: false }),
     ];
     await markShippingNotified("B"); // B แจ้งแล้ว → shipped_notified
@@ -284,7 +289,7 @@ describe("T2-ฉ · /orders route", () => {
     const byId = Object.fromEntries(d.orders.map((o: { orderId: string; status: string; channel: string }) => [o.orderId, o]));
     expect(byId.A.status).toBe("awaiting_confirm");
     expect(byId.B.status, "tracking + notified").toBe("shipped_notified");
-    expect(byId.C.status, "sent ไม่มี tracking").toBe("awaiting_pack");
+    expect(byId.C.status, "มีเลขลำดับ ไม่มี tracking").toBe("awaiting_pack");
     expect(byId.C.channel).toBe("fb");
     expect(d.counts.awaiting_confirm).toBe(1);
     expect(d.counts.awaiting_pack).toBe(1);
@@ -292,7 +297,7 @@ describe("T2-ฉ · /orders route", () => {
   });
 
   it("shipped_pending_notify เมื่อมี tracking แต่ยังไม่ mark", async () => {
-    sheetsCalls.getReturn = [fullRow({ orderId: "E", userId: LINE, confirmed: true, sent: true, tracking: "TH999" })];
+    sheetsCalls.getReturn = [fullRow({ orderId: "E", userId: LINE, orderNumber: "0724-3", confirmed: true, sent: true, tracking: "TH999" })];
     const d = await (await ordReq({})).json();
     expect(d.orders[0].status).toBe("shipped_pending_notify");
   });

@@ -69,30 +69,30 @@ export function formatOrderSummary(order: OrderLike | null | undefined, nameMap:
   return lines;
 }
 
-// ---- T2-ฉ · สถานะออเดอร์ (derive จากคอลัมน์จริง M/N/O/P + shipping_notified · ไม่มี field ใหม่) ----
+// ---- T2-ฉ · สถานะออเดอร์ (derive จากคอลัมน์จริง · 🔴 D-64: อิง A/N/P + shipping_notified) ----
 export type OrderStatus =
   | "cancelled" // N=TRUE
-  | "awaiting_confirm" // ไม่ M
-  | "awaiting_number" // M · ไม่ O (รอ cron แจกเลข)
-  | "awaiting_pack" // O · P ว่าง (งานแพ็ค/กรอกเลขแทรค)
-  | "shipped_notified" // P มี · แจ้งลูกค้าแล้ว
-  | "shipped_pending_notify"; // P มี · รอ cron แจ้ง
+  | "awaiting_confirm" // A(ลำดับ) ว่าง = Apps Script ยังไม่แจกเลข (แอดมินยังไม่ติ๊ก M)
+  | "awaiting_pack" // A มีเลข · P ว่าง (งานแพ็ค/กรอกเลขแทรค)
+  | "shipped_pending_notify" // P มี · รอ cron แจ้ง
+  | "shipped_notified"; // P มี · แจ้งลูกค้าแล้ว
 
 /**
  * สถานะออเดอร์ (precedence สำคัญกว่าความสวย — mapping นี้คือที่ทีมแพ็คใช้เปิดเช้า):
- * ยกเลิก > รอคอนเฟิร์ม > รอแจกเลข > รอแพ็ค > (ส่งแล้ว: แจ้งแล้ว | รอแจ้ง)
+ * ยกเลิก > รอคอนเฟิร์ม > รอแพ็ค > (ส่งแล้ว: รอแจ้ง | แจ้งแล้ว)
  * 🔴 cancelled มาก่อนเสมอ (ติ๊กยกเลิกแล้ว = จบ ไม่ว่าคอลัมน์อื่นเป็นอะไร)
+ * 🔴 D-64: **ห้ามอิง "ส่งออเดอร์แล้ว"(O)** — O เปลี่ยนเป็นคนติ๊กเองหลัง copy เข้ากลุ่ม (ลืมได้ = สถานะค้าง)
+ *    สัญญาณ "คอนเฟิร์มแล้ว" ใช้ A(ลำดับ) ที่ Apps Script เขียนตอนติ๊ก M แทน
+ *    ตัด awaiting_number ทิ้ง — ไม่มี cron แจกเลขอีกแล้ว
  */
 export function deriveOrderStatus(o: {
   cancelled: boolean;
-  confirmed: boolean;
-  sent: boolean;
+  hasOrderNumber: boolean;
   hasTracking: boolean;
   notified: boolean;
 }): OrderStatus {
   if (o.cancelled) return "cancelled";
-  if (!o.confirmed) return "awaiting_confirm";
-  if (!o.sent) return "awaiting_number";
+  if (!o.hasOrderNumber) return "awaiting_confirm";
   if (!o.hasTracking) return "awaiting_pack";
   return o.notified ? "shipped_notified" : "shipped_pending_notify";
 }
@@ -100,7 +100,6 @@ export function deriveOrderStatus(o: {
 /** meta: icon/label + human (งานที่คนต้องทำ · ไม่ใช่รอ cron) + pending (ยังไม่จบ → นับหัวจอ) */
 export const ORDER_STATUS_META: Record<OrderStatus, { icon: string; label: string; human: boolean; pending: boolean }> = {
   awaiting_confirm: { icon: "⏳", label: "รอคอนเฟิร์ม", human: true, pending: true },
-  awaiting_number: { icon: "🔢", label: "รอแจกเลข (cron)", human: false, pending: true },
   awaiting_pack: { icon: "📦", label: "รอแพ็ค/กรอกเลขแทรค", human: true, pending: true },
   shipped_pending_notify: { icon: "🔔", label: "ส่งแล้ว · รอแจ้ง (cron)", human: false, pending: true },
   shipped_notified: { icon: "✅", label: "ส่งแล้ว · แจ้งลูกค้าแล้ว", human: false, pending: false },

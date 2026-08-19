@@ -24,9 +24,9 @@ describe("ORDERS_HEADER — ต้องตรงกับชีตจริง 
     expect(ORDERS_HEADER).toHaveLength(26);
   });
 
-  it("Y/Z = แก้ไขล่าสุด/แก้ไขกี่ครั้ง (D-31)", () => {
-    expect(columnOf("แก้ไขล่าสุด")).toBe("Y");
-    expect(columnOf("แก้ไขกี่ครั้ง")).toBe("Z");
+  it("Z/AA = แก้ไขล่าสุด/แก้ไขกี่ครั้ง (D-31 · เลื่อนจาก Y/Z เพราะ D-64 แทรก Q)", () => {
+    expect(columnOf("แก้ไขล่าสุด")).toBe("Z");
+    expect(columnOf("แก้ไขกี่ครั้ง")).toBe("AA");
   });
 
   it("ตำแหน่งคอลัมน์ตรงกับชีตจริง (อ่านจากชีตแล้ว)", () => {
@@ -47,29 +47,32 @@ describe("ORDERS_HEADER — ต้องตรงกับชีตจริง 
       N: "ยกเลิก",
       O: "ส่งออเดอร์แล้ว",
       P: "เลขTracking",
-      Q: "order_id",
-      R: "line_user_id",
-      S: "items_json",
-      T: "ค่าส่ง",
-      U: "source_channel",
-      V: "ref_code",
-      W: "ยอดในสลิป",
-      X: "bot_version",
+      // 🔴 D-64: Q = "กล่องส่งออเดอร์" (สูตรในชีต · โค้ดไม่ได้ขอ) → order_id เลื่อนไป R
+      R: "order_id",
+      S: "line_user_id",
+      T: "items_json",
+      U: "ค่าส่ง",
+      V: "source_channel",
+      W: "ref_code",
+      X: "ยอดในสลิป",
+      Y: "bot_version",
     };
     for (const [col, header] of Object.entries(expected)) {
       expect(columnOf(header), `${header} ต้องอยู่คอลัมน์ ${col}`).toBe(col);
     }
   });
 
-  it("🔴 Q–X เลื่อนซ้าย 2 ช่องจาก contract เดิม (เพราะลบ ตำบล/อำเภอ)", () => {
-    expect(columnOf("order_id"), "เดิม S → ตอนนี้ Q").toBe("Q");
-    expect(columnOf("line_user_id"), "เดิม T → R").toBe("R");
-    expect(columnOf("items_json"), "เดิม U → S").toBe("S");
-    expect(columnOf("ค่าส่ง"), "เดิม V → T").toBe("T");
-    expect(columnOf("source_channel"), "เดิม W → U").toBe("U");
-    expect(columnOf("ref_code"), "เดิม X → V").toBe("V");
-    expect(columnOf("ยอดในสลิป"), "เดิม Y → W").toBe("W");
-    expect(columnOf("bot_version"), "เดิม Z → X").toBe("X");
+  it("🔴 D-64: แทรก Q \"กล่องส่งออเดอร์\" → order_id เป็นต้นไปเลื่อนขวา 1 ช่อง", () => {
+    expect(columnOf("order_id"), "เดิม Q → ตอนนี้ R").toBe("R");
+    expect(columnOf("line_user_id"), "เดิม R → S").toBe("S");
+    expect(columnOf("items_json"), "เดิม S → T").toBe("T");
+    expect(columnOf("ค่าส่ง"), "เดิม T → U").toBe("U");
+    expect(columnOf("source_channel"), "เดิม U → V").toBe("V");
+    expect(columnOf("ref_code"), "เดิม V → W").toBe("W");
+    expect(columnOf("ยอดในสลิป"), "เดิม W → X").toBe("X");
+    expect(columnOf("bot_version"), "เดิม X → Y").toBe("Y");
+    expect(columnOf("แก้ไขล่าสุด"), "เดิม Y → Z").toBe("Z");
+    expect(columnOf("แก้ไขกี่ครั้ง"), "เดิม Z → AA").toBe("AA");
   });
 });
 
@@ -92,10 +95,10 @@ describe("appendOrderRow — ทุก field ลงตรงคอลัมน�
     await sendText(U, "เอา 3 ถ้วย สมหญิง ใจดี 123/45 ม.6 บางพลีใหญ่ บางพลี สมุทรปราการ 10540 081-112 2334 เก็บปลายทาง");
 
     expect(appendedRows(), "ต้องเขียน 1 แถว").toHaveLength(1);
-    expect(sheetsCalls.appends[0].range, "range ต้องครอบ 26 คอลัมน์ A–Z (D-31)").toBe("Orders!A:Z");
+    expect(sheetsCalls.appends[0].range, "🔴 D-64: ชีตมี 27 คอลัมน์ (แทรก Q) → range ครอบถึง AA").toBe("Orders!A:AA");
 
     const r = rowByColumn(0);
-    expect(r.A, "ลำดับ เว้นว่าง ให้ cron แจก").toBe("");
+    expect(r.A, "🔴 D-64: ลำดับ เว้นว่าง — Apps Script บนชีตเป็นคนเขียนตอนติ๊ก M").toBe("");
     expect(r.B, "วันที่ = เวลาไทย YYYY-MM-DD HH:MM (D-37 · ไม่ใช่ UTC)").toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
     expect(r.B, "🔴 ห้ามเป็น UTC (ไม่มี Z/T)").not.toMatch(/[TZ]/);
     expect(r.C, "ชื่อไลน์ลูกค้า").toBe("คุณทดสอบ");
@@ -112,15 +115,16 @@ describe("appendOrderRow — ทุก field ลงตรงคอลัมน�
     expect(r.N, "ยกเลิก").toBe("FALSE");
     expect(r.O, "ส่งออเดอร์แล้ว").toBe("FALSE");
     expect(r.P, "เลขTracking").toBe("");
-    // D-15: S=items_json, T=ค่าส่ง เขียนแล้ว · D-29: Q=order_id · KI-06: R=line_user_id · U-X ยังว่าง
-    expect(r.S, "items_json").toContain("NPT-10G");
-    expect(r.T, "ค่าส่ง qty3 = ส่งฟรี 0").toBe("0");
-    expect(r.Q, "Q = order_id (D-29)").toMatch(/^SKB-\d{8}-[a-z0-9]{6}$/);
-    expect(r.R, "🔴 R = line_user_id (KI-06 fix — join key ให้ cron ล้างธง)").toBe(U);
-    for (const col of ["U", "V", "W", "X", "Y", "Z"]) {
-      expect(r[col], `${col} ยังว่างตอนเขียนครั้งแรก (Y/Z เติมตอนแก้)`).toBe("");
+    // 🔴 D-64 เลื่อน 1 ช่อง: R=order_id · S=line_user_id · T=items_json · U=ค่าส่ง
+    expect(r.Q, "🔴 Q = กล่องส่งออเดอร์ (สูตรในชีต) — โค้ดต้องไม่เขียนทับ").toBe("");
+    expect(r.T, "items_json").toContain("NPT-10G");
+    expect(r.U, "ค่าส่ง qty3 = ส่งฟรี 0").toBe("0");
+    expect(r.R, "R = order_id (D-29)").toMatch(/^SKB-\d{8}-[a-z0-9]{6}$/);
+    expect(r.S, "🔴 S = line_user_id (KI-06 fix — join key)").toBe(U);
+    for (const col of ["V", "W", "X", "Y", "Z", "AA"]) {
+      expect(r[col], `${col} ยังว่างตอนเขียนครั้งแรก (Z/AA เติมตอนแก้)`).toBe("");
     }
-    expect(appendedRows()[0], "ต้องยิง 26 ช่องเสมอ (A–Z)").toHaveLength(26);
+    expect(appendedRows()[0], "🔴 ยิง 27 ช่อง (A–AA) ตาม header จริงของชีต").toHaveLength(27);
   });
 
   it("โอน + สลิป → รูปSlip ลงคอลัมน์ L · ยอด qty2 = 220 (จาก pricing)", async () => {

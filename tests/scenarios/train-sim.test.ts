@@ -110,7 +110,7 @@ describe("T-STUDIO เฟส ก · เทสรั่ว — side effect จร
 });
 
 describe("T-STUDIO เฟส ก · cron จำลอง — โค้ด cron จริงใน sandbox", () => {
-  it("🔴 ติ๊ก M + cron: แจกเลขในชีตจำลอง · แจ้งกลุ่มเข้า collector · ล้างธง (เมื่อ R มีค่า) · ชีตจริง=0", async () => {
+  it("🔴 D-64: ปุ่ม cron จำลอง Apps Script เขียนลำดับ(A) · ไม่แตะชีตจริง · ธงถูกล้างตั้งแต่ตอนเขียนออเดอร์", async () => {
     seedBotLib({ stepRows: stepSheet() });
     scriptGemini([turn({ reply: "AI", stage: "S4B", paymentMethod: "COD", orderData: { items: [{ qty: 3 }], ...FULL_ADDRESS } })]);
     const sess = "train-cron-0001";
@@ -131,15 +131,12 @@ describe("T-STUDIO เฟส ก · cron จำลอง — โค้ด cron �
 
     const res = await runTrainCron(sess);
 
-    expect(res.orderRows[0]["ลำดับ"], "cron แจกเลขแล้ว").toBeTruthy();
-    expect(res.orderRows[0]["ส่งออเดอร์แล้ว"]).toBe("TRUE");
-    expect(res.adminPushes.length, "ข้อความแจ้งกลุ่มเช็คยอดเข้า collector").toBeGreaterThan(0);
-    expect(sheetsCalls.batchUpdates.length, "🔴 markOrderSent ไม่แตะชีตจริง").toBe(0);
+    // 🔴 D-64: ปุ่มนี้จำลอง Apps Script (เขียน A รูปแบบ MMDD_n) · cron เองไม่เขียนชีตแล้ว
+    expect(res.orderRows[0]["ลำดับ"], "จำลอง Apps Script เขียนลำดับให้").toMatch(/^\d{4}_\d+$/);
+    expect(res.orderRows[0]["คอนเฟิร์ม"], "จำลองแอดมินติ๊ก M").toBe("TRUE");
+    expect(sheetsCalls.batchUpdates.length, "🔴 ไม่แตะชีตจริง").toBe(0);
     expect(sheetsCalls.appends.length).toBe(0);
-    expect(lineCalls.pushes.length, "🔴 push กลุ่มจริง = 0").toBe(0);
-
-    const c = await readCustomer(uid);
-    expect(c?.delivered_steps, "ธงเก่าถูกล้าง (คงเฉพาะ step ปัจจุบัน) — D-45b hook ผ่าน cron จริง").not.toContain("S_OLD_FLAG");
+    expect(lineCalls.pushes.length, "🔴 push จริง = 0").toBe(0);
   });
 
   it("🔴 D-50 sim: กรอกพัสดุ + cron → แจ้งเลขพัสดุลูกค้าเข้า collector (ไม่ยิงจริง)", async () => {
@@ -147,7 +144,7 @@ describe("T-STUDIO เฟส ก · cron จำลอง — โค้ด cron �
     scriptGemini([turn({ reply: "AI", stage: "S4B", paymentMethod: "COD", orderData: { items: [{ qty: 3 }], ...FULL_ADDRESS } })]);
     const sess = "train-ship-0001";
     await runTrainTurn(sess, "เอา 3 ถ้วย เก็บปลายทาง สมชาย ใจดี 123/45 หมู่ 6 ต.บางรัก อ.เมือง จ.ชลบุรี 20000 0811122334");
-    // กรอกพัสดุ + cron รอบเดียว: แจกเลข(O) + แจ้งพัสดุลูกค้า
+    // 🔴 D-64: ปุ่มเขียนลำดับ(A)+P ให้ก่อน แล้ว cron เห็น A+P → แจ้งพัสดุลูกค้า
     const res = await runTrainCron(sess, { tracking: "TH55555" });
     const bubbles = res.bubbles.flatMap((b) => b.messages).map((m) => (m as { text?: string }).text ?? "").join(" ");
     expect(bubbles, "ลูกค้าจำลองได้ข้อความแจ้งพัสดุ").toContain("TH55555");

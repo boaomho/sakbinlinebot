@@ -6,7 +6,6 @@ const TABLES = [
   "customers",
   "messages",
   "follow_log",
-  "order_counter",
   "funnel_events",
   "pending_messages",
   "admin_pending_choices",

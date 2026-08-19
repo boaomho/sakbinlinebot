@@ -185,6 +185,18 @@ vi.mock("@/lib/gemini", async () => {
   };
 });
 
+/**
+ * 🔴 D-64: ชีต Orders จริงมีคอลัมน์ที่โค้ดไม่ได้ขอ — "กล่องส่งออเดอร์" (สูตรให้คน copy เข้ากลุ่มแพ็ค)
+ * แทรกต่อจาก "เลขTracking" ทำให้ order_id ลงไปเป็น R (เดิม Q) และท้ายสุดเป็น AA
+ * 🔴 ห้ามใส่ชื่อนี้ใน ORDERS_HEADER (จะกลายเป็น required แล้วพังถ้าชีตไหนยังไม่มี)
+ */
+export const EXTRA_SHEET_COLUMN = "กล่องส่งออเดอร์";
+export function withExtraSheetColumns(header: string[]): string[] {
+  const at = header.indexOf("เลขTracking");
+  if (at === -1) return header;
+  return [...header.slice(0, at + 1), EXTRA_SHEET_COLUMN, ...header.slice(at + 1)];
+}
+
 beforeAll(async () => {
   const { initHarnessDb } = await import("./db");
   await initHarnessDb();
@@ -198,6 +210,9 @@ beforeEach(async () => {
   resetState();
   __resetBotLibraryCache(); // กัน bundle ค้างข้ามเทส
   __resetOrdersColumnsCache(); // กัน header cache ค้างข้ามเทส
-  sheetsCalls.ordersHeader = [...ORDERS_HEADER]; // default = layout ปกติ (เทสสลับคอลัมน์ override เอง)
+  // 🔴 D-64: mock header = ชีตจริง ซึ่งมีคอลัมน์ที่โค้ด "ไม่ได้ขอ" แทรกอยู่ (Q "กล่องส่งออเดอร์")
+  //   จำลองไว้เพื่อพิสูจน์ว่า resolveColumns หาครบ + เขียนลงช่องถูกแม้ index เลื่อน
+  //   (เดิม mock = ORDERS_HEADER เป๊ะ = จุดบอด เทสไม่มีวันจับ column-offset ได้)
+  sheetsCalls.ordersHeader = withExtraSheetColumns([...ORDERS_HEADER]); // เทสสลับคอลัมน์ override เอง
   await resetDb();
 });

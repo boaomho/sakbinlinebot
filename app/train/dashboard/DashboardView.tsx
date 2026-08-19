@@ -279,7 +279,7 @@ export default function DashboardView() {
         {tab === "orders" && (
         <>
           <div style={S.cards}>
-            {(["awaiting_confirm", "awaiting_pack", "awaiting_number", "shipped_pending_notify"] as const).map((k) => (
+            {(["awaiting_confirm", "awaiting_pack", "shipped_pending_notify"] as const).map((k) => (
               <div key={k} style={{ ...S.card, ...(ordData && ordData.counts[k] > 0 && ORDER_STATUS_META[k].human ? { borderColor: C.prod, background: C.prodBg } : {}) }}>
                 <div style={S.cardLabel}>{ORDER_STATUS_META[k].icon} {ORDER_STATUS_META[k].label}</div>
                 <div style={S.cardBig}>{ordData ? ordData.counts[k] : "–"}</div>
@@ -289,7 +289,7 @@ export default function DashboardView() {
           </div>
 
           <div style={S.controls}>
-            {(["all", "awaiting_confirm", "awaiting_number", "awaiting_pack", "shipped_pending_notify", "shipped_notified", "cancelled"] as const).map((s) => (
+            {(["all", "awaiting_confirm", "awaiting_pack", "shipped_pending_notify", "shipped_notified", "cancelled"] as const).map((s) => (
               <button key={s} style={{ ...S.btn, ...(ordStatusF === s ? S.btnOn : {}) }} onClick={() => setOrdStatusF(s)}>{s === "all" ? "ทุกสถานะ" : `${ORDER_STATUS_META[s].icon} ${ORDER_STATUS_META[s].label}`}</button>
             ))}
             <span style={{ flex: 1 }} />

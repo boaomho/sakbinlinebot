@@ -17,24 +17,28 @@ function ordersSheetId(): string {
 
 const SHEET_NAME = "Orders";
 /**
- * โครงชีต Orders จริง (คอลัมน์ A–X · 24 ช่อง) — อ่านจากชีตจริงแล้ว
+ * โครงชีต Orders จริง (คอลัมน์ A–AA · 27 ช่อง) — 🔴 อัปเดต D-64
  *
- * 🔴 ลบ ตำบล/อำเภอ ออก → คอลัมน์ Q–X **เลื่อนซ้าย 2 ช่อง** จาก contract v1.2 เดิม (S–Z)
- *    order_id: S→Q · line_user_id: T→R · items_json: U→S · ค่าส่ง: V→T
- *    source_channel: W→U · ref_code: X→V · ยอดในสลิป: Y→W · bot_version: Z→X
+ * D-64: แทรกคอลัมน์ **Q "กล่องส่งออเดอร์"** (สูตรในชีตให้คน copy เข้ากลุ่มแพ็ค) ต่อจาก P
+ *   → order_id และคอลัมน์หลังจากนั้น **เลื่อนขวา 1 ช่อง** (Q–Z เดิม → R–AA)
  *
  * ที่อยู่เก็บเป็น "ก้อนเดียว" ตามที่ลูกค้าพิมพ์ · จังหวัด/รหัส = metadata ที่ AI หยิบได้ก็ใส่
  * (การจับคู่ตำบล-อำเภอ-รหัส เป็นหน้าที่ระบบขนส่ง+แอดมิน ไม่ใช่บอท)
  *
- * A: ลำดับ (cron แจกตอนคอนเฟิร์ม)  B: วันที่  C: ชื่อไลน์ลูกค้า  D: ชื่อ-นามสกุล
- * E: เบอร์โทร  F: ที่อยู่ (ก้อนดิบ)  G: จังหวัด  H: รหัสไปรษณีย์  I: สินค้า+จำนวน
- * J: ยอดเงิน  K: การชำระเงิน  L: รูปSlip (pathname · ไม่เก็บ signed URL เพราะหมดอายุ)
- * M: คอนเฟิร์ม (แอดมินติ๊ก)  N: ยกเลิก (แอดมินติ๊ก)  O: ส่งออเดอร์แล้ว (cron)  P: เลขTracking
- * Q: order_id  R: line_user_id  S: items_json  T: ค่าส่ง  U: source_channel
- * V: ref_code  W: ยอดในสลิป (แอดมินกรอก)  X: bot_version
+ * A: ลำดับ (🔴 Apps Script เขียนตอนติ๊ก M · รูปแบบ MMDD_n เช่น 0819_1 — โค้ดไม่เขียนแล้ว)
+ * B: วันที่  C: ชื่อไลน์ลูกค้า  D: ชื่อ-นามสกุล  E: เบอร์โทร  F: ที่อยู่ (ก้อนดิบ)
+ * G: จังหวัด  H: รหัสไปรษณีย์  I: สินค้า+จำนวน  J: ยอดเงิน  K: การชำระเงิน
+ * L: รูปSlip (pathname · ไม่เก็บ signed URL เพราะหมดอายุ)
+ * M: คอนเฟิร์ม (แอดมินติ๊ก → trigger Apps Script)  N: ยกเลิก (แอดมินติ๊ก)
+ * O: ส่งออเดอร์แล้ว (🔴 คนติ๊กเองหลัง copy เข้ากลุ่ม — โค้ดไม่เขียน/ไม่อ่านตัดสินใจแล้ว)
+ * P: เลขTracking (ทีมแพ็คกรอก)  Q: กล่องส่งออเดอร์ (สูตรในชีต · D-64)
+ * R: order_id  S: line_user_id  T: items_json  U: ค่าส่ง  V: source_channel
+ * W: ref_code  X: ยอดในสลิป (แอดมินกรอก)  Y: bot_version
+ * Z: แก้ไขล่าสุด (D-31)  AA: แก้ไขกี่ครั้ง (D-31)
  *
- * ⚠️ Q–X ยังไม่มีค่า (เขียนเป็นช่องว่าง) — Step 2/3 จะเติม ตอนนี้จองตำแหน่งไว้ให้ตรงชีตก่อน
- * ⚠️ index ตายตัวชั่วคราว — Step 1 (header-driven) จะรื้อถาวร
+ * 🔴 ตัวอักษรข้างบนเป็น "แผนที่ให้คนอ่าน" เท่านั้น — โค้ดหาคอลัมน์จาก **ชื่อ header** ผ่าน
+ *    `resolveColumns(header, ORDERS_HEADER)` เสมอ · แทรก/สลับคอลัมน์แล้วยังหาถูก
+ * ⚠️ ห้ามเพิ่ม "กล่องส่งออเดอร์" เข้า ORDERS_HEADER — จะกลายเป็น required แล้วพังถ้าชีตไหนยังไม่มี
  */
 export const ORDERS_HEADER = [
   "ลำดับ", // A  0
@@ -205,11 +209,7 @@ function isTrue(value: string | undefined): boolean {
   return (value ?? "").trim().toUpperCase() === "TRUE";
 }
 
-/**
- * เงื่อนไข: คอนเฟิร์ม(O)=TRUE และ ส่งออเดอร์แล้ว(Q)≠TRUE และไม่ถูกยกเลิก
- * ถ้าติ๊กทั้ง คอนเฟิร์ม(O) และ ยกเลิก(P) พร้อมกัน → ถือว่ายกเลิก (ปลอดภัยไว้ก่อน จึงกรอง cancelled ออกก่อนเสมอ)
- */
-/** อ่านทุกแถวออเดอร์ (header-driven) — ผู้เรียกกรองเอง (pending / แจ้งพัสดุ) */
+/** อ่านทุกแถวออเดอร์ (header-driven) — ผู้เรียกกรองเอง (แจ้งพัสดุ / dashboard) */
 async function readAllOrderRows(): Promise<OrderRow[]> {
   if (!process.env.SHEET_ORDERS_ID) return []; // env ไม่มี = ฟีเจอร์ปิด ข้ามเงียบ (พฤติกรรมเดิม)
 
@@ -243,14 +243,16 @@ async function readAllOrderRows(): Promise<OrderRow[]> {
   }));
 }
 
-/** ออเดอร์รอแจกเลข: คอนเฟิร์ม(M)=TRUE · ยังไม่ส่ง(O)≠TRUE · ไม่ยกเลิก */
-export async function listPendingOrders(): Promise<OrderRow[]> {
-  return (await readAllOrderRows()).filter((o) => o.confirmed && !o.cancelled && !o.sent);
-}
-
-/** D-50 ออเดอร์รอแจ้งพัสดุ: แจกเลขแล้ว(O)=TRUE · มีเลขพัสดุ(P)ไม่ว่าง · ไม่ยกเลิก (dedup ที่ Neon shipping_notified) */
+/**
+ * D-50 ออเดอร์รอแจ้งพัสดุ · 🔴 เงื่อนไขใหม่ D-64: **ลำดับ(A) ไม่ว่าง** + เลขพัสดุ(P) ไม่ว่าง + ไม่ยกเลิก(N)
+ * ห้ามพึ่ง "ส่งออเดอร์แล้ว"(O) เด็ดขาด — หลัง D-64 O เปลี่ยนเป็น "คนติ๊กเอง" (ลืมได้) ไม่มีโค้ดไหนเขียน
+ * A มีเลข = Apps Script เขียนตอนแอดมินติ๊ก M → สัญญาณ "คอนเฟิร์มแล้ว" ที่เชื่อถือได้แทน O
+ * dedup จริงอยู่ที่ Neon `shipping_notified` (atomic claim) ไม่ใช่คอลัมน์ในชีต
+ */
 export async function listOrdersToNotifyShipping(): Promise<OrderRow[]> {
-  return (await readAllOrderRows()).filter((o) => o.sent && !o.cancelled && o.trackingNumber.trim() !== "");
+  return (await readAllOrderRows()).filter(
+    (o) => o.orderNumber.trim() !== "" && !o.cancelled && o.trackingNumber.trim() !== "",
+  );
 }
 
 // ---- T2-ก: ยอดขาย dashboard — map order_id → ยอด (อ่านชีต · cache 60วิ · read-only) ----
@@ -377,20 +379,6 @@ export async function updateOrderRow(orderId: string, changes: Record<string, st
   });
 }
 
-export async function markOrderSent(rowIndex: number, orderNumber: string): Promise<void> {
-  if (!process.env.SHEET_ORDERS_ID) return; // env ไม่มี = ฟีเจอร์ปิด ข้ามเงียบ (พฤติกรรมเดิม)
-
-  const cols = await getOrdersColumns();
-  const numCol = columnLetter(cols["ลำดับ"]);
-  const sentCol = columnLetter(cols["ส่งออเดอร์แล้ว"]); // หาโดยชื่อ ไม่ hardcode O
-  await getSheets().spreadsheets.values.batchUpdate({
-    spreadsheetId: ordersSheetId(),
-    requestBody: {
-      valueInputOption: "USER_ENTERED",
-      data: [
-        { range: `${SHEET_NAME}!${numCol}${rowIndex}:${numCol}${rowIndex}`, values: [[orderNumber]] },
-        { range: `${SHEET_NAME}!${sentCol}${rowIndex}:${sentCol}${rowIndex}`, values: [["TRUE"]] },
-      ],
-    },
-  });
-}
+// 🔴 D-64: ลบ `markOrderSent` และ `listPendingOrders` — cron ไม่แจกเลข/ไม่ติ๊ก O อีกแล้ว
+//    เลขลำดับ(A) เขียนโดย Apps Script บนชีต · "ส่งออเดอร์แล้ว"(O) คนติ๊กเองหลัง copy เข้ากลุ่ม
+//    → ไม่มีโค้ดใดในระบบเขียนคอลัมน์ A หรือ O อีกต่อไป

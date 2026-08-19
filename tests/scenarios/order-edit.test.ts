@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { sendText } from "../harness/replay";
 import { scriptGemini, turn, sheetsCalls, adminPushes } from "../harness/state";
-import { appendedRows } from "../harness/sheet";
+import { appendedRows, activeOrdersHeader, columnOf } from "../harness/sheet";
 import { FULL_ADDRESS } from "../harness/fixtures";
 import { seedBotLib } from "../harness/botlib-fixture";
 import { readCustomer } from "../harness/db";
-import { ORDERS_HEADER, updateOrderRow } from "@/lib/orders";
+import { updateOrderRow } from "@/lib/orders";
 
 /**
  * D-31 · Plan B — ลูกค้าแก้ออเดอร์ที่เขียนแล้ว (M≠TRUE) → แก้แถวเดิมด้วย order_id ไม่ handoff
@@ -16,9 +16,12 @@ import { ORDERS_HEADER, updateOrderRow } from "@/lib/orders";
 const OID = "SKB-20260721-abc123";
 const NOW = new Date("2026-07-21T02:34:00Z"); // ไทย 09:34
 
+// 🔴 D-64: สร้างแถวตาม header ที่ชีต (mock) ตอบจริง ไม่ใช่ ORDERS_HEADER
+//    ชีตจริงมีคอลัมน์ที่โค้ดไม่ได้ขอ (Q "กล่องส่งออเดอร์") → index หลัง Q เลื่อน
 function makeRow(overrides: Record<string, string> = {}): string[] {
-  const row = new Array(ORDERS_HEADER.length).fill("");
-  const set = (h: string, v: string) => (row[ORDERS_HEADER.indexOf(h)] = v);
+  const header = activeOrdersHeader();
+  const row = new Array(header.length).fill("");
+  const set = (h: string, v: string) => (row[header.indexOf(h)] = v);
   set("order_id", OID);
   set("คอนเฟิร์ม", "FALSE");
   set("ชื่อ-นามสกุล", "สมชาย ใจดี");
@@ -34,8 +37,10 @@ function updated(colLetter: string): string | undefined {
   return u?.values[0][0];
 }
 
-const Y = String.fromCharCode(65 + ORDERS_HEADER.indexOf("แก้ไขล่าสุด"));
-const Z = String.fromCharCode(65 + ORDERS_HEADER.indexOf("แก้ไขกี่ครั้ง"));
+/** ค่าที่เขียนลงคอลัมน์ของ header ที่ระบุ (ตัวอักษรคอลัมน์มาจาก header จริงของชีต) */
+function updatedOf(header: string): string | undefined {
+  return updated(columnOf(header));
+}
 
 describe("updateOrderRow (unit) — header-driven แก้แถวเดิม (D-31)", () => {
   beforeEach(() => seedBotLib());
@@ -45,8 +50,8 @@ describe("updateOrderRow (unit) — header-driven แก้แถวเดิม
     const r = await updateOrderRow(OID, { เบอร์โทร: "0911123344" }, NOW);
     expect(r.status).toBe("updated");
     expect(updated("E"), "เบอร์ใหม่ลง E").toBe("0911123344");
-    expect(updated(Y)).toBe("2026-07-21 09:34 · เบอร์: 0811122334 → 0911123344");
-    expect(updated(Z), "Z นับครั้งแรก").toBe("1");
+    expect(updatedOf("แก้ไขล่าสุด")).toBe("2026-07-21 09:34 · เบอร์: 0811122334 → 0911123344");
+    expect(updatedOf("แก้ไขกี่ครั้ง"), "Z นับครั้งแรก").toBe("1");
   });
 
   it("🔴 M=TRUE (คอนเฟิร์มแล้ว) → confirmed · ไม่แตะแถว", async () => {
@@ -92,9 +97,9 @@ describe("updateOrderRow (unit) — header-driven แก้แถวเดิม
     sheetsCalls.getReturn = [makeRow({ แก้ไขล่าสุด: "2026-07-20 10:00 · ชื่อ: ก → สมชาย ใจดี", แก้ไขกี่ครั้ง: "2" })];
     const r = await updateOrderRow(OID, { เบอร์โทร: "0911123344", ที่อยู่: "999 กรุงเทพ" }, NOW);
     expect(r.status).toBe("updated");
-    expect(updated(Y), "ต่อท้ายบรรทัดใหม่").toContain("2026-07-20 10:00");
-    expect(updated(Y)).toContain("เบอร์: 0811122334 → 0911123344 · ที่อยู่: 123/45 ชลบุรี → 999 กรุงเทพ");
-    expect(updated(Z), "2+1").toBe("3");
+    expect(updatedOf("แก้ไขล่าสุด"), "ต่อท้ายบรรทัดใหม่").toContain("2026-07-20 10:00");
+    expect(updatedOf("แก้ไขล่าสุด")).toContain("เบอร์: 0811122334 → 0911123344 · ที่อยู่: 123/45 ชลบุรี → 999 กรุงเทพ");
+    expect(updatedOf("แก้ไขกี่ครั้ง"), "2+1").toBe("3");
   });
 });
 
@@ -148,7 +153,7 @@ describe("route order-edit (scenario) — Bug 2 หาย + แก้ชีต",
 
   it("hasWrittenOrder + M=TRUE + แก้เบอร์ → handoff · ล็อก last_order · ไม่แก้แถว", async () => {
     await writeFirstOrder();
-    sheetsCalls.getReturn = [ (() => { const row = [...appendedRows()[0]]; row[ORDERS_HEADER.indexOf("คอนเฟิร์ม")] = "TRUE"; return row; })() ];
+    sheetsCalls.getReturn = [ (() => { const row = [...appendedRows()[0]]; row[activeOrdersHeader().indexOf("คอนเฟิร์ม")] = "TRUE"; return row; })() ];
     scriptGemini([turn({ reply: "เดี๋ยวให้แอดมินดูแลนะคะ", stage: "4b", orderEditRequest: true, orderData: { เบอร์: "0911123344" } })]);
     await sendText(U, "ขอเปลี่ยนเบอร์");
 

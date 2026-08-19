@@ -35,6 +35,16 @@
 - ✅ **KI-06 ปิดแล้ว:** `appendOrderRow` เขียน `line_user_id` (R) + เทส join จริง (golden บท 19)
 - 🔴 **รอเจ้าของ:** ENV `DATABASE_URL_TRAIN` (Neon branch `train`) เข้า Vercel → redeploy → เปิด /train · (option) วาง `public/train-slip-sample.jpg` · ตรวจ viewport ~380px บนอุปกรณ์จริง
 
+## 🔴 D-64 · cron เหลืองานเดียว = แจ้งเลขพัสดุ (เสร็จ ✅ บน `main`)
+- **เลขออเดอร์ย้ายไป Apps Script บนชีต** (เขียนคอลัมน์ A ตอนติ๊ก M · รูปแบบ `MMDD_n` เช่น `0819_1`) · ส่งออเดอร์เข้ากลุ่มแพ็ค = **คน copy จากคอลัมน์สูตร** · cron รันวันละ 2 รอบ 15:00/18:00 (cron-job.org)
+- **ตัดออก:** loop แจกเลขทั้งก้อน · `listPendingOrders` · `markOrderSent` · `nextOrderNumber` + ตาราง `order_counter` · `resolveOrderDay` · `orderNumberResetDaily` → ✅ **ปิด KI-05** (ไม่มี race ให้กันแล้ว)
+- 🔴 **คิวแจ้งพัสดุใหม่ = A(ลำดับ) ไม่ว่าง + P ไม่ว่าง + N≠TRUE** — **ห้ามพึ่ง O** (คนติ๊กเอง = ลืมได้ · ถ้าพึ่งจะไม่มีใครได้รับแจ้งเลย) · dedup ยังอยู่ที่ Neon `shipping_notified`
+- 🔴 **`deriveOrderStatus` แก้ตาม** อิง A/N/P (ตัด `awaiting_number`) — ไม่งั้นทุกออเดอร์ค้าง "รอแจกเลข" ถาวร
+- 🔴 **D-45b hook ย้ายไป `handler.ts` ต่อจาก `markOrderWritten`** (จังหวะเขียนชีตสำเร็จ = ยิงแน่นอนเสมอ) · ธงล้างเร็วขึ้น อาจส่ง S2 ซ้ำถ้าลูกค้าคุยต่อ — เจ้าของถือว่าถูก **เฝ้าดูตอนซ้อม v3**
+- **ชีต 27 คอลัมน์:** แทรก **Q "กล่องส่งออเดอร์"** → `order_id`=R … `แก้ไขกี่ครั้ง`=AA · 🔴 **ห้ามใส่ชื่อนี้ใน `ORDERS_HEADER`** (จะกลายเป็น required)
+- 🔴 **ปิดจุดบอดเทส:** mock header เดิม = `ORDERS_HEADER` เป๊ะ → เทสไม่มีวันจับ column-offset · ตอนนี้ mock มีคอลัมน์แทรกจริง + helper/fixture อิง `sheetsCalls.ordersHeader`
+- ⚠️ **กระบวนการ:** ไม่มีใครยิงออเดอร์เข้ากลุ่มอัตโนมัติแล้ว — ทีมแพ็คลืม copy = ไม่มีสัญญาณเตือน
+
 ## 🟢 ระบบพร้อมรับลูกค้าจริง
 
 - **โค้ด v2.0 + ซีรีส์ D-45→D-49 อยู่บน `main`** — เทสรับบน LINE จริงผ่านครบ (2026-07-23):
@@ -110,6 +120,7 @@ AI เหลือ 4 งาน (เลือก step · จำแนก objectio
 
 ## 🔴 จุดอันตรายห้ามลืม
 - **สิ่งที่ห้ามแตะ** (เส้นตาย): order gate · `calculatePrice` · 2-pass/quota-saver · idempotency (D-29) · last_order/S_EDIT (D-31/32) · handoff รวมศูนย์ (D-33) · intake (D-34-36) · เวลาไทย (D-37) · validate funnel_stage (D-38) · invariants 10 (REPO-MAP §10) · **กฎ H1 ทุกชั้น**
+- 🔴 **D-64: โค้ดห้ามเขียนคอลัมน์ A(ลำดับ) และ O(ส่งออเดอร์แล้ว) ของชีต Orders** — A เป็นของ Apps Script · O เป็นของคน · สถานะ/คิวทุกอย่าง derive จาก A/N/P เท่านั้น
 - **บันได 4 ชั้นรับ PROHIBITED_CONTENT (KI-05)** — ห้ามถอดชั้นใดชั้นหนึ่งโดยไม่วัดผล · degraded = last resort ห้ามหลุด
 - **"ท้อง" ใน `คำ_handoff` เป็น substring** — ชน "ท้องฟ้า/ท้องเสีย" → ดัก handoff ก่อน intake (ทิศปลอดภัย · แก้คำในชีต ไม่ใช่โค้ด)
 - `{รูปสินค้า}` = URL ดิบ · **ไม่มี resolver `{สารก่อภูมิแพ้}`** (H1 — ห้ามทำ) · CSV_Vars: live เท่านั้น · ชื่อชนตัวแปรระบบ → ระบบชนะ+log

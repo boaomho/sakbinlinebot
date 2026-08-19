@@ -33,6 +33,7 @@ import {
   reconcileWaitTags,
   resetCustomerMemory,
   addDeliveredStep,
+  clearDeliveredStepsExceptCurrent,
   addMessage,
   getRecentHistory,
   formatHistoryForPrompt,
@@ -596,6 +597,11 @@ async function runOrderGate(
     }
     // เขียนชีตสำเร็จ → บันทึกใน Neon ทันที (source of truth กันเขียนซ้ำ) ก่อน clear/push
     await markOrderWritten(orderId, userId);
+    // 🔴 D-64: hook "ออเดอร์ปิดจบ" ย้ายมาจาก cron แจกเลข (D-45b) — cron ไม่แจกเลขแล้ว
+    //   จุดนี้คือจังหวะที่ "ยิงแน่นอนเสมอ" (อยู่หลัง isOrderWritten guard · มี userId ในมือ)
+    //   ล้างธง delivered_steps คงเฉพาะ step ปัจจุบัน → ลูกค้ากลับมาซื้อรอบสองเห็นเนื้อหา S2/โปรได้อีก
+    //   (ธงถูกล้างเร็วกว่าเดิม = ถ้าลูกค้าคุยต่อจนวิ่งกลับ S2 จริง การส่งซ้ำคือสิ่งที่ถูก — เจ้าของเคาะ)
+    await clearDeliveredStepsExceptCurrent(userId);
     // D-32: เก็บ snapshot ออเดอร์ (แยกจาก pending ที่กำลังจะ clear) → แก้/ทวน/ไม่ถูกโยนกลับต้นกรวย
     if (orderId) {
       await setLastOrder(userId, {

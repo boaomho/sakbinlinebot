@@ -28,8 +28,7 @@ export async function POST(req: NextRequest) {
         const channel = channelOf(r.lineUserId);
         const status = deriveOrderStatus({
           cancelled: r.cancelled,
-          confirmed: r.confirmed,
-          sent: r.sent,
+          hasOrderNumber: r.orderNumber.trim() !== "", // D-64: A(ลำดับ) จาก Apps Script = สัญญาณคอนเฟิร์ม
           hasTracking: r.trackingNumber.trim() !== "",
           notified: notified.has(r.orderId),
         });

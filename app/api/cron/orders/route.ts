@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getConfig, resolveFeatureSwitches } from "@/lib/config";
-import { listPendingOrders, listOrdersToNotifyShipping, markOrderSent, OrderRow } from "@/lib/orders";
-import { nextOrderNumber, clearDeliveredStepsExceptCurrent, markShippingNotified, getCustomer, getRecentHistory } from "@/lib/db";
-import { bangkokShift } from "@/lib/core/time";
+import { listOrdersToNotifyShipping, OrderRow } from "@/lib/orders";
+import { markShippingNotified, getCustomer, getRecentHistory } from "@/lib/db";
 import { pushRawText, pushMessages } from "@/lib/line";
 import { formatShippingMessage, DEFAULT_SHIPPING_TEMPLATE, DEFAULT_CARRIER, withinMessengerWindow } from "@/lib/shipping";
 import { isFirstMessageOfDay, prependToFirstTextBubble, DEFAULT_DAILY_GREETING } from "@/lib/greeting";
@@ -12,37 +11,13 @@ import { MessengerTransport } from "@/lib/channel/transport";
 
 export const maxDuration = 30;
 
-function pad2(n: number): string {
-  return String(n).padStart(2, "0");
-}
-
-/** อิงเวลารอบตัดออเดอร์ (เวลาปัจจุบันตอน cron รัน ไม่ใช่เวลาที่ลูกค้าสั่ง): ก่อนตัด=วันนี้ / หลังตัด=วันถัดไป */
-function resolveOrderDay(cutoffTime: string): string {
-  const bkk = bangkokShift(); // เวลาไทย (D-37 · ฐานเดียว)
-  const [cutHRaw, cutMRaw] = cutoffTime.split(":");
-  const cutH = parseInt(cutHRaw, 10) || 0;
-  const cutM = parseInt(cutMRaw, 10) || 0;
-  const cutoffMinutes = cutH * 60 + cutM;
-  const nowMinutes = bkk.getUTCHours() * 60 + bkk.getUTCMinutes();
-  const dayOffset = nowMinutes < cutoffMinutes ? 0 : 1;
-  const target = new Date(bkk.getTime() + dayOffset * 24 * 60 * 60 * 1000);
-  return `${target.getUTCFullYear()}-${pad2(target.getUTCMonth() + 1)}-${pad2(target.getUTCDate())}`;
-}
-
-function formatOrderMessage(orderNumber: string, order: OrderRow): string {
-  return [
-    `${orderNumber}.${order.productAndQty} ด้วยค่ะ`,
-    "",
-    `${order.total} ${order.paymentMethod || "-"} ${order.province}ค่ะ.`,
-    "",
-    `${channelLabel(order.lineUserId)} ${order.customerName}`,
-    [order.address, order.province, order.postalCode].filter(Boolean).join(" "),
-    order.phone,
-    "",
-    `LineOA: ${order.lineDisplayName}`,
-  ].join("\n");
-}
-
+/**
+ * 🔴 D-64: cron เหลืองานเดียว = "แจ้งเลขพัสดุ" (D-50)
+ * งานแจกเลขออเดอร์ย้ายไป Apps Script บนชีตแล้ว (เขียนคอลัมน์ A ตอนติ๊ก M · รูปแบบ MMDD_n เช่น 0819_1)
+ * และการส่งออเดอร์เข้ากลุ่มแพ็ค = คน copy จากคอลัมน์สูตรในชีต
+ * → ไฟล์นี้ **ไม่เขียนคอลัมน์ A และ O อีกต่อไป** (ตัด listPendingOrders/nextOrderNumber/markOrderSent ทิ้งหมด)
+ * ตารางเวลา: cron-job.org วันละ 2 รอบ 15:00 / 18:00 เวลาไทย
+ */
 export async function GET(req: NextRequest) {
   const auth = req.headers.get("authorization");
   if (!process.env.CRON_SECRET || auth !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -57,49 +32,19 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ status: "skipped" }, { status: 200 });
   }
 
+  // ORDER_GROUP_ID ยังต้องมี — notifyShipping ใช้เป็นปลายทาง fallback แจ้งทีมแพ็ค
   const orderGroupId = process.env.ORDER_GROUP_ID;
   if (!orderGroupId) {
     return NextResponse.json({ status: "skipped", reason: "ORDER_GROUP_ID missing" }, { status: 200 });
   }
 
-  let orders: OrderRow[];
-  try {
-    orders = await listPendingOrders();
-  } catch (error) {
-    console.error(JSON.stringify({ scope: "cron-orders", warning: "listPendingOrders failed", error: String(error) }));
-    return NextResponse.json({ status: "error" }, { status: 200 });
-  }
-
-  const day = config.orderNumberResetDaily ? resolveOrderDay(config.orderCutoffTime) : "ALL";
-  let processed = 0;
-
-  for (const order of orders) {
-    try {
-      const seq = await nextOrderNumber(day);
-      const orderNumber = config.orderNumberResetDaily ? `${day.slice(5).replace("-", "")}-${seq}` : String(seq);
-      await markOrderSent(order.rowIndex, orderNumber);
-      await pushRawText(orderGroupId, formatOrderMessage(orderNumber, order));
-      // D-45b · v1 hook "ออเดอร์ปิดจบ" = จังหวะแจกเลข (จุดเดิม ไม่ประดิษฐ์ event ใหม่):
-      // ล้างธง delivered_steps (คงเฉพาะ step ปัจจุบัน) → ลูกค้ากลับมาซื้อรอบสองเห็นเนื้อหา S2/โปรได้อีก
-      // เฟสหลังการขาย (Follow CRM) จะย้าย/เพิ่มจุดล้างตามสัญญาณ "ได้รับของจริง" ได้
-      if (order.lineUserId) await clearDeliveredStepsExceptCurrent(order.lineUserId);
-      processed++;
-    } catch (error) {
-      console.error(
-        JSON.stringify({ scope: "cron-orders", warning: "process order failed", rowIndex: order.rowIndex, error: String(error) }),
-      );
-    }
-  }
-
-  console.log(JSON.stringify({ scope: "cron-orders", processed, total: orders.length }));
-
-  // ---- D-50 แจ้งเลขพัสดุลูกค้า ----
-  // ทริกเกอร์: แจกเลขแล้ว(O) + มีเลขพัสดุ(P) + ยังไม่แจ้ง (Neon shipping_notified · atomic claim)
+  // ---- D-50 แจ้งเลขพัสดุลูกค้า (งานเดียวที่เหลือหลัง D-64) ----
+  // ทริกเกอร์ (D-64): มีเลขลำดับ(A) + มีเลขพัสดุ(P) + ไม่ยกเลิก(N) · ยังไม่แจ้ง (Neon shipping_notified · atomic claim)
   // ผ่าน greeting D-51 (push แรกของวัน ได้ "สวัสดีค่ะ " นำหน้า) · human_mode/บอทปิด → แจ้งกลุ่มแอดมิน
   const shipped = await notifyShipping(config, orderGroupId);
 
   console.log(JSON.stringify({ scope: "cron-orders", event: "shipping-notify-done", shipped }));
-  return NextResponse.json({ status: "ok", processed, shipped }, { status: 200 });
+  return NextResponse.json({ status: "ok", shipped }, { status: 200 });
 }
 
 async function notifyShipping(

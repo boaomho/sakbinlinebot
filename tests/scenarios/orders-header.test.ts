@@ -3,7 +3,7 @@ import { sendText } from "../harness/replay";
 import { scriptGemini, turn, sheetsCalls } from "../harness/state";
 import { appendedRows } from "../harness/sheet";
 import { seedBotLib } from "../harness/botlib-fixture";
-import { listPendingOrders, ORDERS_HEADER } from "@/lib/orders";
+import { listOrdersToNotifyShipping, ORDERS_HEADER } from "@/lib/orders";
 
 beforeEach(() => seedBotLib());
 
@@ -58,25 +58,51 @@ describe("appendOrderRow — สลับคอลัมน์ Orders → ยั
   });
 });
 
-describe("listPendingOrders — สลับคอลัมน์ → อ่าน order_id ถูก (ไม่ใช่ r[16])", () => {
+// 🔴 D-64: ย้ายมาจาก listPendingOrders (ลบแล้ว) — พิสูจน์ header-driven ได้เท่ากันด้วยฟังก์ชันที่ prod ใช้จริง
+describe("listOrdersToNotifyShipping — สลับคอลัมน์ → อ่าน order_id ถูก (ไม่ใช่ r[16])", () => {
   it("order_id ย้ายไป index 0 → ยังอ่านเจอโดยชื่อ", async () => {
     const header = reorderedHeader(); // order_id อยู่ index 0
     sheetsCalls.ordersHeader = header;
 
-    // แถวข้อมูล 1 แถว: คอนเฟิร์ม=TRUE, ยกเลิก=FALSE, ส่งแล้ว=FALSE → เป็น pending
+    // แถวข้อมูล 1 แถว: เข้าคิวแจ้งพัสดุตามเงื่อนไข D-64 = ลำดับ(A) มีเลข + เลขTracking ไม่ว่าง + ไม่ยกเลิก
     const dataRow = new Array<string>(header.length).fill("");
     dataRow[header.indexOf("order_id")] = "SKB-20260718-abc123";
     dataRow[header.indexOf("ชื่อ-นามสกุล")] = "สมชาย ใจดี";
     dataRow[header.indexOf("ยอดเงิน")] = "285";
-    dataRow[header.indexOf("คอนเฟิร์ม")] = "TRUE";
+    dataRow[header.indexOf("ลำดับ")] = "0819_1";
+    dataRow[header.indexOf("เลขTracking")] = "TH123456789";
     dataRow[header.indexOf("ยกเลิก")] = "FALSE";
-    dataRow[header.indexOf("ส่งออเดอร์แล้ว")] = "FALSE";
+    dataRow[header.indexOf("ส่งออเดอร์แล้ว")] = "FALSE"; // 🔴 O=FALSE ต้องไม่กันออกจากคิว
     sheetsCalls.getReturn = [dataRow];
 
-    const pending = await listPendingOrders();
-    expect(pending).toHaveLength(1);
-    expect(pending[0].orderId, "อ่าน order_id จากชื่อ ไม่ใช่ r[16]").toBe("SKB-20260718-abc123");
-    expect(pending[0].customerName).toBe("สมชาย ใจดี");
-    expect(pending[0].total).toBe("285");
+    const queue = await listOrdersToNotifyShipping();
+    expect(queue, "O=FALSE ต้องยังเข้าคิว (ไม่พึ่ง O แล้ว)").toHaveLength(1);
+    expect(queue[0].orderId, "อ่าน order_id จากชื่อ ไม่ใช่ r[16]").toBe("SKB-20260718-abc123");
+    expect(queue[0].customerName).toBe("สมชาย ใจดี");
+    expect(queue[0].total).toBe("285");
+    expect(queue[0].orderNumber).toBe("0819_1");
+  });
+
+  it("🔴 ลำดับ(A) ว่าง → ไม่เข้าคิว แม้มีเลขพัสดุ (ยังไม่คอนเฟิร์ม)", async () => {
+    const header = reorderedHeader();
+    sheetsCalls.ordersHeader = header;
+    const dataRow = new Array<string>(header.length).fill("");
+    dataRow[header.indexOf("order_id")] = "SKB-x";
+    dataRow[header.indexOf("เลขTracking")] = "TH999";
+    dataRow[header.indexOf("ยกเลิก")] = "FALSE";
+    sheetsCalls.getReturn = [dataRow];
+    expect(await listOrdersToNotifyShipping()).toHaveLength(0);
+  });
+
+  it("🔴 ยกเลิก(N)=TRUE → ไม่เข้าคิว แม้ครบทุกอย่าง", async () => {
+    const header = reorderedHeader();
+    sheetsCalls.ordersHeader = header;
+    const dataRow = new Array<string>(header.length).fill("");
+    dataRow[header.indexOf("order_id")] = "SKB-y";
+    dataRow[header.indexOf("ลำดับ")] = "0819_2";
+    dataRow[header.indexOf("เลขTracking")] = "TH888";
+    dataRow[header.indexOf("ยกเลิก")] = "TRUE";
+    sheetsCalls.getReturn = [dataRow];
+    expect(await listOrdersToNotifyShipping()).toHaveLength(0);
   });
 });

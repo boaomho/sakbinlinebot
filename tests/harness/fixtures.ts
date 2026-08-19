@@ -47,7 +47,6 @@ export function testConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     delayBetweenBubblesMs: 0,
     slipUrlExpiryDays: 7,
     orderCutoffTime: "12:00",
-    orderNumberResetDaily: true,
     handoffKeywords: [...DEFAULT_HANDOFF_KEYWORDS],
     notifyKeywords: [], // D-58: default ปิด (เทส notify override เอง)
     notifyDoors: [], // D-60: per-door mapping (เทส override เอง)

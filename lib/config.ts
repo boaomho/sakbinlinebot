@@ -42,8 +42,8 @@ export interface AppConfig {
   /** หน่วง_ระหว่างบอลลูน — อ่านไว้แต่ปัจจุบันยังส่งบอลลูนใน reply เดียว (ยังไม่ได้ใช้หน่วงจริง) */
   delayBetweenBubblesMs: number;
   slipUrlExpiryDays: number;
+  /** 🔴 ยังใช้อยู่ — resolveDeliveryVar `{วันจัดส่ง}` ที่ลูกค้าเห็น (quote.ts อ่านจาก raw · D-39) */
   orderCutoffTime: string;
-  orderNumberResetDaily: boolean;
   handoffKeywords: string[];
   /** D-58: คำ_notify — pre-check ชั้นสอง (alias → ประตู H1) · default [] = ปิดฟีเจอร์ */
   notifyKeywords: string[];
@@ -275,7 +275,7 @@ export async function getConfig(): Promise<AppConfig> {
     delayBetweenBubblesMs: numOf(1, "หน่วง_ระหว่างบอลลูน", "หน่วง_ระหว่างข้อความ") * 1000,
     slipUrlExpiryDays: numOf(7, "อายุลิงก์สลิป_วัน", "อายุลิงก์สลิป"),
     orderCutoffTime: strOf("12:00", "เวลาตัดรอบออเดอร์", "เวลารอบตัดออเดอร์"),
-    orderNumberResetDaily: boolOf(true, "เลขออเดอร์_รีเซ็ตทุกวัน", "เลขออเดอร์รีเซ็ตทุกวัน"),
+    // 🔴 D-64: ลบ orderNumberResetDaily — เลขออเดอร์ย้ายไป Apps Script (คีย์ `เลขออเดอร์_รีเซ็ตทุกวัน` ในชีตถูกเมิน)
     handoffKeywords: (pick("คำ_handoff", "คำ_ส่งต่อแอดมิน", "keyword_handoff") ?? "")
       .split(",")
       .map((s) => cleanCell(s))

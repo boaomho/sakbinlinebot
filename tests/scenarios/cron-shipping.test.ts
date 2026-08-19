@@ -39,14 +39,18 @@ const USER = "Utrainshiptest0000000000000000001";
 const ORDER_ID = "SKB-20260724-abc123";
 
 function buildRow(over: Record<string, string> = {}): string[] {
-  const row = ORDERS_HEADER.map(() => "");
+  // 🔴 D-64: อิง header จริงของ mock (มีคอลัมน์ "กล่องส่งออเดอร์" แทรก) ไม่ใช่ ORDERS_HEADER
+  const header = sheetsCalls.ordersHeader.length > 0 ? sheetsCalls.ordersHeader : [...ORDERS_HEADER];
+  const row = header.map(() => "");
   const base: Record<string, string> = {
-    "ลำดับ": "0724-1", "ชื่อ-นามสกุล": "สมชาย ใจดี", "เบอร์โทร": "0811122334",
+    // 🔴 D-64: เข้าคิวด้วย ลำดับ(A) + เลขTracking(P) · "ส่งออเดอร์แล้ว"(O) ตั้ง FALSE โดยตั้งใจ
+    //    เพื่อพิสูจน์ว่าคิวไม่พึ่ง O อีกแล้ว (คนติ๊กเอง = ลืมได้)
+    "ลำดับ": "0724_1", "ชื่อ-นามสกุล": "สมชาย ใจดี", "เบอร์โทร": "0811122334",
     "สินค้า+จำนวน": "น้ำพริกปลาทู x3", "การชำระเงิน": "COD",
-    "คอนเฟิร์ม": "TRUE", "ส่งออเดอร์แล้ว": "TRUE", "เลขTracking": "TH999",
+    "คอนเฟิร์ม": "TRUE", "ส่งออเดอร์แล้ว": "FALSE", "เลขTracking": "TH999",
     "order_id": ORDER_ID, "line_user_id": USER, ...over,
   };
-  for (const [k, v] of Object.entries(base)) row[ORDERS_HEADER.indexOf(k)] = v;
+  for (const [k, v] of Object.entries(base)) row[header.indexOf(k)] = v;
   return row;
 }
 async function runCron(): Promise<Response> {
@@ -81,7 +85,29 @@ describe("D-50 · cron แจ้งเลขพัสดุ", () => {
     expect(t, "มีขนส่ง default").toContain(DEFAULT_CARRIER);
     const admin = JSON.stringify(adminPushes());
     expect(admin).toContain("แจ้งพัสดุลูกค้าแล้ว ✓");
-    expect(admin, "โชว์เลขออเดอร์วิ่ง (ลำดับ) ให้ทีมแพ็คเห็น").toContain("0724-1");
+    expect(admin, "โชว์เลขออเดอร์วิ่ง (ลำดับ) ให้ทีมแพ็คเห็น").toContain("0724_1");
+  });
+
+  it("🔴 D-64: cron ไม่เขียนชีตเลย — ไม่แตะคอลัมน์ A(ลำดับ) และ O(ส่งออเดอร์แล้ว)", async () => {
+    await ensureCustomer(USER);
+    sheetsCalls.getReturn = [buildRow()];
+    await runCron();
+    expect(sheetsCalls.batchUpdates, "cron ต้องไม่ batchUpdate ชีต Orders เลย").toHaveLength(0);
+    expect(sheetsCalls.appends, "cron ต้องไม่ append แถวใหม่").toHaveLength(0);
+  });
+
+  it("🔴 D-64: ลำดับ(A) ว่าง → ไม่เข้าคิว แม้ P มีเลข (Apps Script ยังไม่แจกเลข = ยังไม่คอนเฟิร์ม)", async () => {
+    await ensureCustomer(USER);
+    sheetsCalls.getReturn = [buildRow({ "ลำดับ": "" })];
+    expect((await (await runCron()).json()).shipped).toBe(0);
+    expect(custPushes().length).toBe(0);
+  });
+
+  it("🔴 D-64: ยกเลิก(N)=TRUE → ไม่แจ้ง แม้ A+P ครบ", async () => {
+    await ensureCustomer(USER);
+    sheetsCalls.getReturn = [buildRow({ "ยกเลิก": "TRUE" })];
+    expect((await (await runCron()).json()).shipped).toBe(0);
+    expect(custPushes().length).toBe(0);
   });
 
   it("🔴 idempotent — cron รอบสองไม่ push ซ้ำ (shipping_notified)", async () => {

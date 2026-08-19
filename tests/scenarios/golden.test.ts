@@ -36,7 +36,7 @@ describe("บท 1 — ซื้อลื่น: ทัก→สั่ง→โ�
     await sendText(U, "สมชาย ใจดี 123/45 หมู่ 6 บางรัก เมือง ชลบุรี 20000 เบอร์ 0811122334");
 
     expect(orderCount(), "ต้องเขียนชีตครั้งเดียว").toBe(1);
-    expect(sheetsCalls.appends[0].range, "layout จริง 26 คอลัมน์ A–Z (D-31)").toBe("Orders!A:Z");
+    expect(sheetsCalls.appends[0].range, "🔴 D-64: ชีต 27 คอลัมน์ (แทรก Q กล่องส่งออเดอร์) → A–AA").toBe("Orders!A:AA");
     const row = orderRowAt(0);
     expect(row["ชื่อ-นามสกุล"]).toBe("สมชาย ใจดี");
     expect(row["เบอร์โทร"]).toBe("0811122334");
@@ -238,39 +238,29 @@ describe("บท 18 — COD: สั่ง(ได้ชื่อ+เบอร์)
   });
 });
 
-describe("บท 19 — KI-06 join จริง: append เขียน R (line_user_id) → cron อ่าน R → ล้างธงถูกคน", () => {
-  it("🔴 แถวที่โค้ดเขียนเองมี R ครบ · cron แจกเลขแล้วล้างธง delivered_steps ของ userId นั้น", async () => {
+describe("บท 19 — KI-06: append เขียน R (line_user_id) · 🔴 D-64 ล้างธงตอนเขียนชีตสำเร็จ (ไม่ใช่ตอน cron)", () => {
+  it("🔴 R ครบในแถว · ธง delivered_steps ถูกล้างทันทีที่ออเดอร์เขียนชีตสำเร็จ", async () => {
     const { addDeliveredStep } = await import("@/lib/db");
-    const { ORDERS_HEADER } = await import("@/lib/orders");
 
-    // 1) ออเดอร์ COD ครบเทิร์นเดียว → append ผ่าน pipeline จริง
+    // 1) เทิร์นแรก — สร้าง customer แล้วปักธง step เก่าค้างไว้
+    scriptGemini([turn({ reply: "สวัสดีค่ะ", stage: "1" })]);
+    await sendText(U, "สวัสดีค่ะ");
+    await addDeliveredStep(U, "S_OLD_FLAG");
+    expect((await readCustomer(U))?.delivered_steps, "ธงเก่าปักแล้ว").toContain("S_OLD_FLAG");
+
+    // 2) ออเดอร์ COD ครบเทิร์นเดียว → append ผ่าน pipeline จริง
     scriptGemini([
       turn({ reply: "รับออเดอร์ค่ะ", stage: "4b", paymentMethod: "COD", orderData: { ...NPT(3), ...FULL_ADDRESS } }),
     ]);
     await sendText(U, "เอา 3 ถ้วย เก็บปลายทาง สมชาย ใจดี 123/45 หมู่ 6 ต.บางรัก อ.เมือง จ.ชลบุรี 20000 0811122334");
     expect(orderCount()).toBe(1);
-    expect(orderRowAt(0)["line_user_id"], "🔴 R ต้องเป็น userId (เดิมว่าง = รากที่ธงไม่ถูกล้างบน prod)").toBe(U);
+    expect(orderRowAt(0)["line_user_id"], "🔴 R ต้องเป็น userId (KI-06)").toBe(U);
 
-    // 2) ธง step เก่าค้าง + แอดมินติ๊ก M → cron จริงอ่านแถว (รวม R) จาก sheet mock
-    await addDeliveredStep(U, "S_OLD_FLAG");
-    const raw = [...sheetsCalls.appends[0].values[0]] as string[];
-    raw[ORDERS_HEADER.indexOf("คอนเฟิร์ม")] = "TRUE";
-    sheetsCalls.getReturn = [raw];
-
-    const { GET } = await import("@/app/api/cron/orders/route");
-    const res = await GET(
-      new Request("https://harness.invalid/api/cron/orders", {
-        headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      }) as any,
-    );
-    expect(res.status).toBe(200);
-    expect((await res.json()).processed, "cron ประมวลผล 1 ออเดอร์").toBe(1);
-
-    // 3) join สำเร็จ: เลขถูกแจก (batchUpdate) + ธงเก่าถูกล้างของ "คนนี้"
-    expect(sheetsCalls.batchUpdates.length, "markOrderSent เขียนเลข+TRUE").toBeGreaterThan(0);
+    // 3) 🔴 D-64: hook ย้ายมาที่นี่ — ล้างทันที ไม่ต้องรอ cron (cron ไม่แจกเลขแล้ว)
     const c = await readCustomer(U);
-    expect(c?.delivered_steps, "🔴 ธงเก่าถูกล้าง (คงเฉพาะ stage ปัจจุบัน) — join R→Neon ทำงานจริง").not.toContain("S_OLD_FLAG");
-    expect(JSON.stringify(lineCalls.pushes), "แจ้งกลุ่มแพ็ค").toContain("สมชาย ใจดี");
+    expect(c?.delivered_steps, "ธงเก่าถูกล้างตอนเขียนชีตสำเร็จ (คงเฉพาะ stage ปัจจุบัน)").not.toContain("S_OLD_FLAG");
+
+    // 4) 🔴 ลำดับ(A) ต้องเว้นว่าง — Apps Script บนชีตเป็นคนเขียน ไม่ใช่โค้ด
+    expect(orderRowAt(0)["ลำดับ"], "โค้ดห้ามเขียนเลขลำดับ").toBe("");
   });
 });

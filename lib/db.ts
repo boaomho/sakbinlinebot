@@ -88,12 +88,8 @@ export async function ensureSchema(): Promise<void> {
     )
   `;
 
-  await sql`
-    CREATE TABLE IF NOT EXISTS order_counter (
-      day DATE PRIMARY KEY,
-      last_no INTEGER NOT NULL DEFAULT 0
-    )
-  `;
+  // 🔴 D-64: ตาราง order_counter เลิกใช้ — เลขออเดอร์ย้ายไป Apps Script บนชีต (คอลัมน์ A)
+  //    ไม่ drop ของเดิมทิ้ง (DB ที่มีอยู่ปล่อยค้างไว้เฉย ๆ) · DB ใหม่จะไม่ถูกสร้าง
 
   // idempotency (Step 2 · D-29): บันทึก order_id ที่ "เขียนชีตสำเร็จแล้ว" เท่านั้น (source of truth = Neon ไม่ใช่ชีต)
   // 🔴 มีแถวนี้ = การันตีว่าเขียนสำเร็จ → ห้ามเขียนซ้ำ · "มี order_id ใน pending" ≠ เขียนสำเร็จ (append อาจล้ม)
@@ -813,19 +809,8 @@ export async function isChannelEnabled(channel: string): Promise<boolean> {
   return Boolean((rows[0] as { enabled: boolean }).enabled);
 }
 
-// ---- order counter (atomic) ----
-
-/** แจกเลขออเดอร์ถัดไปของวันนั้นแบบ atomic กัน cron รันซ้อนแจกเลขซ้ำ */
-export async function nextOrderNumber(day: string): Promise<number> {
-  await ensureSchema();
-  const sql = getSql();
-  const rows = await sql`
-    INSERT INTO order_counter (day, last_no) VALUES (${day}, 1)
-    ON CONFLICT (day) DO UPDATE SET last_no = order_counter.last_no + 1
-    RETURNING last_no
-  `;
-  return Number((rows[0] as Record<string, unknown>).last_no);
-}
+// 🔴 D-64: ลบ `nextOrderNumber` + ตาราง order_counter — เลขออเดอร์ย้ายไป Apps Script บนชีต (คอลัมน์ A)
+//    ปิด KI-05 ไปในตัว (ไม่มี loop แจกเลขใน cron ให้รันซ้อนกันอีกแล้ว)
 
 // ---- T-STUDIO: state ของ session ห้องซ้อม (เรียกจากใน sandbox เท่านั้น → เขียนลง train branch) ----
 
