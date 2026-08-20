@@ -11,7 +11,7 @@ import type { BotLibrary } from "@/lib/sheets/loader";
 export interface LintFinding {
   /** block = 🔴 ปิดปุ่มเขียน (เฟส ค) · warn = เตือน */
   level: "block" | "warn";
-  kind: "unknown-var" | "claims" | "price" | "bubbles" | "image-last" | "health-h1" | "close-style";
+  kind: "unknown-var" | "var-collision" | "var-empty" | "claims" | "price" | "bubbles" | "image-last" | "health-h1" | "close-style";
   message: string;
   hits: string[];
 }
@@ -71,17 +71,34 @@ export function lintHealthH1(triggerText: string, answerText: string, opts: { ex
 /** lint pattern ดิบ (ก่อน resolve) — จับตัวแปรผิด/claims/ราคานอกระบบ/บอลลูนเกิน */
 export function lintPattern(
   pattern: string,
-  opts: { config: AppConfig; lib: BotLibrary; payment: string; now: Date; trigger?: string; h1Exempt?: boolean; h1Notify?: boolean },
+  opts: { config: AppConfig; lib: BotLibrary; payment: string; now: Date; trigger?: string; h1Exempt?: boolean; h1Notify?: boolean; varName?: string },
 ): LintFinding[] {
   const { config, lib, payment, now } = opts;
   const findings: LintFinding[] = [];
+  const systemVars = KNOWN_RUNTIME_VARS as readonly string[];
 
   // 1) ตัวแปร "ไม่รู้จัก" (typo / ยังไม่มี resolver) — จะหลุดดิบหรือโดนทิ้งบอลลูน
-  const known = new Set<string>([...KNOWN_RUNTIME_VARS, ...loadLiveVars(lib.CSV_Vars).map((v) => v.name)]);
+  const csvVars = new Map(loadLiveVars(lib.CSV_Vars).map((v) => [v.name, v.value]));
+  const known = new Set<string>([...systemVars, ...csvVars.keys()]);
   const tokens = pattern.match(VAR_TOKEN) ?? [];
   const unknown = [...new Set(tokens.filter((t) => !known.has(t)))];
   if (unknown.length > 0) {
     findings.push({ level: "block", kind: "unknown-var", hits: unknown, message: `ตัวแปรไม่รู้จัก (พิมพ์ผิด/ไม่มี resolver) — จะหลุดดิบหรือบอลลูนถูกทิ้ง: ${unknown.join(" ")}` });
+  }
+
+  // 1ข) 🔴 D-67: ชื่อ CSV_Vars ชนตัวแปรระบบ — runtime ระบบชนะเสมอ (resolveCsvVars ข้าม+log) = ค่าที่เจ้าของตั้งไม่ถูกใช้เลย
+  //     ตรวจทั้ง token ที่ใช้ในแพตเทิร์น และชื่อแถว CSV_Vars เองตอนแก้ (opts.varName)
+  const collided = [...new Set(tokens.filter((t) => csvVars.has(t) && systemVars.includes(t)))];
+  if (opts.varName && systemVars.includes(opts.varName) && !collided.includes(opts.varName)) collided.push(opts.varName);
+  if (collided.length > 0) {
+    findings.push({ level: "warn", kind: "var-collision", hits: collided, message: `⚠︎ ชื่อชนตัวแปรระบบ — ค่าจากชีตจะไม่ถูกใช้ (ระบบชนะเสมอ) ให้เปลี่ยนชื่อ: ${collided.join(" ")}` });
+  }
+
+  // 1ค) 🔴 D-67: แถว CSV_Vars live แต่ช่อง "ค่า" ว่าง — runtime ไม่แทนค่า (quote.ts) → ตัวแปรค้างดิบถึงลูกค้า / รูปหายเงียบ
+  //     เดิม lint นับว่า "รู้จัก" แค่ชื่อมีในชีต = เขียวทั้งที่ของจริงพัง
+  const emptyVal = [...new Set(tokens.filter((t) => csvVars.has(t) && !systemVars.includes(t) && (csvVars.get(t) ?? "").trim() === ""))];
+  if (emptyVal.length > 0) {
+    findings.push({ level: "warn", kind: "var-empty", hits: emptyVal, message: `⚠︎ ตัวแปรมีแถวในชีตแต่ช่อง "ค่า" ว่าง — จะค้างดิบถึงลูกค้า (รูป = หายเงียบ): ${emptyVal.join(" ")}` });
   }
 
   // 2) claims พ.ร.บ.อาหาร (คำจาก Config จริง)

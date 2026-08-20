@@ -162,7 +162,7 @@ export function renderPreview(
   });
 
   const payment = customer?.pendingOrder["การชำระเงิน"] ?? "";
-  const lint = lintPattern(rawPattern, { config, lib, payment, now, trigger: triggerTextForTab(tab, cols), ...h1FlagsForRow(tab, cols) });
+  const lint = lintPattern(rawPattern, { config, lib, payment, now, trigger: triggerTextForTab(tab, cols), ...h1FlagsForRow(tab, cols), varName: tab === "CSV_Vars" ? key : undefined });
 
   return { rawPattern, columns: Object.entries(cols).filter(([k]) => (EDITABLE_COLS[tab] ?? []).includes(k)).map(([name, value]) => ({ name, value })), segments, vars, lint };
 }
@@ -211,18 +211,31 @@ function faqKeyByAnswer(rows: string[][], answer: string): string | null {
   return row ? cleanCell(row[qIdx] ?? "") : null;
 }
 
-/** บอลลูนที่ถูก var-guard ทิ้งเทิร์นนี้ (จาก log before+dropped) — โชว์ขีดฆ่า ห้ามหายเงียบ */
+/** บอลลูน/รูปที่ถูกทิ้งเทิร์นนี้ (var-guard + D-67 image-dropped) — โชว์ขีดฆ่า ห้ามหายเงียบ */
 export function collectDroppedBubbles(logs: Record<string, unknown>[]): { text: string; vars: string[] }[] {
-  const vg = logs.filter((l) => l.scope === "var-guard" && l.event === "unresolved-runtime-var").pop();
-  if (!vg) return [];
-  const before = String(vg.before ?? "");
-  const dropped = (vg.dropped as string[] | undefined) ?? [];
-  if (!before || dropped.length === 0) return [];
-  const bodies = before.split(/(?:\[\[เว้น\]\]|\[\[แยก\]\])/);
   const out: { text: string; vars: string[] }[] = [];
-  for (const body of bodies) {
-    const hit = [...new Set(dropped.filter((v) => body.includes(v)))];
-    if (hit.length > 0) out.push({ text: body.trim(), vars: hit });
+  const vg = logs.filter((l) => l.scope === "var-guard" && l.event === "unresolved-runtime-var").pop();
+  if (vg) {
+    const before = String(vg.before ?? "");
+    const dropped = (vg.dropped as string[] | undefined) ?? [];
+    if (before && dropped.length > 0) {
+      const bodies = before.split(/(?:\[\[เว้น\]\]|\[\[แยก\]\])/);
+      for (const body of bodies) {
+        const hit = [...new Set(dropped.filter((v) => body.includes(v)))];
+        if (hit.length > 0) out.push({ text: body.trim(), vars: hit });
+      }
+    }
+  }
+  // 🔴 D-67: รูปที่ line.ts ทิ้งเพราะ URL ไม่ใช่ http(s) (ตัวแปรค้าง เช่น {รูปโปรโมชั่น} ค่าว่าง / บอทแต่งชื่อ)
+  //   เดิมหายเงียบทั้ง prod และห้องซ้อม → ห้องซ้อมที่ไม่บอกว่าของหาย = ห้องซ้อมโกหก (บทเรียน C6)
+  const seen = new Set<string>();
+  for (const l of logs.filter((l) => l.scope === "line" && l.event === "image-dropped")) {
+    const url = String(l.url ?? "");
+    const segment = String(l.segment ?? "");
+    const key = `${url}|${segment}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ text: segment || `[[รูป:${url}]]`, vars: [url] });
   }
   return out;
 }

@@ -262,6 +262,30 @@ describe.skipIf(!RUN)("D-61.C golden ชั้น G — ชีต v3 จริ�
     }, 240_000);
   }
 
+  // ---- D-67 · G31: ตัวแปรรูปจาก CSV_Vars — โมเดลต้อง copy token (ได้รูปจริง) และห้ามประดิษฐ์ตัวแปร ----
+  it(`G31 · S2 ส่งรูปโปรจาก {รูปโปรโมชั่น} + ไม่ประดิษฐ์ตัวแปร (${ROUNDS} รอบ ต้องผ่านครบ)`, async () => {
+    const fails: string[] = [];
+    let sample = "";
+    for (let round = 1; round <= ROUNDS; round++) {
+      await resetDb();
+      U = nextUser();
+      lineCalls.replies.length = 0;
+      await sendText(U, "สนใจน้ำพริกปลาทูค่ะ ขอรายละเอียดหน่อย");
+      const bs = bubbles();
+      const t = bs.join("\n");
+      if (round === 1) sample = t;
+      const bad = checkInvariants(t);
+      // (ก) รูปโปรต้องถึงลูกค้าจริง = โมเดล copy token + resolver แทน URL + line.ts รับ (พิสูจน์ทั้งสาย)
+      if (!bs.includes("[IMG]")) bad.push("ไม่มีบอลลูนรูป (โมเดลไม่ copy {รูปโปรโมชั่น} หรือ resolve ไม่ได้)");
+      // (ข) ห้ามประดิษฐ์/ปล่อยตัวแปรค้าง — ข้อความสุดท้ายต้องไม่มี {...} เหลือเลย
+      const leftover = t.match(/\{[^}]+\}/g) ?? [];
+      if (leftover.length > 0) bad.push(`ตัวแปรค้างดิบ/ประดิษฐ์: ${[...new Set(leftover)].join(" ")}`);
+      if (bad.length > 0) fails.push(`รอบ ${round}: ${bad.join(" · ")}`);
+    }
+    record("G31", `ตัวแปรรูป CSV_Vars ×${ROUNDS}`, fails.length === 0, fails.join(" | ") || `รูปถึงลูกค้า + ไม่มี token ค้าง ครบ ${ROUNDS} รอบ`, sample);
+    expect(fails, `G31 ล้ม: ${fails.join(" | ")}`).toHaveLength(0);
+  }, 240_000);
+
   it("G20 · ขอคุยกับคน → handoff เดิม", async () => {
     await sendText(U, "ขอคุยกับแอดมินหน่อยค่ะ");
     const human = (await readCustomer(U))?.human_mode === true;

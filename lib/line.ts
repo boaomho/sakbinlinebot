@@ -60,9 +60,9 @@ function parseSegmentToMessages(segment: string): Message[] {
     // ส่งรูปเฉพาะ URL http(s) จริง — กันบอทแต่ง URL/placeholder (รูปมั่ว) หลุดถึงลูกค้า
     if (/^https?:\/\/\S+$/.test(url)) {
       messages.push({ type: "image", originalContentUrl: url, previewImageUrl: url } as Message);
-    } else if (url) {
-      console.warn(JSON.stringify({ scope: "line", warning: "ข้าม [[รูป:...]] URL ไม่ใช่ http(s)", url: url.slice(0, 60) }));
     }
+    // URL ไม่ผ่าน = ข้ามเงียบที่ชั้นนี้ — log อยู่ที่ parseReplyIntoMessages (D-67)
+    // เหตุ: ฟังก์ชันนี้ถูกเรียกซ้ำจากตัวนับของ C6 (countMessagesUncapped) ถ้า log ที่นี่จะยิงซ้ำ 2 ครั้งต่อเทิร์น
     lastIndex = IMAGE_TOKEN.lastIndex;
   }
 
@@ -103,6 +103,17 @@ export function parseReplyIntoMessages(reply: string, collapseBubbles = false): 
     : reply.split(/\[\[(?:เว้น|แยก)\]\]/);
   let messages: Message[] = [];
   for (const seg of segments) {
+    // 🔴 D-67: รูปที่ URL ไม่ใช่ http(s) (ตัวแปรค้าง/บอทแต่ง) ถูกทิ้งเงียบใน parseSegmentToMessages
+    //   → log เป็น structured event ที่นี่ (จุดส่งจริง · ครั้งเดียวต่อ delivery) ให้ console tee ของ
+    //   ห้องซ้อมเก็บไป render บอลลูนขีดฆ่า (collectDroppedBubbles) — "ของหายต้องมองเห็น"
+    IMAGE_TOKEN.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = IMAGE_TOKEN.exec(seg)) !== null) {
+      const url = m[1].trim();
+      if (url && !/^https?:\/\/\S+$/.test(url)) {
+        console.warn(JSON.stringify({ scope: "line", event: "image-dropped", url: url.slice(0, 80), segment: seg.trim().slice(0, 120) }));
+      }
+    }
     messages.push(...parseSegmentToMessages(seg));
   }
 
