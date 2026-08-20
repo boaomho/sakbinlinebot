@@ -119,12 +119,18 @@ AI เหลือ 4 งาน (เลือก step · จำแนก objectio
 - **T1 Pattern Studio** — เครื่องมือแก้/พรีวิว pattern ชีต (ตามแผน)
 
 ## 🔴 จุดอันตรายห้ามลืม
-- **สิ่งที่ห้ามแตะ** (เส้นตาย): order gate · `calculatePrice` · 2-pass/quota-saver · idempotency (D-29) · last_order/S_EDIT (D-31/32) · handoff รวมศูนย์ (D-33) · intake (D-34-36) · เวลาไทย (D-37) · validate funnel_stage (D-38) · invariants 10 (REPO-MAP §10) · **กฎ H1 ทุกชั้น**
+- **สิ่งที่ห้ามแตะ** (เส้นตาย): order gate · `calculatePrice` · 2-pass/quota-saver · idempotency (D-29) · last_order/S_EDIT (D-31/32) · handoff รวมศูนย์ (D-33) · intake (D-34-36) · เวลาไทย (D-37) · validate funnel_stage (D-38) · invariants 10 (REPO-MAP §10)
+- 🔴 **H1 — แยกให้ชัดว่าอะไรแตะได้ (D-65 · เดิมเขียนรวมว่า "กฎ H1 ทุกชั้น = ห้ามแตะ" ซึ่งกำกวม เพราะ C2/C3/D-62 แก้ไปแล้ว):**
+  - **แตะไม่ได้ (invariant):** (ก) **ห้ามคำรับรอง**ทุกรูปประโยคในเคสสุขภาพ — ทานได้/กินได้/ปลอดภัย/ไม่เป็นไร/หายห่วง/ไม่มีปัญหา รวมเชิงระวังและรูปมีเงื่อนไข (ข) เจอคำรับรอง **ห้ามเงียบ** — ต้อง block→regen→cut→fallback เสมอ (ค) **แอดมินต้องรู้ทุกเทิร์นที่ติดธงสุขภาพ** แม้ AI ล้ม/ส่งไม่ถึง (ง) ห้ามใส่ "หลักการตอบ" เรื่องสุขภาพลงชีต (ใส่ได้เฉพาะข้อเท็จจริงตามฉลาก)
+  - **แตะได้ (จูนแล้ว/จูนต่อได้ ถ้าวัดผล):** ถ้อยคำโซนสุขภาพใน `system-v3.ts` (C3) · allowlist บริบทของ `findAssuranceHits` (D-62) · จุดยิง/เนื้อความธง 🔔 (C2) · `คำ_ธงสุขภาพ`/`คำรับรอง_ต้องห้าม` ในชีต
+  - 🔴 **v2 ยังเป็น "handoff ทันทีเสมอ" — ห้ามเอาพฤติกรรม v3 (บอทคุยต่อ) ย้อนเข้า v2 ก่อน cutover**
 - 🔴 **D-64: โค้ดห้ามเขียนคอลัมน์ A(ลำดับ) และ O(ส่งออเดอร์แล้ว) ของชีต Orders** — A เป็นของ Apps Script · O เป็นของคน · สถานะ/คิวทุกอย่าง derive จาก A/N/P เท่านั้น
 - **บันได 4 ชั้นรับ PROHIBITED_CONTENT (KI-05)** — ห้ามถอดชั้นใดชั้นหนึ่งโดยไม่วัดผล · degraded = last resort ห้ามหลุด
 - **"ท้อง" ใน `คำ_handoff` เป็น substring** — ชน "ท้องฟ้า/ท้องเสีย" → ดัก handoff ก่อน intake (ทิศปลอดภัย · แก้คำในชีต ไม่ใช่โค้ด)
-- `{รูปสินค้า}` = URL ดิบ · **ไม่มี resolver `{สารก่อภูมิแพ้}`** (H1 — ห้ามทำ) · CSV_Vars: live เท่านั้น · ชื่อชนตัวแปรระบบ → ระบบชนะ+log
-- prompt/system.ts: แก้ด้วย Edit เท่านั้น (KI-03 backtick) · prompt-lint คุม order_data example + C6
+- `{รูปสินค้า}` = URL ดิบ · CSV_Vars: live เท่านั้น · ชื่อชนตัวแปรระบบ → ระบบชนะ+log
+- 🔴 **สารก่อภูมิแพ้ (แก้ D-65 · ข้อความเดิม "ไม่มี resolver {สารก่อภูมิแพ้} — H1 ห้ามทำ" ล้าสมัย):** **v3 ยัดคอลัมน์ `สารก่อภูมิแพ้` เข้า prompt แล้ว** (`inject.ts` `CATALOG_PRODUCT_COLS_V3` เมื่อ `includeAllergen` · D-61.B) เพราะ v3 ให้บอทตอบข้อเท็จจริงตามฉลากได้ · **ที่ยังไม่มีคือ resolver `{สารก่อภูมิแพ้}` สำหรับ pattern verbatim** (ยังไม่ทำ ไม่ใช่ห้ามทำ) · v2 ไม่ยัดเข้า prompt เหมือนเดิม
+- prompt: `system.ts` (v2) + `system-v3.ts` (v3) แก้ด้วย Edit เท่านั้น (KI-03 backtick) · prompt-lint คุม order_data example + C6
+- 🔴 **`/train` ปุ่มเขียนชีตทั้งหมดเขียนผิดไฟล์เมื่อ `SHEET_SCHEMA=v3`** — `lib/train/write.ts:31` hardcode `SHEET_BOTLIB_ID` (ไฟล์ v2) ขณะที่ loader อ่านจาก `SHEET_BOTLIB_V3_ID` → กด "commit/add-row" ในโหมด v3 = แก้ไฟล์เก่าเงียบๆ โดยหน้าจอไม่ฟ้อง · **ห้ามใช้ปุ่มเขียนใน /train จนกว่าเฟส D จะแก้ dispatch** (อ่าน/ซ้อม/พรีวิว ปลอดภัย — เขียนเท่านั้นที่พัง)
 
 ## กฎทำงาน
 report ก่อน code · 1 commit 1 เรื่อง · วัดก่อนแก้ · ไม่ over-engineer · เจอเปลี่ยน contract นอกบรีฟ → หยุดถาม ·
