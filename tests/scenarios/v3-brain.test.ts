@@ -5,11 +5,10 @@ import { seedBotLib } from "../harness/botlib-fixture";
 import { readCustomer } from "../harness/db";
 import { buildSalesSystemV3 } from "@/prompt/system-v3";
 import { findAssuranceHits, cutAssuranceLines, DEFAULT_ASSURANCE_PHRASES } from "@/lib/guards/assurance";
-import { sheetSchema } from "@/lib/schema-mode";
 import { defaultReply } from "@/lib/config";
 
 /**
- * D-61.A · สมองใหม่ v3 (SHEET_SCHEMA=v3 เฉพาะไฟล์นี้ — afterAll คืนค่า · ชุดเทสที่เหลือทั้ง repo รัน v2 = พิสูจน์ v2 ไม่เปลี่ยน)
+ * D-61.A · สมอง v3 (D-68: v3 เหลือโหมดเดียว — ไม่ต้องตั้ง SHEET_SCHEMA อีกแล้ว)
  * ครอบ: เรียบเรียงสด (pattern ไม่ทับ) · FAQ/OBJ ไม่ force · handoff จริงชนะ · ธงสุขภาพ (hint+🔔 dedup+ไม่ปิดบอท) ·
  * assurance guard (block→regenerate→cut→fallback · ห้ามเงียบ) · DEFAULT_HANDOFF_KEYWORDS_V3 (คำสุขภาพไม่ปิดบอท)
  */
@@ -42,13 +41,6 @@ function cfgV3(over: Record<string, unknown> = {}): void {
   harnessOverrides.config = { handoffKeywords: ["ขอแอดมิน", "คุยกับคน", "ฟ้อง"], healthFlagKeywords: ["แพ้", "เบาหวาน"], ...over };
 }
 
-beforeAll(() => {
-  process.env.SHEET_SCHEMA = "v3";
-  expect(sheetSchema()).toBe("v3");
-});
-afterAll(() => {
-  delete process.env.SHEET_SCHEMA; // 🔴 คืน v2 ให้ไฟล์เทสอื่นทั้ง repo (v2-frozen sentinel)
-});
 beforeEach(() => seedV3());
 
 // ---------- unit · assurance guard (pure) ----------

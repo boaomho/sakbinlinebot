@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { sendText } from "../harness/replay";
 import { scriptGemini, turn, adminPushes, lineCalls, harnessOverrides } from "../harness/state";
 import { FULL_ADDRESS } from "../harness/fixtures";
-import { seedBotLib, PRICING_CONFIG } from "../harness/botlib-fixture";
+import { seedBotLib, PRICING_CONFIG, v3StepRows } from "../harness/botlib-fixture";
 import { readCustomer, setLastSeenAgo } from "../harness/db";
 
 /**
@@ -12,19 +12,19 @@ import { readCustomer, setLastSeenAgo } from "../harness/db";
 const U = "Uharnesstestcustomer0000000000014";
 const FOOTER = "บอทปิดการทำงานกับลูกค้ารายนี้แล้ว";
 
-const STEP_H = ["step_id", "funnel_stage", "ชื่อประตู", "เข้าเมื่อ", "ไปประตูถัดไปเมื่อ", "ความรู้สึกลูกค้าตอนนี้", "ทำไมประตูนี้สำคัญ", "หลักการนำพา", "ห้ามทำ", "ต้องเก็บข้อมูล", "ตัวอย่างคำตอบ", "ตัวอย่างประโยคปิดท้าย"];
-function r(step_id: string, funnel_stage: string, o: Partial<Record<string, string>> = {}): string[] {
-  return STEP_H.map((h) => (h === "step_id" ? step_id : h === "funnel_stage" ? funnel_stage : o[h] ?? ""));
-}
+/**
+ * 🔴 D-68: seed "ชีตดิบ v3" ผ่านเส้นทางเดียวกับ prod (loader → adapter)
+ * funnel_stage = คอลัมน์ optional ที่ D-68 เปิดให้ adapter อ่าน — จำเป็นสำหรับ handoff_after_intake
+ * ซึ่ง FIXED_FUNNEL (S1/S2/S2Q/S3/S4) ผลิตไม่ได้ (ดู DECISIONS D-68 ข้อ 1)
+ */
 function stepSheet(): string[][] {
-  return [
-    STEP_H,
-    r("S1", "lead", { หลักการนำพา: "ทักทาย" }),
-    r("S2_DIRECT", "qualified", { เข้าเมื่อ: 'บอกจำนวน เช่น "สั่ง"', หลักการนำพา: "สรุปยอด" }),
-    r("S4B", "won", { หลักการนำพา: "ปิดจบ" }),
-    r("H_CLAIM", "handoff_after_intake", { ชื่อประตู: "เคลม-คุยก่อน", เข้าเมื่อ: 'ของเสีย เช่น "ของเสีย"', หลักการนำพา: "ทวนปัญหา", ห้ามทำ: "ห้ามรับปาก" }),
-    r("H1", "handoff", { ชื่อประตู: "เคลมด่วน", เข้าเมื่อ: "แพ้อาหาร", ห้ามทำ: "ห้ามตอบเอง" }),
-  ];
+  return v3StepRows([
+    { step_id: "S1", funnel: "lead", essence: "ทักทาย" },
+    { step_id: "S2_DIRECT", funnel: "qualified", entry: 'บอกจำนวน เช่น "สั่ง"', essence: "สรุปยอด" },
+    { step_id: "S4B", funnel: "won", essence: "ปิดจบ" },
+    { step_id: "H_CLAIM", funnel: "handoff_after_intake", name: "เคลม-คุยก่อน", entry: 'ของเสีย เช่น "ของเสีย"', essence: "ทวนปัญหา" },
+    { step_id: "H1", funnel: "handoff", name: "เคลมด่วน", entry: "แพ้อาหาร" },
+  ]);
 }
 function cfg(extra: [string, string][] = []): Map<string, string> {
   return new Map<string, string>([...Object.entries(PRICING_CONFIG), ...extra]);

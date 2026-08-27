@@ -3,10 +3,12 @@ import { parseReplyIntoMessages } from "@/lib/line";
 import { seedBotLib } from "../harness/botlib-fixture";
 
 /**
- * D-67 ข้อ 6 — ตัวพิสูจน์ v2 freeze (D-66): parseReplyIntoMessages ต้องให้ message ชุดเดิมเป๊ะ
- * 🔴 BASELINE ข้างล่างจับจากโค้ด *ก่อนแก้ D-67* (main fd6923c) ด้วย tmp/capture-line-baseline.ts
- *    — ห้ามอัปเดต fixture ตามโค้ดใหม่โดยไม่มีเหตุ: ถ้าเทสนี้แดง แปลว่าพฤติกรรม delivery เปลี่ยน
- *    ซึ่งกระทบ v2 ที่ frozen อยู่ · การแก้ shared infra ได้เฉพาะแบบที่เทสนี้ยังเขียว (เกณฑ์ D-67)
+ * D-68 · delivery invariants — ล็อกพฤติกรรม `parseReplyIntoMessages` (ชั้นส่งจริงถึงลูกค้า)
+ * เดิมชื่อ line-freeze-baseline (D-67 · พิสูจน์ v2 freeze) — v2 ถูกถอดแล้ว แต่ fixture ชุดนี้
+ * ยังคุ้ม เพราะมันคุมเคสที่**ไม่มีไฟล์อื่นคุม**: จบด้วยรูป→สลับ · รูปล้วน→เติมข้อความปิด ·
+ * เกิน 5→ตัด · quota-saver ยุบ+รูป · [[รูป:{ตัวแปรค้าง}] — กฎเหล็กที่ v3 ใช้เต็ม ๆ
+ * 🔴 BASELINE จับจากโค้ด fd6923c (ก่อน D-67) — เทสนี้แดง = พฤติกรรมที่ลูกค้าได้รับเปลี่ยน
+ *    ห้ามอัปเดต fixture ตามโค้ดใหม่โดยไม่มีเหตุที่เจ้าของเคาะ
  */
 const BASELINE: { name: string; reply: string; collapse: boolean; messages: unknown[] }[] = [
   {
@@ -226,7 +228,7 @@ const BASELINE: { name: string; reply: string; collapse: boolean; messages: unkn
   }
 ];
 
-describe("D-67 · v2-freeze proof — message ชุดเดิมเป๊ะหลังแตะ line.ts", () => {
+describe("D-68 · delivery invariants — message ที่ลูกค้าได้รับต้องคงเดิม", () => {
   beforeEach(() => seedBotLib());
   for (const c of BASELINE) {
     it(c.name, () => {

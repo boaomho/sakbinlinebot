@@ -54,6 +54,7 @@ function adaptSteps(rows: string[][]): string[][] {
   const iNext = idx("ไปประตูไหน");
   const iExample = idx("แนวตอบ");
   const iHandoff = idx("handoff");
+  const iFunnel = idx("funnel_stage"); // D-68: optional · ไม่มี = -1 → ใช้ FIXED_FUNNEL เดิม
   const iStatus = idx("สถานะ");
   if (iId === -1 || iEntry === -1) {
     logMissing("เส้นทางขาย", [iId === -1 ? "step_id" : "", iEntry === -1 ? "เข้าเมื่อ" : ""].filter(Boolean));
@@ -68,7 +69,12 @@ function adaptSteps(rows: string[][]): string[][] {
     const stepId = cleanCell(g(r, iId));
     if (!stepId) continue; // แถวว่าง/หมายเหตุ
     const isHandoff = HANDOFF_FLAG.has(cleanCell(g(r, iHandoff)).toLowerCase());
-    let funnel = isHandoff ? "handoff" : FIXED_FUNNEL[stepId];
+    // 🔴 D-68: คอลัมน์ `funnel_stage` เป็น optional — "มีก็ใช้ ไม่มีก็ FIXED_FUNNEL เดิม"
+    //    เหตุ: FIXED_FUNNEL รู้จักแค่ S1/S2/S2Q/S3/S4 → funnel อีก 4 ค่าที่โค้ดยังอ่านอยู่
+    //    (handoff_after_intake · awaiting_payment · awaiting_address · post_sale) ผลิตไม่ได้เลย = ฟีเจอร์ตายเงียบ
+    //    ชีตจริง "ยังไม่มี" คอลัมน์นี้ → idx = -1 → พฤติกรรม prod วันนี้เหมือนเดิมเป๊ะ (ดู DECISIONS D-68)
+    const explicitFunnel = cleanCell(g(r, iFunnel)).toLowerCase();
+    let funnel = isHandoff ? "handoff" : explicitFunnel || FIXED_FUNNEL[stepId];
     if (!funnel) {
       console.warn(JSON.stringify({ scope: "sheets-v3", event: "unknown-step-funnel", stepId, fallback: DEFAULT_FUNNEL }));
       funnel = DEFAULT_FUNNEL; // เคาะ #2: ประตูใหม่นอกลิสต์ → default qualified + ฟ้อง

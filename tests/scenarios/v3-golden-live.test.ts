@@ -83,12 +83,10 @@ function nextUser(): string {
 }
 
 beforeAll(async () => {
-  process.env.SHEET_SCHEMA = "v3"; // อ่านชีต v3 จริง
   __resetBotLibraryCache();
   __resetConfigCache();
 });
 afterAll(() => {
-  delete process.env.SHEET_SCHEMA;
   if (!RUN || scorecard.length === 0) return;
   const passed = scorecard.filter((r) => r.pass).length;
   const md = [

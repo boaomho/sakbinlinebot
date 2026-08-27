@@ -181,7 +181,6 @@ describe("D-50 · cron แจ้งเลขพัสดุ", () => {
   // 🔴 D-61.C: cron ต้องทำงานเหมือนกันทั้งสองโหมด (ยืนยันข้อ 4 ของเจ้าของ)
   //    cron แตะ schema ทางเดียว = getConfig (CSV_Config) · ไฟล์ Orders คนละไฟล์ (SHEET_ORDERS_ID) ไม่เกี่ยว
   it("🔴 โหมด v3: แจกเลข + แจ้งพัสดุ + greeting ทำงานครบเหมือน v2", async () => {
-    process.env.SHEET_SCHEMA = "v3";
     try {
       harnessOverrides.config = { raw: new Map([["ทักทายรายวัน", "สวัสดีค่ะ "]]) };
       await ensureCustomer(USER);
@@ -194,7 +193,6 @@ describe("D-50 · cron แจ้งเลขพัสดุ", () => {
       expect(custPushes()[0], "greeting D-51 ยังทำงาน").toMatch(/^สวัสดีค่ะ /);
       expect(JSON.stringify(adminPushes())).toContain("แจ้งพัสดุลูกค้าแล้ว ✓");
     } finally {
-      delete process.env.SHEET_SCHEMA;
     }
   });
 });

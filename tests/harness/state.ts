@@ -32,7 +32,7 @@ export const lineCalls = {
  * 🔴 สำคัญ: ถ้า mock lib/orders จะมองไม่เห็น "ค่าลงผิดช่อง" ซึ่งคือบั๊กที่แพงที่สุดของระบบนี้
  */
 export const sheetsCalls = {
-  appends: [] as { range: string; values: string[][] }[],
+  appends: [] as { range: string; values: string[][]; spreadsheetId?: string }[],
   batchUpdates: [] as { range: string; values: string[][] }[],
   /** ค่าที่จะให้ values.get คืน สำหรับ "แถวข้อมูล" A2:.. (เช่น cron ออเดอร์) */
   getReturn: [] as string[][],
@@ -61,6 +61,11 @@ export const geminiState = {
   cursor: 0,
   /** เทิร์นที่ script หมด = ใช้ตัวนี้ (กันเทสพังเงียบ ๆ) */
   overflowCalls: 0,
+  /**
+   * 🔴 D-68: input ที่ pipeline ส่งเข้า Gemini เทิร์นล่าสุด — v3 เรียบเรียงสด สิ่งที่ชีตคุมได้คือ "prompt"
+   * ไม่ใช่ข้อความลูกค้า → เทสที่พิสูจน์ว่า "ชีต/draft มีผล" ต้องวัดที่นี่
+   */
+  lastInput: null as { stepText: string; faqText: string; catalogText: string; stateText: string } | null,
 };
 
 /** ค่า default ของ GeminiTurnOutput — scenario ระบุเฉพาะ field ที่สนใจ */
@@ -104,6 +109,7 @@ export function resetState(): void {
   geminiState.script = [];
   geminiState.cursor = 0;
   geminiState.overflowCalls = 0;
+  geminiState.lastInput = null;
   harnessOverrides.config = {};
 }
 

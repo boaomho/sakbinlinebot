@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 /**
  * 🔴 KI-03 guard (เกิด 4 ครั้ง = ต้องมี tooling ไม่ใช่ discipline)
  *
- * prompt/system.ts เป็น template literal ก้อนใหญ่ (` ... `) — เขียน backtick ในเนื้อ prompt
+ * prompt/system-v3.ts เป็น template literal ก้อนใหญ่ (` ... `) — เขียน backtick ในเนื้อ prompt
  * (เช่น markdown code `order_data`) = ปิด template literal กลางคัน → build พัง และ error
  * ชี้ไปไฟล์ที่ import (lib/gemini.ts) ไม่ใช่ไฟล์ที่ผิด → ตามหายาก เสียเวลาทุกครั้ง
  *
@@ -13,9 +13,9 @@ import { resolve } from "node:path";
  * backtick ที่อนุญาต = template delimiter เท่านั้น (บรรทัด `return \`` หรือ `\`;`)
  * backtick อื่น = อยู่ในเนื้อ prompt = บั๊ก (ใช้ '...' หรือ <...> แทน)
  */
-describe("prompt/system.ts — ห้าม backtick ในเนื้อ prompt (KI-03)", () => {
+describe("prompt/system-v3.ts — ห้าม backtick ในเนื้อ prompt (KI-03)", () => {
   it("backtick ทุกตัวต้องเป็น template delimiter เท่านั้น", () => {
-    const src = readFileSync(resolve(process.cwd(), "prompt/system.ts"), "utf8");
+    const src = readFileSync(resolve(process.cwd(), "prompt/system-v3.ts"), "utf8");
     const suspicious: string[] = [];
 
     src.split("\n").forEach((line, i) => {
@@ -41,8 +41,8 @@ describe("prompt/system.ts — ห้าม backtick ในเนื้อ promp
  * แก้โดยเปลี่ยนชื่อเป็น "ข้อมูลจัดส่งครบ" + แยกจาก "order_data ครบ 6 ช่อง"
  * เทสนี้กันไม่ให้คำนิยามกำกวมแบบเดิมกลับมา
  */
-describe("prompt/system.ts — นิยาม 'ครบ' ต้องไม่กำกวม (กันถอยหลัง bug A)", () => {
-  const src = readFileSync(resolve(process.cwd(), "prompt/system.ts"), "utf8");
+describe("prompt/system-v3.ts — นิยาม 'ครบ' ต้องไม่กำกวม (กันถอยหลัง bug A)", () => {
+  const src = readFileSync(resolve(process.cwd(), "prompt/system-v3.ts"), "utf8");
 
   it("ห้ามมีนิยาม 'ข้อมูลครบ = 3' หรือ 'ครบ(ทั้ง) 3 อย่าง' (ทำให้ order_data ถูกมองเป็นฟอร์มจัดส่ง)", () => {
     const banned = [/ข้อมูลครบ["']?\s*=\s*ครบ\s*3/, /ครบ\s*3\s*อย่าง/, /ครบทั้ง\s*3\s*อย่าง/];
@@ -55,15 +55,14 @@ describe("prompt/system.ts — นิยาม 'ครบ' ต้องไม่
  * 🔴 D-15 guard: AI ต้องไม่คิดเลข/ส่ง "ยอด" อีก (ยอดคิดโดย lib/core/pricing)
  * ถ้ากฎพวกนี้กลับมา = โมเดลจะมั่วยอดเหมือนบั๊กเดิม
  */
-describe("prompt/system.ts — order_data = items · ราคายึดตาราง (D-18)", () => {
-  const src = readFileSync(resolve(process.cwd(), "prompt/system.ts"), "utf8");
+describe("prompt/system-v3.ts — order_data = items · ราคายึดตาราง (D-18)", () => {
+  const src = readFileSync(resolve(process.cwd(), "prompt/system-v3.ts"), "utf8");
 
-  it("order_data JSON example ต้องเป็น items ไม่ใช่ สินค้า/จำนวน/ยอด(ข้อความ)", () => {
-    const example = src.match(/"order_data":\s*\{[^}]*\}/)?.[0] ?? "";
-    expect(example, "order_data example ต้องมี items").toContain("items");
-    expect(example, "order_data example ต้องไม่มีช่อง ยอด").not.toContain('"ยอด"');
-    expect(example, "order_data example ต้องไม่มีช่อง จำนวน(ข้อความ)").not.toContain('"จำนวน"');
-    expect(example, "order_data example ต้องไม่มีช่อง สินค้า(ข้อความ)").not.toContain('"สินค้า"');
+  it("order_data ต้องสั่งเป็น items[{qty}] ไม่ใช่ สินค้า/จำนวน/ยอด(ข้อความ)", () => {
+    // 🔴 D-68: v3 JSON contract เขียน "order_data": {} แล้วอธิบายช่องจริงในบล็อก <งานที่ต้องทำต่อเทิร์น>
+    expect(src, "ต้องสั่ง items[{qty}]").toMatch(/items\[\{qty\}\]|items\[\{ ?qty ?\}\]/);
+    expect(src, "ห้ามสั่งให้ AI ส่งช่อง ยอด (โค้ดคิดเอง)").not.toContain('"ยอด":');
+    expect(src, "ห้ามสั่งให้ AI ส่งช่อง สินค้า(ข้อความ)").not.toContain('"สินค้า":');
   });
 
   it("🔴 D-18: ต้องไม่มีกฎ 2-pass เหลือค้าง (needs_price_quote/items_source/คิดยอดสักครู่)", () => {

@@ -113,7 +113,7 @@ vi.mock("googleapis", async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     append: async (p: any) => {
       if (sheetsCalls.failAppend) throw new Error("simulated Sheets append failure (403/quota)");
-      sheetsCalls.appends.push({ range: p.range, values: p.requestBody.values });
+      sheetsCalls.appends.push({ range: p.range, values: p.requestBody.values, spreadsheetId: p.spreadsheetId });
       return { data: {} };
     },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -172,6 +172,8 @@ vi.mock("@/lib/gemini", async () => {
   return {
     ...actual,
     runSalesTurn: async (input: Parameters<typeof actual.runSalesTurn>[0]) => {
+      // D-68: เก็บ input ไว้ให้เทสตรวจว่า "ชีต/draft เข้า prompt จริงไหม" (v3 ไม่มี verbatim ให้ดูที่ข้อความลูกค้า)
+      geminiState.lastInput = { stepText: input.stepText, faqText: input.faqText, catalogText: input.catalogText, stateText: input.stateText };
       // ยิง Gemini จริงเฉพาะตอนรันมือ: HARNESS_REAL_GEMINI=1 npm test
       if (process.env.HARNESS_REAL_GEMINI === "1") return actual.runSalesTurn(input);
       const scripted = geminiState.script[geminiState.cursor];

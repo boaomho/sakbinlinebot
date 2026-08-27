@@ -10,8 +10,17 @@ export interface OverlayEntry {
   value: string;
 }
 
-/** key column ต่อแท็บ (ใช้หาแถวที่จะทับ · header-driven ไม่ใช้ index ตายตัว) */
+/**
+ * key column ต่อแท็บ (ใช้หาแถวที่จะทับ · header-driven ไม่ใช้ index ตายตัว)
+ * 🔴 D-68: มีทั้งชื่อ **แท็บจริงบนชีต v3** (overlay ทับที่ชั้น batchGet = ชีตดิบ) และชื่อ **shape ภายใน**
+ *    (preview/write ใช้ชื่อภายใน) — ต้องมีครบทั้งสองชุด ไม่งั้น overlay หาแถวไม่เจอแล้วเงียบ
+ *    D-69 (ถอด adapter + ตั้งชื่ออังกฤษ) จะยุบเหลือชุดเดียว
+ */
 const TAB_KEY_COL: Record<string, string> = {
+  // แท็บจริงบนชีต v3
+  เส้นทางขาย: "step_id",
+  ความรู้: "ลูกค้าพูดยังไง",
+  // shape ภายใน (adapter แปลงแล้ว)
   CSV_Step: "step_id",
   CSV_Objections: "objection_id",
   CSV_FAQ: "คำถาม",
@@ -86,8 +95,6 @@ export interface TrainSandbox {
   logs: Record<string, unknown>[];
   /** เฟส ข: draft overlay — ทับค่าชีต BotLibrary ที่ batchGet proxy (เฉพาะ simulator) */
   overlay: OverlayEntry[];
-  /** D-61.C: override schema เฉพาะ session ซ้อม ("v2"|"v3") — undefined = ตาม env (prod) · อ่านผ่าน sheetSchema() เท่านั้น */
-  schema?: "v2" | "v3";
 }
 
 const store = new AsyncLocalStorage<TrainSandbox>();

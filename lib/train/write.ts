@@ -12,11 +12,13 @@ import { VALID_FUNNEL_STAGES, isActiveStatus, statusColumnIndex } from "@/lib/ag
 
 /**
  * lib/train/write.ts — เฟส ค: เขียน draft กลับชีต BotLibrary จริง
- * 🔴 รันนอก sandbox (getSheets = client จริง) · เขียนเฉพาะ SHEET_BOTLIB_ID · ห้ามแตะ Orders (hard guard)
+ * 🔴 รันนอก sandbox (getSheets = client จริง) · เขียนเฉพาะ SHEET_BOTLIB_V3_ID · ห้ามแตะ Orders (hard guard)
  * 🔴 target สดทุกครั้ง: หา row/col จาก key column + ชื่อ header ตอนเขียน (ไม่จำ A1/index)
  */
 
-const EDITABLE_TABS = ["CSV_Step", "CSV_Objections", "CSV_FAQ", "CSV_Vars"];
+// 🔴 D-68: ตัด CSV_Objections — v3 ยุบรวมเข้าแท็บ "ความรู้" แล้ว (adapter คืน [] เสมอ)
+//    เก็บไว้ = เจ้าของแก้แล้วบอทไม่เห็น = กับดักแบบเดียวกับ "แนวตอบ" (D-66 §4)
+const EDITABLE_TABS = ["CSV_Step", "CSV_FAQ", "CSV_Vars"];
 const TRAIN_LOG_TAB = "TRAIN_LOG";
 const TRAIN_LOG_HEADER = ["เวลา", "แท็บ", "key", "คอลัมน์", "ค่าเก่า(ย่อ)", "ค่าใหม่(ย่อ)", "ประเภท"];
 const DRAFT = "draft";
@@ -28,16 +30,33 @@ export type WriteResult =
   | { status: "not_found" };
 
 function botlibId(): string {
-  const id = resolveSpreadsheetId(process.env.SHEET_BOTLIB_ID, "SHEET_BOTLIB_ID");
+  const id = resolveSpreadsheetId(process.env.SHEET_BOTLIB_V3_ID, "SHEET_BOTLIB_V3_ID");
   // hard guard ระดับ spreadsheetId: ต้องไม่ใช่ชีต Orders เด็ดขาด
   try {
     if (process.env.SHEET_ORDERS_ID && id === resolveSpreadsheetId(process.env.SHEET_ORDERS_ID, "SHEET_ORDERS_ID")) {
-      throw new Error("SHEET_BOTLIB_ID ชนกับ SHEET_ORDERS_ID — ปฏิเสธการเขียน (กันเขียนโดนชีตออเดอร์)");
+      throw new Error("SHEET_BOTLIB_V3_ID ชนกับ SHEET_ORDERS_ID — ปฏิเสธการเขียน (กันเขียนโดนชีตออเดอร์)");
     }
   } catch (e) {
     if (String(e).includes("ชนกับ")) throw e; // เฉพาะเคสชนจริง · resolve Orders ไม่ได้ = ข้าม (ยังเขียน BotLibrary ได้)
   }
   return id;
+}
+
+/**
+ * 🔴 D-68: ปิดทางเขียนชีตชั่วคราว — เขียนไม่ได้จริงในโหมด v3 ด้วยเหตุ 2 ชั้น (KI D-65 ฉบับแก้)
+ *   ชั้น 1 ชื่อแท็บใน EDITABLE_TABS ("CSV_Step"/"CSV_FAQ") = ชื่อ **shape ภายใน** ไม่มีอยู่จริงบนชีต v3
+ *          (แท็บจริงชื่อ "เส้นทางขาย"/"ความรู้") → range ที่ประกอบขึ้นชี้แท็บที่ไม่มี
+ *   ชั้น 2 `locateInLib` หา row/col index จาก bundle ที่ **adapter แปลงแล้ว** แล้วเอาไปเขียน **ชีตดิบ**
+ *          (คนละ header คนละลำดับ) → ต่อให้แก้ชื่อแท็บถูก ก็จะเขียนทับผิดช่องแบบเงียบ
+ *          (เช่น "ตัวอย่างคำตอบ" ตกใส่คอลัมน์ "handoff")
+ * ชั้น 2 จะหายเองเมื่อ D-69 ถอด adapter (shape ภายใน = shape ชีตดิบ) → ค่อยเปิดเขียนที่นั่น
+ * 🔴 จนกว่าจะถึงตอนนั้น: throw ก่อนแตะ Google เสมอ — ยอมให้กดไม่ได้ ดีกว่าเขียนผิดช่องในชีตจริง
+ */
+const V3_WRITE_DISABLED =
+  "ยังเขียนชีต v3 ไม่ได้ (ชื่อแท็บและพิกัดคอลัมน์ยังไม่ตรงกับชีตจริง) — แก้ในชีตโดยตรงไปก่อน · จะรองรับใน D-69";
+
+function assertWritable(): void {
+  throw new Error(V3_WRITE_DISABLED);
 }
 
 function assertEditable(tab: string, column: string): void {
@@ -99,6 +118,7 @@ export async function writeCell(tab: string, key: string, column: string, newVal
   const findings = lintPattern(patternFromColumns(tab, merged), { config, lib, payment: "", now: new Date(), trigger: triggerTextForTab(tab, merged), ...h1FlagsForRow(tab, merged), varName: tab === "CSV_Vars" ? key : undefined });
   if (findings.some((f) => f.level === "block")) return { status: "lint", lint: findings };
 
+  assertWritable(); // 🔴 D-68: ปิดทางเขียน — throw ก่อนแตะ Google
   const spreadsheetId = botlibId(); // hard guard: BotLibrary เท่านั้น
   const range = `${tab}!${columnLetter(loc.colIndex)}${loc.rowIndex + 1}`; // A1 สดจาก key+header
   await getSheets().spreadsheets.values.batchUpdate({
@@ -222,6 +242,7 @@ export async function appendRow(tab: string, cols: Record<string, string>, origi
     return typeof v === "string" ? v.slice(0, 4000) : "";
   });
 
+  assertWritable(); // 🔴 D-68: ปิดทางเขียน — throw ก่อนแตะ Google
   const spreadsheetId = botlibId(); // hard guard BotLibrary เท่านั้น
   await getSheets().spreadsheets.values.append({
     spreadsheetId, range: `${tab}!A:Z`, valueInputOption: "USER_ENTERED", requestBody: { values: [rowArr] },
@@ -248,6 +269,7 @@ export async function setRowStatus(tab: string, key: string, toStatus: "live" | 
   if (rowIndex === -1) return { status: "not_found" };
 
   const current = rows[rowIndex][statusIdx] ?? "";
+  assertWritable(); // 🔴 D-68: ปิดทางเขียน — throw ก่อนแตะ Google
   const spreadsheetId = botlibId();
   const range = `${tab}!${columnLetter(statusIdx)}${rowIndex + 1}`;
   await getSheets().spreadsheets.values.batchUpdate({

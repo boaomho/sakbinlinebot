@@ -2,7 +2,6 @@ import { getSheets } from "./client";
 import { resolveSpreadsheetId } from "@/lib/core/sheet-id";
 import { validateStepFunnelStages, VALID_FUNNEL_STAGES } from "@/lib/agent/inject";
 import { getTrainSandbox } from "@/lib/train/sandbox";
-import { isSchemaV3 } from "@/lib/schema-mode";
 import { V3_SHEET_TABS, adaptV3Bundle } from "./adapter-v3";
 
 /**
@@ -57,10 +56,9 @@ export async function loadBotLibrary(): Promise<BotLibrary | null> {
     return cache.bundle;
   }
 
-  // 🔴 D-61.B: dispatch v2/v3 ต้นทางเดียว — v3 อ่านไฟล์ใหม่ (SHEET_BOTLIB_V3_ID) แท็บ v3 → adapter คืน shape เดิม
-  //    consumers ไม่รู้จัก v3 · cache/sandbox semantics เดิมทุกบรรทัด (ต่างแค่ id + ranges + transform)
-  const v3 = isSchemaV3();
-  const envKey = v3 ? "SHEET_BOTLIB_V3_ID" : "SHEET_BOTLIB_ID";
+  // 🔴 D-68: v3 เส้นเดียว — อ่าน SHEET_BOTLIB_V3_ID เสมอ (ตัด dispatch v2/v3 ทิ้ง)
+  //    adapter ยังคงอยู่เป็นตัวแปลงแท็บ v3 → shape ภายใน (จะถูกถอดใน D-69 พร้อมเปลี่ยนชื่อภายในเป็นอังกฤษ)
+  const envKey = "SHEET_BOTLIB_V3_ID";
   let spreadsheetId: string;
   try {
     spreadsheetId = resolveSpreadsheetId(process.env[envKey], envKey);
@@ -70,26 +68,17 @@ export async function loadBotLibrary(): Promise<BotLibrary | null> {
   }
 
   try {
-    const tabs: readonly string[] = v3 ? V3_SHEET_TABS : BOTLIB_TABS;
     const res = await getSheets().spreadsheets.values.batchGet({
       spreadsheetId,
-      ranges: tabs.map((t) => `${t}!A:Z`),
+      ranges: V3_SHEET_TABS.map((t) => `${t}!A:Z`),
     });
     const valueRanges = res.data.valueRanges ?? [];
     // "order of ValueRanges is the same as requested ranges" (ยืนยันจาก types) → map ตาม index
     const rawByTab: Record<string, string[][]> = {};
-    tabs.forEach((tab, i) => {
+    V3_SHEET_TABS.forEach((tab, i) => {
       rawByTab[tab] = (valueRanges[i]?.values as string[][] | undefined) ?? [];
     });
-    let bundle: BotLibrary;
-    if (v3) {
-      bundle = adaptV3Bundle(rawByTab); // normalize สถานะ (ว่าง=draft) + map แท็บ/คอลัมน์ — จุดเดียว
-    } else {
-      bundle = emptyBundle();
-      BOTLIB_TABS.forEach((tab) => {
-        bundle[tab] = rawByTab[tab] ?? [];
-      });
-    }
+    const bundle: BotLibrary = adaptV3Bundle(rawByTab); // normalize สถานะ (ว่าง=draft) + map แท็บ/คอลัมน์ — จุดเดียว
     if (!inSandbox) cache = { bundle, fetchedAt: now }; // 🔴 sandbox ไม่เขียน cache (กัน draft รั่ว prod)
     logStepFunnelStageIssues(bundle.CSV_Step); // Step 6: validate funnel_stage ครั้งเดียวต่อ load (ไม่ spam per-turn)
     return bundle;

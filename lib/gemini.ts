@@ -1,7 +1,5 @@
 import { GoogleGenAI, ThinkingLevel, Type, HarmCategory, HarmBlockThreshold } from "@google/genai";
-import { buildStaticSystemInstruction, buildUserContent } from "@/prompt/system";
-import { buildSalesSystemV3 } from "@/prompt/system-v3";
-import { isSchemaV3 } from "@/lib/schema-mode";
+import { buildSalesSystemV3, buildUserContent } from "@/prompt/system-v3";
 import { AppConfig, defaultReply } from "./config";
 import { AiOrderItem } from "./core/pricing";
 
@@ -296,19 +294,18 @@ async function runExtraction(input: GeminiTurnInput): Promise<GeminiTurnOutput |
   }
 }
 
-/** D-61.A: เลือกสมองตามโหมด — จุดเดียว (v2 = จำแนกและสกัด/verbatim · v3 = นักขาย CX เรียบเรียงสด) */
-function selectSystemInstruction(input: GeminiTurnInput): string {
-  const p = {
+/** D-68: v3 เหลือสมองเดียว — ไม่มีตัวเลือกอีกแล้ว (v2 ถูกถอด) */
+function buildSystemInstruction(input: GeminiTurnInput): string {
+  return buildSalesSystemV3({
     botName: input.config.botName,
     shopName: input.config.shopName,
     personaGender: input.config.personaGender,
     useEmoji: input.config.useEmoji,
-  };
-  return isSchemaV3() ? buildSalesSystemV3(p) : buildStaticSystemInstruction(p);
+  });
 }
 
 export async function runSalesTurn(input: GeminiTurnInput): Promise<GeminiTurnOutput> {
-  const systemInstruction = selectSystemInstruction(input);
+  const systemInstruction = buildSystemInstruction(input);
 
   const userText = buildUserContent({
     configText: input.configText,

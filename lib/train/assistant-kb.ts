@@ -10,10 +10,11 @@ import { statusColumnIndex, isActiveStatus } from "@/lib/agent/inject";
  * header จริงทุกแท็บ + key/keywords ที่มีอยู่ (กันซ้ำ/ชน) + claims blocklist + ข้อมูลสินค้า
  */
 
-export const ASSISTANT_TABS = ["CSV_FAQ", "CSV_Objections", "CSV_Step", "CSV_Vars"] as const;
+// 🔴 D-68: ตัด CSV_Objections (v3 ยุบเข้าแท็บ "ความรู้" — adapter คืน [] เสมอ)
+export const ASSISTANT_TABS = ["CSV_FAQ", "CSV_Step", "CSV_Vars"] as const;
 
 /** คอลัมน์ "คีย์เวิร์ด/สิ่งที่ลูกค้าพูด" ต่อแท็บ — โชว์ให้ AI กันชน substring */
-const KW_COL: Record<string, string> = { CSV_FAQ: "keywords", CSV_Objections: "ลูกค้าพูดแบบไหนบ้าง" };
+const KW_COL: Record<string, string> = { CSV_FAQ: "keywords" };
 
 function tabSummary(tab: string, rows: string[][]): string {
   if (rows.length < 1) return `${tab}: (โหลดไม่ได้)`;

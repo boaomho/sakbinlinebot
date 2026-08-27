@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { sheetsCalls } from "../harness/state";
+import { TAB } from "../harness/botlib-fixture";
 import { adaptV3Bundle } from "@/lib/sheets/adapter-v3";
 import { loadBotLibrary, __resetBotLibraryCache } from "@/lib/sheets/loader";
 import { buildStepInjection, buildCatalogInjection } from "@/lib/agent/inject";
@@ -83,15 +84,16 @@ describe("D-61.B · adaptV3Bundle (pure)", () => {
   });
 });
 
-describe("D-61.B · loader dispatch v3 (SHEET_BOTLIB_V3_ID + แท็บ v3 → adapter)", () => {
+describe("D-61.B · loader อ่านชีต v3 (SHEET_BOTLIB_V3_ID + แท็บ v3 → adapter)", () => {
+  // 🔴 D-68: SHEET_BOTLIB_V3_ID เป็น id เดียวของระบบแล้ว — ห้ามลบทิ้งตอนจบ (describe อื่นจะโหลดชีตไม่ได้) · คืนค่าเดิมแทน
+  const savedId = process.env.SHEET_BOTLIB_V3_ID;
   beforeEach(() => {
-    process.env.SHEET_SCHEMA = "v3";
     process.env.SHEET_BOTLIB_V3_ID = "1v3testspreadsheetid0000000000000000000000";
     __resetBotLibraryCache();
   });
   afterEach(() => {
-    delete process.env.SHEET_SCHEMA;
-    delete process.env.SHEET_BOTLIB_V3_ID;
+    if (savedId === undefined) delete process.env.SHEET_BOTLIB_V3_ID;
+    else process.env.SHEET_BOTLIB_V3_ID = savedId;
     __resetBotLibraryCache();
   });
 
@@ -135,7 +137,7 @@ describe("D-61.B · catalog allergen (เคาะ #4) + config เข้า pro
   });
   it("parse คอลัมน์ 'เข้า prompt' จากชีต (header-driven ไม่ผูกโหมด)", async () => {
     sheetsCalls.botLibReturn = {
-      CSV_Config: [
+      [TAB.config]: [
         ["key", "ค่าที่ตั้ง", "คำอธิบาย", "เข้า prompt"],
         ["ชื่อบอท", "ปลาทู", "", "ใช่"],
         ["debounce_รวบคำถาม", "6", "", ""],

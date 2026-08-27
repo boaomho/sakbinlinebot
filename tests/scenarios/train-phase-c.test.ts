@@ -1,21 +1,20 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { sheetsCalls } from "../harness/state";
-import { seedBotLib } from "../harness/botlib-fixture";
+import { seedBotLib, v3StepRows, TAB } from "../harness/botlib-fixture";
 import { diffCell, writeCell } from "@/lib/train/write";
 import { loadBotLibrary } from "@/lib/sheets/loader";
-import { columnLetter } from "@/lib/sheets/columns";
 
 /**
  * T-STUDIO เฟส ค — เขียนกลับชีต: target ด้วย key+header · conflict กัน · TRAIN_LOG จด · Orders บล็อก · lint gate
  * 🔴 write.ts รันนอก sandbox → getSheets() = mock (real client path) · ไม่แตะ Orders
  */
 
-const STEP_H = ["step_id", "funnel_stage", "ชื่อประตู", "เข้าเมื่อ", "ไปประตูถัดไปเมื่อ", "ความรู้สึกลูกค้าตอนนี้", "ทำไมประตูนี้สำคัญ", "หลักการนำพา", "ห้ามทำ", "ต้องเก็บข้อมูล", "ตัวอย่างคำตอบ", "ตัวอย่างประโยคปิดท้าย", "คิดเอง"];
-function r(step_id: string, o: Partial<Record<string, string>> = {}): string[] {
-  return STEP_H.map((h) => (h === "step_id" ? step_id : o[h] ?? ""));
-}
+/** 🔴 D-68: seed "ชีตดิบ v3" ผ่านเส้นทางเดียวกับ prod (loader → adapter) · guide = แนวตอบ → "ตัวอย่างคำตอบ" ใน shape ภายใน */
 function steps(): string[][] {
-  return [STEP_H, r("S1", { ตัวอย่างคำตอบ: "สวัสดีค่ะ", คิดเอง: "ปิด" }), r("S2", { ตัวอย่างคำตอบ: "รับออเดอร์แล้วค่ะ", คิดเอง: "ปิด" })];
+  return v3StepRows([
+    { step_id: "S1", guide: "สวัสดีค่ะ" },
+    { step_id: "S2", guide: "รับออเดอร์แล้วค่ะ" },
+  ]);
 }
 
 beforeAll(() => {
@@ -23,25 +22,24 @@ beforeAll(() => {
   process.env.TRAIN_PASSWORD = "test-train-pass";
 });
 
-describe("เฟส ค · เขียนถูกเซลล์ผ่าน key + header (A1 สด ไม่จำ index)", () => {
-  it("🔴 writeCell S2/ตัวอย่างคำตอบ → batchUpdate range = คอลัมน์+แถวที่หาสดจาก header", async () => {
+describe("🔴 D-68 · เขียนชีต v3 ยังไม่รองรับ — throw ก่อนแตะ Google (กันเขียนผิดช่อง)", () => {
+  it("writeCell → throw ข้อความบอกสาเหตุ+ทางออก · ไม่มี batchUpdate/append ไปถึงชีตเลย", async () => {
     seedBotLib({ stepRows: steps() });
-    const res = await writeCell("CSV_Step", "S2", "ตัวอย่างคำตอบ", "รับออเดอร์แล้วนะคะ 😊", "รับออเดอร์แล้วค่ะ");
-    expect(res.status).toBe("ok");
-    // ตัวอย่างคำตอบ = index 10 → คอลัมน์ K · S2 = แถวอาเรย์ 2 → sheet row 3
-    const expectedRange = `CSV_Step!${columnLetter(10)}3`;
-    const upd = sheetsCalls.batchUpdates.find((b) => b.range === expectedRange);
-    expect(upd, "เขียนตรงเซลล์ K3").toBeTruthy();
-    expect(upd!.values[0][0]).toBe("รับออเดอร์แล้วนะคะ 😊");
+    sheetsCalls.batchUpdates.length = 0;
+    sheetsCalls.appends.length = 0;
+    await expect(writeCell("CSV_Step", "S2", "ตัวอย่างคำตอบ", "ใหม่", "รับออเดอร์แล้วค่ะ")).rejects.toThrow(/ยังเขียนชีต v3 ไม่ได้/);
+    expect(sheetsCalls.batchUpdates, "ห้ามแตะชีต").toHaveLength(0);
+    expect(sheetsCalls.appends, "ห้ามแม้แต่ TRAIN_LOG").toHaveLength(0);
   });
 
-  it("TRAIN_LOG ถูก append (เวลา/แท็บ/key/คอลัมน์/เก่า/ใหม่)", async () => {
+  it("appendRow / setRowStatus → throw เหมือนกัน · ไม่แตะชีต", async () => {
+    const { appendRow, setRowStatus } = await import("@/lib/train/write");
     seedBotLib({ stepRows: steps() });
-    await writeCell("CSV_Step", "S1", "ตัวอย่างคำตอบ", "สวัสดีจ้า", "สวัสดีค่ะ");
-    const log = sheetsCalls.appends.find((a) => a.range.startsWith("TRAIN_LOG"));
-    expect(log, "จด TRAIN_LOG").toBeTruthy();
-    const row = log!.values[log!.values.length - 1];
-    expect(row.slice(1, 6)).toEqual(["CSV_Step", "S1", "ตัวอย่างคำตอบ", "สวัสดีค่ะ", "สวัสดีจ้า"]);
+    sheetsCalls.batchUpdates.length = 0;
+    sheetsCalls.appends.length = 0;
+    await expect(appendRow("CSV_Vars", { ตัวแปร: "{ใหม่}", ค่า: "x" })).rejects.toThrow(/ยังเขียนชีต v3 ไม่ได้/);
+    await expect(setRowStatus("CSV_Step", "S1", "live")).rejects.toThrow(/ยังเขียนชีต v3 ไม่ได้/);
+    expect([...sheetsCalls.batchUpdates, ...sheetsCalls.appends]).toHaveLength(0);
   });
 });
 
@@ -93,9 +91,10 @@ describe("เฟส ค · diffCell อ่านค่าปัจจุบั�
     seedBotLib({ stepRows: steps() });
     await loadBotLibrary(); // ทำให้มี cache ค่าเดิม "สวัสดีค่ะ"
     // จำลอง: เจ้าของแก้ชีต (หรือเพิ่งเขียนผ่าน T-STUDIO) → ชีตเป็นค่าใหม่
-    const edited = steps();
-    edited[1][STEP_H.indexOf("ตัวอย่างคำตอบ")] = "สวัสดีค่ะ (แก้ในชีตแล้ว)";
-    sheetsCalls.botLibReturn.CSV_Step = edited;
+    sheetsCalls.botLibReturn[TAB.steps] = v3StepRows([
+      { step_id: "S1", guide: "สวัสดีค่ะ (แก้ในชีตแล้ว)" },
+      { step_id: "S2", guide: "รับออเดอร์แล้วค่ะ" },
+    ]);
     const d = await diffCell("CSV_Step", "S1", "ตัวอย่างคำตอบ");
     expect(d.old, "reset cache ก่อนอ่าน → ค่าล่าสุด ไม่ใช่ cache เก่า (client ใช้ตอนเปิด editor)").toBe("สวัสดีค่ะ (แก้ในชีตแล้ว)");
   });

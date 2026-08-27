@@ -3,7 +3,6 @@ import { guardTrainRequest } from "@/lib/train/auth";
 import { getSheets } from "@/lib/sheets/client";
 import { resolveSpreadsheetId } from "@/lib/core/sheet-id";
 import { V3_SHEET_TABS, validateV3Bundle } from "@/lib/sheets/adapter-v3";
-import { sheetSchema } from "@/lib/schema-mode";
 import { getConfig } from "@/lib/config";
 
 export const maxDuration = 20;
@@ -19,10 +18,9 @@ export async function POST(req: NextRequest) {
   const guard = guardTrainRequest(req);
   if (guard) return guard;
 
-  const mode = sheetSchema(); // โหมดที่ deploy นี้ใช้จริง (prod)
   const idRaw = process.env.SHEET_BOTLIB_V3_ID;
   if (!idRaw) {
-    return NextResponse.json({ mode, v3Configured: false, tabs: [], placeholders: [], error: "ยังไม่ได้ตั้ง SHEET_BOTLIB_V3_ID" });
+    return NextResponse.json({ v3Configured: false, tabs: [], placeholders: [], error: "ยังไม่ได้ตั้ง SHEET_BOTLIB_V3_ID" });
   }
 
   try {
@@ -47,9 +45,8 @@ export async function POST(req: NextRequest) {
       if (PLACEHOLDER_KEYS.includes(k) && (v === "" || v.startsWith("("))) placeholders.push(k);
     }
 
-    const config = await getConfig(); // โหมดปัจจุบันของ deploy (เช็คว่าอ่านชีตไหนอยู่)
+    const config = await getConfig();
     return NextResponse.json({
-      mode,
       v3Configured: true,
       tabs,
       placeholders,
@@ -58,6 +55,6 @@ export async function POST(req: NextRequest) {
     });
   } catch (error) {
     console.error(JSON.stringify({ scope: "sheets-v3", warning: "schema check failed", error: String(error).slice(0, 200) }));
-    return NextResponse.json({ mode, v3Configured: true, tabs: [], placeholders: [], error: String(error).slice(0, 160) }, { status: 200 });
+    return NextResponse.json({ v3Configured: true, tabs: [], placeholders: [], error: String(error).slice(0, 160) }, { status: 200 });
   }
 }

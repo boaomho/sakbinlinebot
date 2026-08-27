@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import crypto from "node:crypto";
 import { scriptGemini, turn, lineCalls } from "../harness/state";
-import { seedBotLib } from "../harness/botlib-fixture";
+import { seedBotLib, v3StepRows } from "../harness/botlib-fixture";
 import { ensureCustomer, getCustomer } from "@/lib/db";
 import { verifyMetaSignature } from "@/lib/channel/meta";
 import { metaVerifyChallenge, processMetaWebhook, metaUserId } from "@/lib/channel/meta-webhook";
@@ -17,10 +17,9 @@ const APP_ID = "111222333";
 const PAGE_ID = "999888777";
 const PSID = "psid-abc-001";
 
-const STEP_H = ["step_id", "funnel_stage", "ชื่อประตู", "เข้าเมื่อ", "ไปประตูถัดไปเมื่อ", "ความรู้สึกลูกค้าตอนนี้", "ทำไมประตูนี้สำคัญ", "หลักการนำพา", "ห้ามทำ", "ต้องเก็บข้อมูล", "ตัวอย่างคำตอบ", "ตัวอย่างประโยคปิดท้าย", "คิดเอง"];
+/** S1 (v3) — v3 เรียบเรียงสดเสมอ ใช้ reply ของ AI (scripted) */
 function stepSheet(): string[][] {
-  const r = STEP_H.map((h) => (h === "step_id" ? "S1" : h === "funnel_stage" ? "lead" : h === "คิดเอง" ? "เปิด" : ""));
-  return [STEP_H, r]; // S1 คิดเอง=เปิด → ใช้ reply ของ AI (scripted)
+  return v3StepRows([{ step_id: "S1", essence: "ทักทาย" }]);
 }
 
 const graphCalls: { url: string; body: Record<string, unknown> }[] = [];

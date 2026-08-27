@@ -2,7 +2,9 @@ import { describe, it, expect } from "vitest";
 import { resolveColumns, cell } from "@/lib/sheets/columns";
 import { cleanHeader } from "@/lib/sheets/clean";
 import { loadBotLibrary, BOTLIB_TABS } from "@/lib/sheets/loader";
+import { V3_SHEET_TABS } from "@/lib/sheets/adapter-v3";
 import { sheetsCalls } from "../harness/state";
+import { TAB, v3StepRows, v3KnowRows } from "../harness/botlib-fixture";
 
 /**
  * Part 1 — Sheet loader ตัวเดียว + header-driven (CONTRACTS C1)
@@ -68,33 +70,38 @@ describe("resolveColumns — header-driven ทนสลับ/แทรก/เ�
 });
 
 describe("loadBotLibrary — batchGet 1 call ทุกแท็บ + cache 60 วิ", () => {
-  it("ยิง batchGet ครบ 8 แท็บใน 1 call แล้ว map กลับตามชื่อแท็บ", async () => {
+  it("ยิง batchGet ครบทุกแท็บ v3 ใน 1 call แล้ว map ผ่าน adapter กลับเป็น shape ภายใน", async () => {
     sheetsCalls.botLibReturn = {
-      CSV_Step: [["step_id", "funnel_stage"], ["S1", "lead"]],
-      CSV_FAQ: [["คำถาม", "keywords"], ["ส่งกี่วัน", "ส่ง,กี่วัน"]],
+      [TAB.steps]: v3StepRows([{ step_id: "S1", entry: "ทัก" }]),
+      [TAB.knowledge]: v3KnowRows([{ say: "ส่งกี่วัน", keyword: "ส่ง,กี่วัน" }]),
     };
 
     const lib = await loadBotLibrary();
     expect(lib).not.toBeNull();
-    expect(sheetsCalls.lastBatchGetRanges, "1 call ขอครบ 8 แท็บ").toHaveLength(8);
-    expect(sheetsCalls.lastBatchGetRanges).toContain("CSV_Step!A:Z");
-    expect(lib!["CSV_Step"][1]).toEqual(["S1", "lead"]);
-    expect(lib!["CSV_FAQ"][0]).toEqual(["คำถาม", "keywords"]);
+    expect(sheetsCalls.lastBatchGetRanges, "1 call ขอครบทุกแท็บ v3").toHaveLength(V3_SHEET_TABS.length);
+    expect(sheetsCalls.lastBatchGetRanges).toContain(`${TAB.steps}!A:Z`);
+    expect(sheetsCalls.lastBatchGetRanges, "🔴 D-68: ไม่ขอแท็บ v2 แล้ว").not.toContain("CSV_Step!A:Z");
+    // adapter แปลงเป็น shape ภายใน: S1 → funnel lead (FIXED_FUNNEL · ชีตไม่มีคอลัมน์ funnel_stage)
+    expect(lib!["CSV_Step"][1][0]).toBe("S1");
+    expect(lib!["CSV_Step"][1][1]).toBe("lead");
+    expect(lib!["CSV_FAQ"][1][0]).toBe("ส่งกี่วัน");
     // แท็บที่ไม่ได้ set → แถวว่าง (ไม่ throw)
     expect(lib!["CSV_Promo"]).toEqual([]);
   });
 
   it("cache: call ที่ 2 ภายใน 60 วิ ไม่ยิง Google ซ้ำ", async () => {
-    sheetsCalls.botLibReturn = { CSV_Step: [["step_id"]] };
+    sheetsCalls.botLibReturn = { [TAB.steps]: v3StepRows([{ step_id: "S1" }]) };
     await loadBotLibrary();
     sheetsCalls.lastBatchGetRanges = []; // ล้างเพื่อดูว่ามีการยิงซ้ำมั้ย
     await loadBotLibrary();
     expect(sheetsCalls.lastBatchGetRanges, "hit cache = ไม่ยิงซ้ำ").toHaveLength(0);
   });
 
-  it("BOTLIB_TABS = 8 แท็บตาม CONTRACTS", () => {
+  it("BOTLIB_TABS = คีย์ของ shape ภายใน (8 ช่อง) · V3_SHEET_TABS = แท็บจริงบนชีต (6)", () => {
     expect(BOTLIB_TABS).toHaveLength(8);
     expect(BOTLIB_TABS).toContain("CSV_Config");
-    expect(BOTLIB_TABS).toContain("CSV_Objections");
+    expect(BOTLIB_TABS).toContain("CSV_Objections"); // ยังเป็นคีย์ใน shape (adapter คืน [] เสมอ)
+    expect(V3_SHEET_TABS).toHaveLength(6);
+    expect(V3_SHEET_TABS).toContain(TAB.steps);
   });
 });

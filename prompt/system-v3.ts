@@ -6,6 +6,8 @@
  * JSON contract = RESPONSE_SCHEMA เดิมเป๊ะ (reply/stage/tags_add/handoff/.../objection_detected) — pipeline เดิมอ่านต่อได้ทุก field
  */
 
+import { bangkokShift } from "@/lib/core/time";
+
 export interface SalesSystemV3Params {
   botName: string;
   shopName: string;
@@ -140,4 +142,99 @@ ${botName}ส่งโปรโมชั่นเพิ่มเติมให�
 - ราคา/ยอดทุกตัว: หยิบจากตารางราคาที่แนบมาเท่านั้น ห้ามคำนวณเอง
 - tags_add: ไม่มี=[] · "รอโอน"/"รอที่อยู่" ระบบจัดการเอง ห้ามใส่
 </รูปแบบคำตอบ>`;
+}
+
+// ═════ D-68: ย้ายมาจาก prompt/system.ts (v2 ถูกถอด) — ย้ายเฉย ๆ ไม่แก้เนื้อ ═════
+// user content = ส่วนข้อมูลต่อเทิร์น · แยกจาก systemInstruction เสมอ (กัน prompt injection · CLAUDE.md)
+
+export interface UserContentParams {
+  configText: string;
+  stepText: string;
+  faqText: string;
+  /** สินค้า+ตารางราคาสำเร็จรูป (จาก CSV_Products/CSV_Promo) — บอทหยิบเลขนี้เท่านั้น ห้ามคิดเอง (C6) */
+  catalogText: string;
+  /** ข้อโต้แย้งที่ตรวจพบ + สารบัญ (จาก CSV_Objections) — ใช้จำแนก objection_detected (D-27) · "" = ไม่มี */
+  objectionText: string;
+  stateText: string;
+  historyText: string;
+  userMessage: string;
+}
+
+const THAI_DAYS = [
+  "วันอาทิตย์",
+  "วันจันทร์",
+  "วันอังคาร",
+  "วันพุธ",
+  "วันพฤหัสบดี",
+  "วันศุกร์",
+  "วันเสาร์",
+];
+const THAI_MONTHS = [
+  "มกราคม",
+  "กุมภาพันธ์",
+  "มีนาคม",
+  "เมษายน",
+  "พฤษภาคม",
+  "มิถุนายน",
+  "กรกฎาคม",
+  "สิงหาคม",
+  "กันยายน",
+  "ตุลาคม",
+  "พฤศจิกายน",
+  "ธันวาคม",
+];
+
+/**
+ * เวลาไทย (UTC+7) รูปแบบอ่านง่ายสำหรับใส่ใน prompt เช่น
+ * "วันจันทร์ที่ 13 กรกฎาคม 2569 เวลา 14:32 น. (เวลาไทย)"
+ * คำนวณจาก UTC + 7 ชม. แล้วอ่านด้วย getUTC* เพื่อไม่พึ่ง timezone ของเซิร์ฟเวอร์
+ */
+export function formatThaiNow(now: Date = new Date()): string {
+  const th = bangkokShift(now); // เวลาไทย (D-37 · ฐานเดียว)
+  const dayName = THAI_DAYS[th.getUTCDay()];
+  const day = th.getUTCDate();
+  const monthName = THAI_MONTHS[th.getUTCMonth()];
+  const buddhistYear = th.getUTCFullYear() + 543;
+  const hh = String(th.getUTCHours()).padStart(2, "0");
+  const mm = String(th.getUTCMinutes()).padStart(2, "0");
+  return `${dayName}ที่ ${day} ${monthName} ${buddhistYear} เวลา ${hh}:${mm} น. (เวลาไทย)`;
+}
+
+/**
+ * ส่วนข้อมูลที่เปลี่ยนทุกเทิร์น (Config/Step/FAQ/สถานะ/ประวัติ + ข้อความลูกค้า) — ส่งเป็น
+ * user content ของ Gemini เสมอ ไม่ใช่ systemInstruction เพื่อให้โมเดลแยกชัดว่าอะไรคือ
+ * "ข้อมูล" อะไรคือ "คำสั่งระบบที่เชื่อถือได้" (กัน prompt injection ตาม CLAUDE.md)
+ */
+export function buildUserContent(params: UserContentParams): string {
+  const { configText, stepText, faqText, catalogText, objectionText, stateText, historyText, userMessage } = params;
+
+  return `<ข้อมูลที่ระบบจะส่งให้>
+<ข้อมูล Config>
+${configText}
+</ข้อมูล Config>
+<ข้อมูลสเต็ป>
+${stepText}
+</ข้อมูลสเต็ป>
+<ข้อมูล FAQ>
+${faqText}
+</ข้อมูล FAQ>
+<ข้อมูลสินค้าและราคา>
+${catalogText}
+</ข้อมูลสินค้าและราคา>
+<ข้อโต้แย้งและวิธีรับมือ>
+${objectionText || "(ไม่มีข้อโต้แย้งที่ตรงกับข้อความลูกค้า)"}
+</ข้อโต้แย้งและวิธีรับมือ>
+<เวลาปัจจุบัน>
+${formatThaiNow()}
+</เวลาปัจจุบัน>
+<สถานะลูกค้า>
+${stateText}
+</สถานะลูกค้า>
+<ประวัติสนทนา>
+${historyText}
+</ประวัติสนทนา>
+</ข้อมูลที่ระบบจะส่งให้>
+<ข้อความลูกค้า>
+${userMessage}
+</ข้อความลูกค้า>`;
 }

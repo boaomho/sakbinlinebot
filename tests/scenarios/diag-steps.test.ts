@@ -3,15 +3,16 @@ import { NextRequest } from "next/server";
 import { GET } from "@/app/api/diag/steps/route";
 import { sheetsCalls } from "../harness/state";
 import { __resetBotLibraryCache } from "@/lib/sheets/loader";
+import { TAB, v3StepRows } from "../harness/botlib-fixture";
 
 /**
  * Step 6 · diag endpoint /api/diag/steps — เช็ค typo funnel_stage instant · read-only · auth CRON_SECRET
  */
-const STEP_HEADER = ["step_id", "funnel_stage", "ชื่อประตู", "กรณี", "เข้าเมื่อ", "ความรู้สึกลูกค้าตอนนี้", "ทำไมประตูนี้สำคัญ", "หลักการนำพา", "ห้ามทำ", "ต้องเก็บข้อมูล", "ตัวอย่างคำตอบ (บอลลูน)", "ตัวอย่างประโยคปิดท้าย", "ติดแท็ก", "ไปประตูถัดไปเมื่อ", "funnel_label", "สถานะ"];
-const pad = (id: string, funnel: string) => STEP_HEADER.map((h) => (h === "step_id" ? id : h === "funnel_stage" ? funnel : ""));
+/** 🔴 D-68: seed "ชีตดิบ v3" ผ่านเส้นทางเดียวกับ prod (loader → adapter) — typo funnel ใส่ผ่านคอลัมน์ funnel_stage */
+const pad = (id: string, funnel: string) => ({ step_id: id, funnel, entry: "x" });
 
-function seedSteps(rows: string[][]): void {
-  sheetsCalls.botLibReturn = { CSV_Step: rows } as Record<string, string[][]>;
+function seedSteps(steps: { step_id: string; funnel: string }[]): void {
+  sheetsCalls.botLibReturn = { [TAB.steps]: v3StepRows(steps) } as Record<string, string[][]>;
 }
 function req(auth?: string): NextRequest {
   return new NextRequest("http://x/api/diag/steps", { headers: auth ? { authorization: auth } : {} });
@@ -24,13 +25,13 @@ beforeEach(() => {
 
 describe("GET /api/diag/steps (Step 6)", () => {
   it("🔴 ไม่มี auth → 401 (กันคนนอก)", async () => {
-    seedSteps([STEP_HEADER, pad("S1", "lead")]);
+    seedSteps([pad("S1", "lead")]);
     const res = await GET(req());
     expect(res.status).toBe(401);
   });
 
   it("auth ถูก + มี typo → คืนแถวผิด (value/stepId/severity/allowed)", async () => {
-    seedSteps([STEP_HEADER, pad("S1", "lead"), pad("H5", "handof"), pad("X9", "quotedd")]);
+    seedSteps([pad("S1", "lead"), pad("H5", "handof"), pad("X9", "quotedd")]);
     const res = await GET(req(`Bearer ${process.env.CRON_SECRET}`));
     const body = await res.json();
     expect(body.status).toBe("invalid");
@@ -41,7 +42,7 @@ describe("GET /api/diag/steps (Step 6)", () => {
   });
 
   it("stage ถูกทุกตัว → ok", async () => {
-    seedSteps([STEP_HEADER, pad("S1", "lead"), pad("H1", "handoff")]);
+    seedSteps([pad("S1", "lead"), pad("H1", "handoff")]);
     const res = await GET(req(`Bearer ${process.env.CRON_SECRET}`));
     const body = await res.json();
     expect(body.status).toBe("ok");

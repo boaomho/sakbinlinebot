@@ -48,8 +48,6 @@ export function testConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     slipUrlExpiryDays: 7,
     orderCutoffTime: "12:00",
     handoffKeywords: [...DEFAULT_HANDOFF_KEYWORDS],
-    notifyKeywords: [], // D-58: default ปิด (เทส notify override เอง)
-    notifyDoors: [], // D-60: per-door mapping (เทส override เอง)
     healthFlagKeywords: [], // D-61.A (v3): default ปิดในเทส — เทส v3 override เอง (โค้ดจริง default = DEFAULT_HEALTH_FLAG_KEYWORDS)
     assuranceBannedPhrases: [...DEFAULT_ASSURANCE_PHRASES],
     notifyAdminHealthTemplate: "ถามเรื่องสุขภาพ/แพ้อาหาร — บอทให้ข้อมูลตามข้อเท็จจริงแล้ว ยังคุยต่อ (ไม่ได้ปิดบอท) รบกวนช่วยดูให้ด้วยค่ะ",

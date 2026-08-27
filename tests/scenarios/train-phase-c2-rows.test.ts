@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { sheetsCalls } from "../harness/state";
-import { seedBotLib } from "../harness/botlib-fixture";
+import { seedBotLib, v3StepRows, v3KnowRows, TAB } from "../harness/botlib-fixture";
 import { appendRow, setRowStatus, listTabRows, suggestNextKey } from "@/lib/train/write";
 import { columnLetter } from "@/lib/sheets/columns";
 import { lintPattern } from "@/lib/train/lint";
 import { loadBotLibrary } from "@/lib/sheets/loader";
 import { getConfig } from "@/lib/config";
-import { buildFaqInjection, VALID_FUNNEL_STAGES } from "@/lib/agent/inject";
+import { buildFaqInjection, VALID_FUNNEL_STAGES, statusColumnIndex } from "@/lib/agent/inject";
 import { applyOverlayToTab } from "@/lib/train/sandbox";
 
 /**
@@ -15,10 +15,11 @@ import { applyOverlayToTab } from "@/lib/train/sandbox";
  *    ห้องซ้อมเห็น draft ผ่าน overlay สถานะ→live (3) คำสุขภาพ (H1) block เว้นคำตอบเป็นการส่งต่อ
  */
 
+/** header ของ shape ภายใน (adapter คืนแบบนี้เสมอ) — ใช้อ่าน index ตอน assert */
 const FAQ_H = ["คำถาม", "keywords", "action", "คำตอบ", "สถานะ"];
-function faq(rows: string[][]): void {
-  seedBotLib();
-  sheetsCalls.botLibReturn.CSV_FAQ = [FAQ_H, ...rows];
+/** 🔴 D-68: seed แท็บ "ความรู้" (ชีตดิบ v3) → adapter → CSV_FAQ · status ว่าง = draft (normalize ที่ adapter) */
+function faq(rows: { say: string; keyword?: string; fact?: string; status?: string }[]): void {
+  seedBotLib({ knowRows: v3KnowRows(rows) });
 }
 
 beforeAll(() => {
@@ -52,26 +53,26 @@ describe("T2-ค · lint H1 สุขภาพ/แพ้อาหาร", () => 
 // ---------- appendRow: บังคับ draft · guards ----------
 describe("T2-ค · appendRow (บังคับ draft + guards)", () => {
   it("🔴 แถวใหม่บังคับ สถานะ=draft (ไม่ว่าจะส่ง status อะไรมา)", async () => {
-    faq([["ส่งกี่วัน", "ส่งกี่วัน", "answer", "1-2 วันค่ะ", "live"]]);
-    const res = await appendRow("CSV_FAQ", { คำถาม: "ส่งเสาร์อาทิตย์ไหม", keywords: "เสาร์", action: "answer", คำตอบ: "ส่งทุกวันค่ะ", สถานะ: "live" });
-    expect(res.status).toBe("ok");
-    const app = sheetsCalls.appends.filter((a) => a.range.startsWith("CSV_FAQ")).pop();
-    expect(app, "append ลง CSV_FAQ").toBeTruthy();
-    expect(app!.values[0][FAQ_H.indexOf("สถานะ")], "บังคับ draft แม้ส่ง live มา").toBe("draft");
-    expect(app!.values[0][FAQ_H.indexOf("คำถาม")]).toBe("ส่งเสาร์อาทิตย์ไหม");
+    faq([{ say: "ส่งกี่วัน", keyword: "ส่งกี่วัน", fact: "1-2 วันค่ะ" }]);
+    // 🔴 D-68: guard ทุกตัวยังทำงานเหมือนเดิม — แต่ทางที่ผ่านครบแล้วจะ throw ก่อนแตะ Google (เขียนชีต v3 ยังไม่รองรับ)
+    await expect(appendRow("CSV_FAQ", { คำถาม: "ส่งเสาร์อาทิตย์ไหม", keywords: "เสาร์", action: "answer", คำตอบ: "ส่งทุกวันค่ะ", สถานะ: "live" }))
+      .rejects.toThrow(/ยังเขียนชีต v3 ไม่ได้/);
+    expect(sheetsCalls.appends.filter((a) => a.range.startsWith("CSV_FAQ")), "ห้ามแตะชีต").toHaveLength(0);
   });
 
-  it("🔴 แท็บไม่มีคอลัมน์สถานะ → ปฏิเสธ (no_status_col · ไม่ append) — กันแถวใหม่ live ทันที", async () => {
+  it("🔴 ชีตดิบขาดคอลัมน์สถานะ → adapter ยังใส่ `สถานะ` ให้เสมอ + default draft (แถวไม่ live เอง)", async () => {
+    // 🔴 D-68: การันตี "แถวใหม่ห้าม live ทันที" ย้ายชั้นมาที่ adapter — เดิมพึ่ง no_status_col ใน appendRow
+    //    v3 adaptKnowledge ประกอบ header เองเสมอ → เคส "แท็บไม่มีคอลัมน์สถานะ" เกิดกับ CSV_FAQ ไม่ได้อีก
+    //    (ดู DECISIONS D-68: no_status_col กลายเป็น branch ที่ v3 เข้าไม่ถึง)
     seedBotLib();
-    sheetsCalls.botLibReturn.CSV_FAQ = [["คำถาม", "keywords", "action", "คำตอบ"], ["ส่งกี่วัน", "ส่ง", "answer", "1-2 วันค่ะ"]];
-    const before = sheetsCalls.appends.length;
-    const res = await appendRow("CSV_FAQ", { คำถาม: "ใหม่", keywords: "ใหม่", action: "answer", คำตอบ: "ค่ะ" });
-    expect(res.status).toBe("no_status_col");
-    expect(sheetsCalls.appends.length, "ไม่เขียน").toBe(before);
+    sheetsCalls.botLibReturn[TAB.knowledge] = [["ลูกค้าพูดยังไง", "keyword", "ข้อเท็จจริง/สิ่งที่อยากให้รู้"], ["ส่งกี่วัน", "ส่ง", "1-2 วันค่ะ"]];
+    const out = await listTabRows("CSV_FAQ");
+    expect(out.hasStatusCol, "adapter ใส่คอลัมน์สถานะให้").toBe(true);
+    expect(out.rows.find((r) => r.key === "ส่งกี่วัน")!.active, "ชีตไม่ระบุสถานะ = draft ไม่ active").toBe(false);
   });
 
   it("key ซ้ำ → dup (ไม่ append)", async () => {
-    faq([["ส่งกี่วัน", "ส่ง", "answer", "1-2 วันค่ะ", "live"]]);
+    faq([{ say: "ส่งกี่วัน", keyword: "ส่ง", fact: "1-2 วันค่ะ" }]);
     const before = sheetsCalls.appends.length;
     const res = await appendRow("CSV_FAQ", { คำถาม: "ส่งกี่วัน", keywords: "ส่ง", action: "answer", คำตอบ: "ซ้ำ", สถานะ: "" });
     expect(res.status).toBe("dup");
@@ -79,11 +80,12 @@ describe("T2-ค · appendRow (บังคับ draft + guards)", () => {
   });
 
   it("🔴 H1 คำสุขภาพในคำตอบ → lint (ไม่ append) · แต่ถ้าส่งต่อ → ok", async () => {
-    faq([["x", "x", "answer", "y", "live"]]);
+    faq([{ say: "x", keyword: "x", fact: "y" }]);
     const blocked = await appendRow("CSV_FAQ", { คำถาม: "แพ้กุ้งทานได้ไหม", keywords: "แพ้กุ้ง", action: "answer", คำตอบ: "ทานได้ค่ะ ไม่เป็นไร" });
     expect(blocked.status).toBe("lint");
-    const ok = await appendRow("CSV_FAQ", { คำถาม: "แพ้กุ้งทานได้ไหม", keywords: "แพ้กุ้ง", action: "answer", คำตอบ: "เรื่องแพ้อาหารขอส่งต่อให้แอดมินดูแลนะคะ" });
-    expect(ok.status, "ตอบด้วยการส่งต่อ = เขียนได้").toBe("ok");
+    // ตอบด้วยการส่งต่อ = lint ผ่าน → ไปถึง guard เขียน (throw) แทนที่จะ block ด้วย lint
+    await expect(appendRow("CSV_FAQ", { คำถาม: "แพ้กุ้งทานได้ไหม", keywords: "แพ้กุ้ง", action: "answer", คำตอบ: "เรื่องแพ้อาหารขอส่งต่อให้แอดมินดูแลนะคะ" }))
+      .rejects.toThrow(/ยังเขียนชีต v3 ไม่ได้/);
   });
 
   it("Vars key ไม่มีปีกกา → key_invalid", async () => {
@@ -94,28 +96,25 @@ describe("T2-ค · appendRow (บังคับ draft + guards)", () => {
   });
 
   it("🔴 Step funnel_stage ผิด enum → funnel (ไม่ append) · ถูก enum → ok", async () => {
-    const STEP_H = ["step_id", "funnel_stage", "ชื่อประตู", "ตัวอย่างคำตอบ", "ตัวอย่างประโยคปิดท้าย", "สถานะ"];
-    seedBotLib();
-    sheetsCalls.botLibReturn.CSV_Step = [STEP_H, ["S1", VALID_FUNNEL_STAGES[0], "ทักทาย", "สวัสดีค่ะ", "", "live"]];
+    seedBotLib({ stepRows: v3StepRows([{ step_id: "S1", funnel: VALID_FUNNEL_STAGES[0], guide: "สวัสดีค่ะ" }]) });
     const bad = await appendRow("CSV_Step", { step_id: "S9", funnel_stage: "ไม่ใช่สเตจ", ชื่อประตู: "x", ตัวอย่างคำตอบ: "hi", สถานะ: "" });
-    expect(bad.status).toBe("funnel");
-    seedBotLib();
-    sheetsCalls.botLibReturn.CSV_Step = [STEP_H, ["S1", VALID_FUNNEL_STAGES[0], "ทักทาย", "สวัสดีค่ะ", "", "live"]];
-    const good = await appendRow("CSV_Step", { step_id: "S9", funnel_stage: VALID_FUNNEL_STAGES[1], ชื่อประตู: "x", ตัวอย่างคำตอบ: "สวัสดีจ้า", สถานะ: "" });
-    expect(good.status).toBe("ok");
+    expect(bad.status, "enum ผิด = กันไว้ก่อนถึง guard เขียน").toBe("funnel");
+    seedBotLib({ stepRows: v3StepRows([{ step_id: "S1", funnel: VALID_FUNNEL_STAGES[0], guide: "สวัสดีค่ะ" }]) });
+    // enum ถูก → ผ่าน guard ทุกตัว → ไปติดที่ D-68 write-disabled (throw ก่อนแตะ Google)
+    await expect(appendRow("CSV_Step", { step_id: "S9", funnel_stage: VALID_FUNNEL_STAGES[1], ชื่อประตู: "x", ตัวอย่างคำตอบ: "สวัสดีจ้า", สถานะ: "" }))
+      .rejects.toThrow(/ยังเขียนชีต v3 ไม่ได้/);
   });
 });
 
 // ---------- status live↔draft (soft delete) ----------
 describe("T2-ค · setRowStatus (soft delete · TRAIN_LOG action)", () => {
   it("draft → live: เขียนเซลล์สถานะ + TRAIN_LOG action=status-change", async () => {
-    faq([["ส่งกี่วัน", "ส่ง", "answer", "1-2 วันค่ะ", "draft"]]);
-    const res = await setRowStatus("CSV_FAQ", "ส่งกี่วัน", "live");
-    expect(res.status).toBe("ok");
-    const upd = sheetsCalls.batchUpdates.pop();
-    expect(upd!.values[0][0]).toBe("live");
-    const log = sheetsCalls.appends.filter((a) => a.range.startsWith("TRAIN_LOG")).pop();
-    expect(log!.values[log!.values.length - 1][6], "action = status-change").toBe("status-change");
+    faq([{ say: "ส่งกี่วัน", keyword: "ส่ง", fact: "1-2 วันค่ะ", status: "draft" }]);
+    // 🔴 D-68: หาแถวเจอ (ผ่าน guard) แต่เขียนไม่ได้ → throw ก่อนแตะชีต
+    sheetsCalls.batchUpdates.length = 0;
+    sheetsCalls.appends.length = 0;
+    await expect(setRowStatus("CSV_FAQ", "ส่งกี่วัน", "live")).rejects.toThrow(/ยังเขียนชีต v3 ไม่ได้/);
+    expect([...sheetsCalls.batchUpdates, ...sheetsCalls.appends], "ห้ามแตะชีต/TRAIN_LOG").toHaveLength(0);
   });
 });
 
@@ -123,9 +122,9 @@ describe("T2-ค · setRowStatus (soft delete · TRAIN_LOG action)", () => {
 describe("T2-ค · listTabRows + suggestNextKey", () => {
   it("list ข้ามแถว key ว่าง (หมายเหตุ) · active flag ตรง", async () => {
     faq([
-      ["ส่งกี่วัน", "ส่ง", "answer", "1-2 วันค่ะ", "live"],
-      ["โปรวันนี้", "โปร", "answer", "มีโปรค่ะ", "draft"],
-      ["", "", "", "หมายเหตุ", ""],
+      { say: "ส่งกี่วัน", keyword: "ส่ง", fact: "1-2 วันค่ะ" },
+      { say: "โปรวันนี้", keyword: "โปร", fact: "มีโปรค่ะ", status: "draft" },
+      { say: "", fact: "หมายเหตุ" }, // แถว key ว่าง — adapter กรองทิ้งตั้งแต่ต้นทาง
     ]);
     const out = await listTabRows("CSV_FAQ");
     expect(out.rows.length, "ข้ามแถว key ว่าง").toBe(2);
@@ -140,37 +139,18 @@ describe("T2-ค · listTabRows + suggestNextKey", () => {
 });
 
 // ---------- D-57 bugfix · resolve คอลัมน์สถานะ (CSV_FAQ="status" อังกฤษ · แท็บอื่น="สถานะ") ----------
-describe("D-57 bugfix · statusColumnIndex — FAQ ใช้ status (อังกฤษ) ต้องผ่าน", () => {
-  const FAQ_STATUS_H = ["คำถาม", "keywords", "action", "คำตอบ", "status"];
-  it("🔴 CSV_FAQ header 'status' → statusCol='status' + hasStatusCol=true (ไม่ขึ้นแบนเนอร์)", async () => {
-    seedBotLib();
-    sheetsCalls.botLibReturn.CSV_FAQ = [FAQ_STATUS_H, ["ส่งกี่วัน", "ส่ง", "answer", "1-2 วันค่ะ", "live"], ["โปร", "โปร", "answer", "มีค่ะ", "draft"]];
-    const out = await listTabRows("CSV_FAQ");
-    expect(out.statusCol).toBe("status");
-    expect(out.hasStatusCol).toBe(true);
-    expect(out.rows.find((r) => r.key === "ส่งกี่วัน")!.active).toBe(true);
-    expect(out.rows.find((r) => r.key === "โปร")!.active, "draft = ไม่ active").toBe(false);
+describe("D-57 bugfix · statusColumnIndex — รองรับทั้ง 'status' (อังกฤษ) และ 'สถานะ' (ไทย)", () => {
+  // 🔴 D-68: เส้นทาง end-to-end ของ header 'status' อังกฤษ **เข้าไม่ถึงแล้วใน v3**
+  //    (adaptKnowledge ประกอบ header เองเสมอ → CSV_FAQ ได้ "สถานะ" ไทยทุกครั้ง)
+  //    การันตีเดิมจึงพิสูจน์ที่ตัวฟังก์ชันแทน — ยังคุ้มเพราะ statusColumnIndex ใช้กับชีตดิบทุกแท็บ
+  it("🔴 header 'status' (อังกฤษ) → เจอ · 'สถานะ' (ไทย) → เจอ · ไม่มีเลย → -1", () => {
+    expect(statusColumnIndex(["คำถาม", "keywords", "action", "คำตอบ", "status"])).toBe(4);
+    expect(statusColumnIndex(["ตัวแปร", "ค่า", "หมายเหตุ", "สถานะ"])).toBe(3);
+    expect(statusColumnIndex(["คำถาม", "คำตอบ"]), "ไม่มีคอลัมน์สถานะ = -1 (ผู้เรียกปฏิเสธการเขียน)").toBe(-1);
   });
-  it("🔴 appendRow FAQ (status) → บังคับ draft ลงคอลัมน์ 'status'", async () => {
+  it("แท็บ Vars (ชีตดิบ · header 'สถานะ') → listTabRows เห็นคอลัมน์สถานะ", async () => {
     seedBotLib();
-    sheetsCalls.botLibReturn.CSV_FAQ = [FAQ_STATUS_H, ["x", "x", "answer", "y", "live"]];
-    const res = await appendRow("CSV_FAQ", { คำถาม: "ส่งเสาร์ไหม", keywords: "เสาร์", action: "answer", คำตอบ: "ส่งค่ะ", status: "live" });
-    expect(res.status).toBe("ok");
-    const app = sheetsCalls.appends.filter((a) => a.range.startsWith("CSV_FAQ")).pop();
-    expect(app!.values[0][FAQ_STATUS_H.indexOf("status")], "บังคับ draft แม้ส่ง live").toBe("draft");
-  });
-  it("🔴 setRowStatus FAQ (status) → เขียนคอลัมน์ 'status' (E)", async () => {
-    seedBotLib();
-    sheetsCalls.botLibReturn.CSV_FAQ = [FAQ_STATUS_H, ["ส่งกี่วัน", "ส่ง", "answer", "ค่ะ", "draft"]];
-    const res = await setRowStatus("CSV_FAQ", "ส่งกี่วัน", "live");
-    expect(res.status).toBe("ok");
-    const upd = sheetsCalls.batchUpdates.pop();
-    expect(upd!.range, "status = คอลัมน์ที่ 5 (E)").toContain(`!${columnLetter(4)}`);
-    expect(upd!.values[0][0]).toBe("live");
-  });
-  it("แท็บอื่น (Vars) header 'สถานะ' → ยังผ่าน (ไทย)", async () => {
-    seedBotLib();
-    sheetsCalls.botLibReturn.CSV_Vars = [["ตัวแปร", "ค่า", "หมายเหตุ", "สถานะ"], ["{a}", "1", "", "live"]];
+    sheetsCalls.botLibReturn[TAB.vars] = [["ตัวแปร", "ค่า", "หมายเหตุ", "สถานะ"], ["{a}", "1", "", "live"]];
     const out = await listTabRows("CSV_Vars");
     expect(out.statusCol).toBe("สถานะ");
     expect(out.hasStatusCol).toBe(true);
@@ -181,18 +161,18 @@ describe("D-57 bugfix · statusColumnIndex — FAQ ใช้ status (อัง�
 describe("D-58 · lint H1 ยกเว้นประตู handoff/handoff_notify", () => {
   const STEP_H = ["step_id", "funnel_stage", "ชื่อประตู", "ตัวอย่างคำตอบ", "ตัวอย่างประโยคปิดท้าย", "สถานะ"];
   function seedStep(): void {
-    seedBotLib();
-    sheetsCalls.botLibReturn.CSV_Step = [STEP_H, ["S1", "lead", "ทัก", "สวัสดีค่ะ", "", "live"]];
+    seedBotLib({ stepRows: v3StepRows([{ step_id: "S1", funnel: "lead", name: "ทัก", guide: "สวัสดีค่ะ" }]) });
   }
+  /** 🔴 D-68: lint ไม่ block → ไหลถึง guard เขียน (throw) · lint block → คืน {status:"lint"} ไม่ throw
+   *  ใช้ throw เป็นตัวพิสูจน์ว่า "เขียนได้" เหมือนเดิม (ความหมายเดิมเป๊ะ · เขียนชีต v3 ยังปิดอยู่) */
+  const expectLintPassed = (pr: Promise<unknown>) => expect(pr).rejects.toThrow(/ยังเขียนชีต v3 ไม่ได้/);
   it("ประตู handoff_notify: คำสุขภาพในคำตอบ → ไม่ block (เขียนได้)", async () => {
     seedStep();
-    const res = await appendRow("CSV_Step", { step_id: "H1", funnel_stage: "handoff_notify", ชื่อประตู: "สุขภาพ", ตัวอย่างคำตอบ: "สินค้ามีส่วนผสมปลาค่ะ หากแพ้อาหารแนะนำปรึกษาแพทย์", สถานะ: "" });
-    expect(res.status).toBe("ok");
+    await expectLintPassed(appendRow("CSV_Step", { step_id: "H1", funnel_stage: "handoff_notify", ชื่อประตู: "สุขภาพ", ตัวอย่างคำตอบ: "สินค้ามีส่วนผสมปลาค่ะ หากแพ้อาหารแนะนำปรึกษาแพทย์", สถานะ: "" }));
   });
   it("ประตู handoff_notify: วลีรับรอง 'ทานได้' → warn (ไม่ block · ยังเขียนได้)", async () => {
     seedStep();
-    const res = await appendRow("CSV_Step", { step_id: "H1", funnel_stage: "handoff_notify", ชื่อประตู: "สุขภาพ", ตัวอย่างคำตอบ: "แพ้กุ้งก็ทานได้ค่ะ", สถานะ: "" });
-    expect(res.status, "assurance = warn ไม่ block").toBe("ok");
+    await expectLintPassed(appendRow("CSV_Step", { step_id: "H1", funnel_stage: "handoff_notify", ชื่อประตู: "สุขภาพ", ตัวอย่างคำตอบ: "แพ้กุ้งก็ทานได้ค่ะ", สถานะ: "" }));
   });
   it("🔴 ประตูปกติ (lead): คำสุขภาพในคำตอบไม่ handoff → block (ไม่ยกเว้น)", async () => {
     seedStep();

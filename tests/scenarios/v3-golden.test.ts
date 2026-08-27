@@ -5,7 +5,6 @@ import { seedBotLib, PRICING_CONFIG } from "../harness/botlib-fixture";
 import { readCustomer } from "../harness/db";
 import { adaptV3Bundle, validateV3Bundle } from "@/lib/sheets/adapter-v3";
 import { findAssuranceHits } from "@/lib/guards/assurance";
-import { sheetSchema } from "@/lib/schema-mode";
 import { createSandbox, runInSandbox } from "@/lib/train/sandbox";
 import { getConfig, __resetConfigCache } from "@/lib/config";
 
@@ -80,8 +79,6 @@ function hasBannedWord(text: string): boolean {
   return BANNED_WORDS.some((re) => re.test(text));
 }
 
-beforeAll(() => { process.env.SHEET_SCHEMA = "v3"; });
-afterAll(() => { delete process.env.SHEET_SCHEMA; });
 beforeEach(() => seedV3Sheet());
 
 // ═══ กลุ่ม A · order gate ลำดับใหม่ (payment-first) ═══
@@ -294,22 +291,11 @@ describe("D-61.C golden · G27/G28 ยามเดิม + delivery invariant �
   });
 });
 
-// ═══ กลุ่ม G · sandbox override + schema card ═══
-describe("D-61.C · sandbox override + validateV3Bundle", () => {
-  it("🔴 sandbox ชี้ v3 ได้ทั้งที่ env เป็น v2 (prod ไม่กระทบ)", async () => {
-    delete process.env.SHEET_SCHEMA; // env = v2
-    expect(sheetSchema()).toBe("v2");
-    const ctx = createSandbox("sess-schema-1");
-    ctx.schema = "v3";
-    const inside = await runInSandbox(ctx, async () => sheetSchema());
-    expect(inside, "ในห้องซ้อม = v3").toBe("v3");
-    expect(sheetSchema(), "นอกห้องซ้อม (prod) = v2 เหมือนเดิม").toBe("v2");
-    process.env.SHEET_SCHEMA = "v3"; // คืนค่าให้ describe อื่น
-  });
+// ═══ กลุ่ม G · sandbox + schema card ═══
+describe("D-61.C · sandbox + validateV3Bundle", () => {
   it("🔴 config memo ไม่รั่วข้ามโหมด (sandbox ไม่เขียน cache)", async () => {
     __resetConfigCache();
     const ctx = createSandbox("sess-schema-2");
-    ctx.schema = "v3";
     await runInSandbox(ctx, async () => getConfig()); // sandbox โหลด config
     // prod เรียกต่อ — ต้องไม่ได้ config ที่ sandbox cache ไว้ (ต้องโหลดใหม่เอง ไม่ throw)
     const prodCfg = await getConfig();

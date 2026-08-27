@@ -70,19 +70,87 @@ export const PRICING_CONFIG: Record<string, string> = {
   เพดานจำนวน_คูณโปรใหญ่สุด: "2",
 };
 
+// ══════════════════ D-68 · ชีต v3 (loader อ่านแท็บ v3 เส้นเดียวแล้ว) ══════════════════
+
 /**
- * seed BotLibrary ให้ route อ่านผ่าน loadBotLibrary (mock batchGet คืน botLibReturn[tab])
- * @param stepRows ถ้าอยากทดสอบ resolver ตัวแปรในสเต็ป (มี {ยอดรวม}/{สรุปรายการ}) ส่งเข้ามา
+ * 🔴 ชื่อแท็บอยู่ที่เดียวทั้ง repo — D-69 จะเปลี่ยนเป็นอังกฤษ (Steps/Knowledge/…) แก้ตรงนี้บรรทัดเดียวจบ
+ * ห้ามเขียนชื่อแท็บเป็นสตริงตรง ๆ ในไฟล์เทส
  */
-export function seedBotLib(opts: { stepRows?: string[][]; promoPriceOverride?: Record<string, string>; varsRows?: string[][] } = {}): void {
+export const TAB = {
+  steps: "เส้นทางขาย",
+  knowledge: "ความรู้",
+  products: "CSV_Products",
+  promo: "CSV_Promo",
+  vars: "CSV_Vars",
+  config: "CSV_Config",
+} as const;
+
+/** header แท็บ "เส้นทางขาย" (v3) — ตรงกับที่ adaptSteps อ่าน */
+export const V3_STEP_HEADER = [
+  "step_id", "funnel_stage", "ชื่อประตู", "เข้าเมื่อ", "สาระที่ต้องสื่อ", "ต้องได้อะไรถึงไปต่อ", "ไปประตูไหน", "แนวตอบ", "handoff", "สถานะ",
+];
+
+/** header แท็บ "ความรู้" (v3) — ตรงกับที่ adaptKnowledge อ่าน */
+export const V3_KNOW_HEADER = ["ลูกค้าพูดยังไง", "keyword", "ความกังวลจริง", "ข้อเท็จจริง/สิ่งที่อยากให้รู้", "แนวตอบ", "สถานะ"];
+
+export interface V3Step {
+  step_id: string;
+  name?: string;
+  /** "เข้าเมื่อ" — ตัวอย่างในเครื่องหมายคำพูดคือสิ่งที่ matchesEntry ใช้จับ */
+  entry?: string;
+  essence?: string;
+  collect?: string;
+  next?: string;
+  guide?: string;
+  /**
+   * funnel_stage — คอลัมน์ optional (D-68) · เว้นว่าง = adapter ใช้ FIXED_FUNNEL จาก step_id
+   * (S1=lead · S2/S2Q=qualified · S3=quoted · S4=won · id อื่น = qualified + warn)
+   * 🔴 ชีตจริงยังไม่มีคอลัมน์นี้ — ใส่ค่าที่นี่ = จำลอง "ถ้าเจ้าของเปิดใช้" เท่านั้น
+   */
+  funnel?: string;
+  /** ประตูส่งต่อคน — ชนะ funnel_stage เสมอ (adapter ให้ "handoff") */
+  handoff?: boolean;
+  status?: string;
+}
+
+/** แถวแท็บ "เส้นทางขาย" (v3) — ใช้แทนการเขียน header เองในไฟล์เทส */
+export function v3StepRows(steps: V3Step[]): string[][] {
+  return [
+    [...V3_STEP_HEADER],
+    ...steps.map((s) => [
+      s.step_id,
+      s.funnel ?? "",
+      s.name ?? s.step_id,
+      s.entry ?? "",
+      s.essence ?? "",
+      s.collect ?? "",
+      s.next ?? "",
+      s.guide ?? "",
+      s.handoff ? "ใช่" : "",
+      s.status ?? "live",
+    ]),
+  ];
+}
+
+/** แถวแท็บ "ความรู้" (v3) */
+export function v3KnowRows(rows: { say: string; keyword?: string; concern?: string; fact?: string; guide?: string; status?: string }[]): string[][] {
+  return [
+    [...V3_KNOW_HEADER],
+    ...rows.map((r) => [r.say, r.keyword ?? "", r.concern ?? "", r.fact ?? "", r.guide ?? "", r.status ?? "live"]),
+  ];
+}
+
+/**
+ * seed "ชีตดิบ v3" ให้ loader อ่าน (mock batchGet คืน botLibReturn[tab]) → ผ่าน adaptV3Bundle → shape ภายใน
+ * @param stepRows แถวแท็บ เส้นทางขาย — สร้างด้วย `v3StepRows()` เท่านั้น (ห้ามเขียน header เอง)
+ */
+export function seedBotLib(opts: { stepRows?: string[][]; promoPriceOverride?: Record<string, string>; varsRows?: string[][]; knowRows?: string[][] } = {}): void {
   sheetsCalls.botLibReturn = {
-    CSV_Step: opts.stepRows ?? [["ประตู", "เป้าหมาย"], ["1", "ทักทาย"]],
-    CSV_Objections: [],
-    CSV_FAQ: [["คำถาม", "คำตอบ"], ["ส่งกี่วัน", "1-2 วันค่ะ"]],
-    CSV_Follow: [],
-    CSV_Config: [["key", "value"]],
-    CSV_Products: productsRows(),
-    CSV_Promo: promoRows(opts.promoPriceOverride),
-    CSV_Vars: opts.varsRows ?? varsRows(),
+    [TAB.steps]: opts.stepRows ?? v3StepRows([{ step_id: "S1", name: "ทักทาย", entry: "ลูกค้าทักมา" }]),
+    [TAB.knowledge]: opts.knowRows ?? v3KnowRows([{ say: "ส่งกี่วัน", keyword: "ส่งกี่วัน", fact: "1-2 วันค่ะ" }]),
+    [TAB.config]: [["key", "value"]],
+    [TAB.products]: productsRows(),
+    [TAB.promo]: promoRows(opts.promoPriceOverride),
+    [TAB.vars]: opts.varsRows ?? varsRows(),
   };
 }

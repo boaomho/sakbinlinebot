@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { sendText } from "../harness/replay";
 import { scriptGemini, turn, lineCalls } from "../harness/state";
 import { seedBotLib } from "../harness/botlib-fixture";
@@ -7,14 +7,12 @@ import { collectDroppedBubbles } from "@/lib/train/preview";
 import { buildStepInjection, buildFaqInjection } from "@/lib/agent/inject";
 import { loadBotLibrary } from "@/lib/sheets/loader";
 import { getConfig } from "@/lib/config";
-import { sheetSchema } from "@/lib/schema-mode";
 
 /**
  * D-67 · ปลดล็อกตัวแปรรูปในโหมด v3 — CSV_Vars = คลังรูป ตั้งชื่อเองได้
  * ครอบ: (1) [[รูป:{ชื่อตั้งเอง}]] จาก CSV_Vars → บอลลูนรูปจริง (2) ชนชื่อระบบ → ระบบชนะ + lint เตือน
  * (3) URL resolve ไม่ได้ → log event `image-dropped` + ห้องซ้อมโชว์บอลลูนขีดฆ่า (4) แถว live ค่าว่าง → lint เตือน
  * (5) token เข้า prompt ได้ทั้งจากเส้นทางขาย (สาระที่ต้องสื่อ) และแท็บความรู้ (คำตอบ)
- * โหมด v3 เฉพาะไฟล์นี้ (afterAll คืน v2 — sentinel v2-frozen ของชุดเทสที่เหลือ)
  */
 
 const IMG_URL = "https://blob.test/skb-promo.jpg";
@@ -30,13 +28,6 @@ function varsFixture(): string[][] {
   ];
 }
 
-beforeAll(() => {
-  process.env.SHEET_SCHEMA = "v3";
-  expect(sheetSchema()).toBe("v3");
-});
-afterAll(() => {
-  delete process.env.SHEET_SCHEMA; // 🔴 คืน v2 ให้ไฟล์เทสอื่นทั้ง repo
-});
 beforeEach(() => seedBotLib({ varsRows: varsFixture() }));
 
 const U = "U" + "d67".padEnd(32, "0");

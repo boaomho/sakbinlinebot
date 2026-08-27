@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { sendText, sendImage } from "../harness/replay";
 import { scriptGemini, turn, adminPushes } from "../harness/state";
 import { FULL_ADDRESS } from "../harness/fixtures";
-import { seedBotLib } from "../harness/botlib-fixture";
+import { seedBotLib, v3StepRows } from "../harness/botlib-fixture";
 import { readCustomer } from "../harness/db";
 import { messagingApi } from "@line/bot-sdk";
 
@@ -13,13 +13,12 @@ import { messagingApi } from "@line/bot-sdk";
 const U = "Uharnesstestcustomer0000000000013";
 const FOOTER = "บอทปิดการทำงานกับลูกค้ารายนี้แล้ว";
 
-const STEP_H = ["step_id", "funnel_stage", "ชื่อประตู", "เข้าเมื่อ", "ไปประตูถัดไปเมื่อ", "ความรู้สึกลูกค้าตอนนี้", "ทำไมประตูนี้สำคัญ", "หลักการนำพา", "ห้ามทำ", "ต้องเก็บข้อมูล", "ตัวอย่างคำตอบ", "ตัวอย่างประโยคปิดท้าย"];
-function row(step_id: string, funnel_stage: string, o: Partial<Record<string, string>> = {}): string[] {
-  return STEP_H.map((h) => (h === "step_id" ? step_id : h === "funnel_stage" ? funnel_stage : o[h] ?? ""));
-}
-/** step sheet ที่มี H1 funnel_stage=handoff (ทดสอบโค้ดการันตี) */
+/** step sheet (v3) ที่มี H1 handoff (ทดสอบโค้ดการันตี) — D-68: seed ผ่านเส้นทางเดียวกับ prod */
 function handoffStepSheet(): string[][] {
-  return [STEP_H, row("S1", "lead", { หลักการนำพา: "ทักทาย" }), row("H1", "handoff", { ห้ามทำ: "ห้ามตอบเอง", ตัวอย่างคำตอบ: "ขอตามแอดมินนะคะ" })];
+  return v3StepRows([
+    { step_id: "S1", essence: "ทักทาย" },
+    { step_id: "H1", handoff: true, guide: "ขอตามแอดมินนะคะ" },
+  ]);
 }
 function hasImagePush(): boolean {
   return adminPushes().some((p) => p.messages.some((m: messagingApi.Message) => m.type === "image"));

@@ -1,7 +1,6 @@
 import { loadBotLibrary } from "./sheets/loader";
 import { DEFAULT_ASSURANCE_PHRASES } from "./guards/assurance";
 import { getTrainSandbox } from "./train/sandbox";
-import { isSchemaV3 } from "./schema-mode";
 // หมายเหตุ: cleanCell/stripKeyAnnotation ยังเป็น copy ในไฟล์นี้ (regex อักขระล่องหนแก้ยาก)
 // ตัวกลางอยู่ lib/sheets/clean.ts แล้ว — ตรงกัน 100% · ถ้าแก้ regex ต้องแก้ทั้ง 2 ที่
 
@@ -45,10 +44,6 @@ export interface AppConfig {
   /** 🔴 ยังใช้อยู่ — resolveDeliveryVar `{วันจัดส่ง}` ที่ลูกค้าเห็น (quote.ts อ่านจาก raw · D-39) */
   orderCutoffTime: string;
   handoffKeywords: string[];
-  /** D-58: คำ_notify — pre-check ชั้นสอง (alias → ประตู H1) · default [] = ปิดฟีเจอร์ */
-  notifyKeywords: string[];
-  /** D-60: คำ_notify_<step_id> — mapping คำ→ประตู notify รายประตู (เช่น คำ_notify_H5 → H5) · alias คำ_notify → H1 (handler รวมให้) · ใช้เฉพาะโหมด v2 */
-  notifyDoors: { door: string; keywords: string[] }[];
   /** D-61.A (v3): คำ_ธงสุขภาพ — match แล้ว: hint เข้า prompt + 🔔 dedup ต่อเคส + arm assurance guard · ไม่ force stage · ชื่อเดียวไม่มี alias (กติกา B1) · default ในโค้ด = ตาข่ายรวมคำสุขภาพเดิม (deploy v3 ที่ยังไม่ตั้ง key ไม่เสียตาข่าย) */
   healthFlagKeywords: string[];
   /** D-61.A (v3): คำรับรอง_ต้องห้าม — list ของ assurance guard · default ในโค้ด */
@@ -161,20 +156,8 @@ export function __resetConfigCache(): void {
   cachedAt = 0;
 }
 
-/**
- * D-60: mapping คำ→ประตู notify รายประตู · key = "คำ_notify_<step_id>" (เช่น คำ_notify_H5 → door H5)
- * 🔴 ไม่รวม alias "คำ_notify" (ไม่มี suffix) — handler รวมเองเป็น NOTIFY_DOOR=H1 (backward compat D-58)
- */
-export function parseNotifyDoors(raw: Map<string, string>): { door: string; keywords: string[] }[] {
-  const out: { door: string; keywords: string[] }[] = [];
-  for (const [k, v] of raw.entries()) {
-    const m = /^คำ_notify_(.+)$/.exec(k.trim());
-    if (!m) continue;
-    const keywords = v.split(",").map((s) => cleanCell(s)).filter(Boolean);
-    if (keywords.length > 0) out.push({ door: m[1].trim(), keywords });
-  }
-  return out;
-}
+// 🔴 D-68: ลบ parseNotifyDoors + คีย์ `คำ_notify`/`คำ_notify_<door>` — ประตู handoff_notify เป็นของ v2 (ถอดแล้ว)
+//    v3 ใช้ ธงสุขภาพ (`คำ_ธงสุขภาพ`) + assurance guard แทน
 
 export async function getConfig(): Promise<AppConfig> {
   const now = Date.now();
@@ -213,7 +196,7 @@ export async function getConfig(): Promise<AppConfig> {
     }
   } else {
     loadFailed = true;
-    console.warn(JSON.stringify({ scope: "config", warning: "CSV_Config โหลดไม่ได้ (SHEET_BOTLIB_ID?) ใช้ค่า default" }));
+    console.warn(JSON.stringify({ scope: "config", warning: "CSV_Config โหลดไม่ได้ (SHEET_BOTLIB_V3_ID?) ใช้ค่า default" }));
   }
 
   // lookup แบบรับหลายชื่อ (alias) กันชื่อคีย์ในชีตเพี้ยนจากที่โค้ดคาด (เช่น มี/ไม่มี suffix หน่วย)
@@ -280,12 +263,6 @@ export async function getConfig(): Promise<AppConfig> {
       .split(",")
       .map((s) => cleanCell(s))
       .filter(Boolean),
-    // D-58: default ว่าง = ปิด (ไม่มี key/ว่าง → notify pre-check ไม่ทำงาน · พฤติกรรมเดิม 100%)
-    notifyKeywords: (pick("คำ_notify", "คำ_แจ้งแอดมิน") ?? "")
-      .split(",")
-      .map((s) => cleanCell(s))
-      .filter(Boolean),
-    notifyDoors: parseNotifyDoors(raw), // D-60
     // D-61.A (v3) — ชื่อเดียว ไม่มี alias (กติกา B1) · default = ตาข่ายคำสุขภาพ (DEFAULT_HEALTH_FLAG_KEYWORDS)
     healthFlagKeywords: splitList(raw.get("คำ_ธงสุขภาพ")) ?? [...DEFAULT_HEALTH_FLAG_KEYWORDS],
     assuranceBannedPhrases: splitList(raw.get("คำรับรอง_ต้องห้าม")) ?? [...DEFAULT_ASSURANCE_PHRASES],
@@ -299,7 +276,9 @@ export async function getConfig(): Promise<AppConfig> {
     //   ยุบบอลลูน = คำถามปิดหายจาก noti มือถือ (เหตุผลระดับ conversion) และ splitter C6 ถูกลบล้าง
     //   🔴 v2 (prod ปัจจุบัน) อ่านค่าจากชีตเหมือนเดิมทุกบรรทัด — ห้ามเปลี่ยนพฤติกรรม
     //   ถ้าอนาคตต้นทุน push สูงจริง → เปิดเป็น scope เฉพาะ push (ว่าที่ D-63) ไม่ใช่ยุบทั้งเทิร์น
-    quotaSaver: isSchemaV3() ? false : boolOf(true, "โหมดประหยัดโควตา"),
+    // 🔴 D-68: ปิดถาวร — จังหวะบอลลูนคือดีไซน์ CX (D-61.C6) · คีย์ `โหมดประหยัดโควตา` ถูกลบจากโค้ด+ชีต
+    //    ถ้าโควตา LINE เป็นปัญหาจริง → เปิด D-63 (scope เฉพาะ push ไม่ใช่กลับไปยุบทั้งเทิร์น)
+    quotaSaver: false,
     rawSwitches,
     raw,
     loadFailed,
@@ -334,9 +313,9 @@ export function resolveFeatureSwitches(config: AppConfig): FeatureSwitches {
   // 🔴 Step 1: อ่านทุกแท็บ (Step/FAQ/Config) จาก BotLibrary ตัวเดียว → เช็ค SHEET_BOTLIB_ID
   // (เดิมเช็ค SHEET_STEP_URL + FAQ + CONFIG · ต้องเปลี่ยนพร้อม getConfig ในคอมมิตเดียว
   //  ไม่งั้น deploy กลางคัน salesCore=false บอทตายทั้งตัว)
-  const salesCore = Boolean(process.env.SHEET_BOTLIB_ID);
+  const salesCore = Boolean(process.env.SHEET_BOTLIB_V3_ID);
   if (!salesCore) {
-    warnDisabled("salesCore", "ต้องมี SHEET_BOTLIB_ID (BotLibrary spreadsheet)");
+    warnDisabled("salesCore", "ต้องมี SHEET_BOTLIB_V3_ID (BotLibrary spreadsheet)");
   }
 
   const memory = Boolean(process.env.DATABASE_URL);
@@ -371,10 +350,10 @@ export function resolveFeatureSwitches(config: AppConfig): FeatureSwitches {
     warnDisabled("orders", "ต้องมี ORDER_GROUP_ID + GOOGLE_SERVICE_ACCOUNT + SHEET_ORDERS_ID + BLOB_SLIPS_TOKEN + memory ครบทุกตัว");
   }
 
-  const followReady = Boolean(process.env.SHEET_BOTLIB_ID && memory); // CSV_Follow อยู่ใน BotLibrary แล้ว
+  const followReady = Boolean(process.env.SHEET_BOTLIB_V3_ID && memory); // CSV_Follow อยู่ใน BotLibrary แล้ว
   const follow = config.rawSwitches.follow && followReady;
   if (config.rawSwitches.follow && !followReady) {
-    warnDisabled("follow", "ต้องมี SHEET_BOTLIB_ID + memory (DATABASE_URL)");
+    warnDisabled("follow", "ต้องมี SHEET_BOTLIB_V3_ID + memory (DATABASE_URL)");
   }
 
   const flexCards = config.rawSwitches.flexCards;

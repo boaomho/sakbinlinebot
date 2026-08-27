@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 import { sheetsCalls } from "../harness/state";
-import { seedBotLib } from "../harness/botlib-fixture";
+import { seedBotLib, v3StepRows, v3KnowRows } from "../harness/botlib-fixture";
 import { parseAssistantResponse, buildAssistantSystem } from "@/lib/train/assistant";
 import { rewriteSafety } from "@/lib/train/rewrite-safety";
 import { lintPattern } from "@/lib/train/lint";
 import { loadBotLibrary } from "@/lib/sheets/loader";
-import { parseNotifyDoors, getConfig } from "@/lib/config";
+import { getConfig } from "@/lib/config";
 import { buildAssistantKB } from "@/lib/train/assistant-kb";
 import { appendRow, writeCell } from "@/lib/train/write";
 
@@ -114,10 +114,8 @@ describe("D-59 · buildAssistantKB", () => {
 });
 
 // ---------- เส้นทางเขียน origin=ai ----------
-const STEP_H = ["step_id", "funnel_stage", "ชื่อประตู", "ตัวอย่างคำตอบ", "ตัวอย่างประโยคปิดท้าย", "สถานะ"];
 function seedStep(): void {
-  seedBotLib();
-  sheetsCalls.botLibReturn.CSV_Step = [STEP_H, ["S1", "lead", "ทัก", "สวัสดีค่ะ", "", "live"]];
+  seedBotLib({ stepRows: v3StepRows([{ step_id: "S1", funnel: "lead", name: "ทัก", guide: "สวัสดีค่ะ" }]) });
 }
 function lastTrainLog(): string[] | undefined {
   const log = sheetsCalls.appends.filter((a) => a.range.startsWith("TRAIN_LOG")).pop();
@@ -126,17 +124,21 @@ function lastTrainLog(): string[] | undefined {
 
 describe("D-59 · เขียน origin=ai → TRAIN_LOG ai-draft/ai-edit", () => {
   it("appendRow origin=ai → บังคับ draft + action=ai-draft", async () => {
-    seedBotLib();
-    sheetsCalls.botLibReturn.CSV_FAQ = [["คำถาม", "keywords", "action", "คำตอบ", "สถานะ"], ["x", "x", "answer", "y", "live"]];
-    const res = await appendRow("CSV_FAQ", { คำถาม: "ส่งเสาร์ไหม", keywords: "เสาร์", action: "answer", คำตอบ: "ส่งค่ะ" }, "ai");
-    expect(res.status).toBe("ok");
-    expect(lastTrainLog()![6], "action ai-draft").toBe("ai-draft");
+    // 🔴 D-68: เขียนชีต v3 ยังปิดอยู่ → ผ่าน guard ครบแล้ว throw ก่อนแตะ Google (ไม่มี TRAIN_LOG)
+    //    การันตี origin=ai → ai-draft จะกลับมาพิสูจน์ได้เมื่อเปิดเขียนใน D-69
+    seedBotLib({ knowRows: v3KnowRows([{ say: "x", keyword: "x", fact: "y" }]) });
+    sheetsCalls.appends.length = 0;
+    await expect(appendRow("CSV_FAQ", { คำถาม: "ส่งเสาร์ไหม", keywords: "เสาร์", action: "answer", คำตอบ: "ส่งค่ะ" }, "ai"))
+      .rejects.toThrow(/ยังเขียนชีต v3 ไม่ได้/);
+    expect(lastTrainLog(), "ไม่แตะ TRAIN_LOG").toBeUndefined();
   });
-  it("writeCell origin=ai → action=ai-edit", async () => {
+  it("writeCell origin=ai → ผ่าน guard แล้วติด write-disabled (ไม่แตะชีต)", async () => {
     seedStep();
-    const res = await writeCell("CSV_Step", "S1", "ตัวอย่างคำตอบ", "สวัสดีจ้า", "สวัสดีค่ะ", "ai");
-    expect(res.status).toBe("ok");
-    expect(lastTrainLog()![6], "action ai-edit").toBe("ai-edit");
+    sheetsCalls.batchUpdates.length = 0;
+    sheetsCalls.appends.length = 0;
+    await expect(writeCell("CSV_Step", "S1", "ตัวอย่างคำตอบ", "สวัสดีจ้า", "สวัสดีค่ะ", "ai"))
+      .rejects.toThrow(/ยังเขียนชีต v3 ไม่ได้/);
+    expect([...sheetsCalls.batchUpdates, ...sheetsCalls.appends], "ห้ามแตะชีต/TRAIN_LOG").toHaveLength(0);
   });
   it("🔴 Config เขียนไม่ได้จริง (assertEditable) — AI สั่งก็ไม่ผ่าน", async () => {
     await expect(appendRow("CSV_Config", { key: "x" }, "ai")).rejects.toThrow(/เขียนไม่ได้|Config/);
@@ -151,21 +153,6 @@ describe("D-59 · เขียน origin=ai → TRAIN_LOG ai-draft/ai-edit", () 
 });
 
 // ---------- D-60 · per-door parse + system prompt + rewriteSafety ----------
-describe("D-60 · parseNotifyDoors", () => {
-  it("คำ_notify_<id> → door · alias คำ_notify (ไม่มี suffix) ไม่นับ", () => {
-    const raw = new Map<string, string>([
-      ["คำ_notify_H5", "เบาหวาน, ความดัน"],
-      ["คำ_notify_H1", "แพ้, แพ้กุ้ง"],
-      ["คำ_notify", "ท้อง"], // alias → handler รวมเป็น H1 เอง · parseNotifyDoors ไม่นับ
-      ["ชื่อบอท", "ปลาทู"],
-    ]);
-    const doors = parseNotifyDoors(raw);
-    expect(doors.find((d) => d.door === "H5")?.keywords).toEqual(["เบาหวาน", "ความดัน"]);
-    expect(doors.find((d) => d.door === "H1")?.keywords).toEqual(["แพ้", "แพ้กุ้ง"]);
-    expect(doors.some((d) => d.door === "" || d.door === "notify")).toBe(false);
-  });
-});
-
 describe("D-59/60 · buildAssistantSystem — กติกา 11/12/persona", () => {
   it("มี flow สัมภาษณ์ (11) · เสียงนักขาย (12) · persona ค่ะ · เกลาเสียง · excludeKeys", () => {
     const s = buildAssistantSystem("KB_PLACEHOLDER", ["CSV_FAQ::ส่งกี่วัน"]);
