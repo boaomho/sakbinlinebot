@@ -86,11 +86,23 @@ export function resolveGeminiTimeouts(requestedMainMs: number, debounceMs: numbe
  * ตัวเลขที่ใช้ตัดสินใจจริง = cost log รายวันของ Google ต่อ API key (เจ้าของมีอยู่แล้ว · D-70 ใช้เป็นตัวหลัก)
  *
  * 📅 **อ้างอิง ai.google.dev/gemini-api/docs/pricing · ดึงเมื่อ 2026-08-28**
- * ⏳ **วันหมดอายุ/วันขึ้นราคาต่อรุ่น** (คอลัมน์ `note` ในตาราง — ต้องทบทวนเมื่อถึงกำหนด):
+ *
+ * ⏳ **วันหมดอายุ/วันขึ้นราคาต่อรุ่น** (คอลัมน์ `note` ในตาราง):
  *   · `gemini-3.6-flash` / `gemini-3.7-flash` — ราคาโปร **ถึง 31 ธ.ค. 2026** แล้วขึ้นเป็น 2 เท่า (in 1.50 / out 7.50)
  *   · `gemini-3.1-flash-lite` / `gemini-3.5-flash-lite` — ราคามาตรฐาน ยังไม่มีกำหนดเปลี่ยน
- *   · 🔴 `gemini-2.5-*` — **Google ปิดบริการ 16 ต.ค. 2026 (ข้อมูลจากเจ้าของ)** → **ห้ามใช้**
- *     คงราคาไว้ในตารางเพื่อความครบเท่านั้น (เผื่ออ่าน log เก่าย้อนหลัง) · ตั้งในชีตแล้วจะโดน log เตือน
+ *   · 🔴 `gemini-2.5-flash` / `gemini-2.5-pro` — **ปิด 16 ต.ค. 2026** (ตาราง deprecation ของ Gemini API)
+ *     เส้นทางที่ Google แนะนำ = **3.6 Flash**
+ *   · 🔴 `gemini-2.5-flash-lite` — **วันปิดไม่แน่นอน** (ไม่ใช่ "ไม่มีวันปิด"):
+ *     หน้า deprecation ของ Gemini API ขึ้นว่า "ยังไม่ประกาศ" แต่ฝั่ง Vertex/Agent Platform ระบุ **20 ต.ค. 2026**
+ *     → เอกสารสองที่ยังไม่ตรงกัน · ปฏิบัติเหมือนจะปิดพร้อมพี่น้องมัน
+ *   · ⚠️ Google ระบุว่าวันเหล่านี้คือ **"วันที่เร็วที่สุดที่อาจถูกปิด"** และจะแจ้งล่วงหน้า **อย่างน้อย 6 เดือน**
+ *     เมื่อกำหนดวันจริง → **อาจเลื่อนออกไป แต่ให้วางแผนที่ 16 ต.ค. 2026 อย่ารอ**
+ *
+ * 🔴 **ตารางนี้ต้องรีวิวอย่างน้อย 2 ครั้ง:**
+ *   1) **ก่อน 16 ต.ค. 2026** — วันปิด `gemini-2.5-*` (เช็คว่าเลื่อนไหม · ลบแถว deprecated ถ้าปิดจริง)
+ *   2) **ก่อน 31 ธ.ค. 2026** — ราคาโปร 3.6/3.7 หมด → in $1.50 / out $7.50 (**ต้นทุนเด้งเท่าตัว** ประเมินใหม่ทั้งชุด)
+ *
+ * `gemini-2.5-*` คงราคาไว้ในตารางเพื่อความครบเท่านั้น (เผื่ออ่าน log เก่าย้อนหลัง) · ตั้งในชีตแล้วจะโดน log เตือน
  * 🔴 โมเดลที่ไม่อยู่ในตาราง = ไม่เดาราคา (log ว่าไม่ทราบ)
  */
 const PRICE_PER_1M_USD: Record<string, { in: number; out: number; cached: number; note?: string }> = {
@@ -101,8 +113,8 @@ const PRICE_PER_1M_USD: Record<string, { in: number; out: number; cached: number
   "gemini-3.5-flash-lite": { in: 0.3, out: 2.5, cached: 0.03 },
   "gemini-3.1-flash-lite": { in: 0.25, out: 1.5, cached: 0.025, note: "ถูกสุดที่ใช้ได้" },
   // ---- 🔴 DEPRECATED — ห้ามใช้ (Google ปิด 2026-10-16) · ไว้อ่าน log เก่าเท่านั้น ----
-  "gemini-2.5-flash": { in: 0.3, out: 2.5, cached: 0.03, note: "🔴 DEPRECATED ปิด 2026-10-16 ห้ามใช้" },
-  "gemini-2.5-flash-lite": { in: 0.1, out: 0.4, cached: 0.01, note: "🔴 DEPRECATED ปิด 2026-10-16 ห้ามใช้" },
+  "gemini-2.5-flash": { in: 0.3, out: 2.5, cached: 0.03, note: "🔴 DEPRECATED ปิด 2026-10-16 (Gemini API) → Google แนะนำย้ายไป 3.6 Flash" },
+  "gemini-2.5-flash-lite": { in: 0.1, out: 0.4, cached: 0.01, note: "🔴 DEPRECATED วันปิดไม่แน่นอน — Gemini API ว่ายังไม่ประกาศ · Vertex ว่า 2026-10-20" },
 };
 
 /** 🔴 รุ่นที่ Google จะปิด — ตั้งในชีตแล้วต้องเตือนดัง ๆ (บอทยังทำงานต่อ ไม่พัง) */
@@ -114,7 +126,7 @@ function warnIfDeprecatedModel(model: string): void {
   if (!DEPRECATED_MODEL_PREFIXES.some((p) => m.startsWith(p))) return;
   console.warn(JSON.stringify({
     scope: "gemini-config", event: "model-deprecated", model,
-    reason: "Google ปิดบริการรุ่นนี้ (2.5 = 16 ต.ค. 2026) — เปลี่ยนคีย์ `โมเดล` ในชีตเป็นรุ่น 3.x",
+    reason: "Google จะปิดบริการรุ่นนี้ (2.5-flash/pro = 16 ต.ค. 2026 · flash-lite ไม่แน่นอน) — เปลี่ยนคีย์ `โมเดล` ในชีตเป็นรุ่น 3.x (Google แนะนำ 3.6 Flash)",
   }));
 }
 /** อัตราแลกเปลี่ยนคร่าว ๆ สำหรับอ่านง่าย (ไม่ใช่ตัวเลขบัญชี) */
