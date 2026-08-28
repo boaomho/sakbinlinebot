@@ -1,4 +1,6 @@
 import type { AppConfig } from "@/lib/config";
+// 🔴 KI-04: fixtures ห้าม import "ค่า" จาก @/lib/config — setup.ts mock config ด้วย factory ที่ import fixtures → วงกลม → worker ค้าง
+//    ค่า default จึงเขียนซ้ำที่นี่ — เป็นผลดี: ถ้าใครเปลี่ยน default ในโค้ด เทส D-69 จะแดงให้เห็น
 import { DEFAULT_HANDOFF_KEYWORDS } from "@/lib/handoff";
 import { DEFAULT_ASSURANCE_PHRASES } from "@/lib/guards/assurance";
 
@@ -42,6 +44,11 @@ export function testConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     useEmoji: false,
     temperature: 0.2, // D-44: เครื่องจำแนกต้องนิ่ง (golden real-Gemini ใช้ค่านี้ · ลด variance)
     maxOutputTokens: 4096,
+    // D-69: ค่าเดียวกับ default ในโค้ด (ชีตไม่มีแถว = ได้ค่าพวกนี้) · เทสที่อยากลองค่าอื่น override เอง
+    geminiModel: "gemini-3.5-flash",
+    thinkingLevelRaw: "low",
+    geminiTimeoutMs: 15_000,
+    slowSystemMessage: "ขออภัยค่ะ ตอนนี้ระบบตอบช้ากว่าปกตินิดนึงนะคะ {ชื่อบอท}แจ้งทีมแอดมินให้แล้วค่ะ ลูกค้าพิมพ์คุยต่อได้เลยนะคะ",
     showTyping: false,
     debounceWaitMs: 80,
     delayBetweenBubblesMs: 0,

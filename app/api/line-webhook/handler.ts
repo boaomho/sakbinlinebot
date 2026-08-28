@@ -78,9 +78,14 @@ import { uploadSlip, getSlipSignedUrl } from "@/lib/blob";
 import { appendOrderRow, updateOrderRow } from "@/lib/orders";
 import { evaluateOrderGate, buildNewOrderAdminText, buildBrokenOrderAdminText, buildPriceStuckAdminText, buildOrderStateWarning, buildOrderEditAdminText, generateOrderId, sanitizePhone, itemsEqual, normalizeItems, PendingOrder } from "@/lib/core/orders";
 import { resolveRuntimeVars, formatLinesForSheet, formatOrderSummary, buildProductNameMap, resolveAiItems, buildAllowedPriceStrings, RuntimeVarContext, PriceResult } from "@/lib/core/pricing";
+import { resolveGeminiTimeouts } from "@/lib/gemini";
 import { computeQuote, unresolvedTransferVars, resolveOrderVars, findBannedClaims, parseClaimsList, findBadPrices, extractBahtNumbers, extractPriceNumbers, dropUnresolvedVarBubbles, resolveAllVars, AllVarsContext } from "@/lib/agent/quote";
 
-const GEMINI_TIMEOUT_MS = 8_000;
+/**
+ * D-69 · เพดานเวลาของ webhook — 🔴 ต้องตรงกับ `export const maxDuration` ใน route.ts
+ * ใช้เป็นงบให้ `resolveGeminiTimeouts` (lib/gemini.ts) คำนวณ/clamp timeout ของ Gemini
+ */
+const WEBHOOK_MAX_DURATION_MS = 60_000;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
   return new Promise((resolve) => {
@@ -265,7 +270,7 @@ function composeReplyV3(args: { geminiOutput: GeminiTurnOutput; imageFallback: b
   if (imageFallback) return { baseReply: imageReceivedReply(config), verbatimMode: false, deliverMarksStep: false };
   if (geminiOutput.degraded) {
     console.warn(JSON.stringify({ scope: "degraded", reason: "gemini-no-output", stage: geminiOutput.stage }));
-    return { baseReply: degradedNoInputReply(config.botName), verbatimMode: false, deliverMarksStep: false };
+    return { baseReply: degradedNoInputReply(config), verbatimMode: false, deliverMarksStep: false };
   }
   // delivered_steps ใน v3 = hint + dedup 🔔 เท่านั้น (A1) — mark ทุกเทิร์นที่เนื้อหาถึงลูกค้าจริง
   return { baseReply: geminiOutput.reply, verbatimMode: false, deliverMarksStep: true };
@@ -724,6 +729,9 @@ export async function processMessage(
   //    (ลูกค้ามี payment=โอน อยู่แล้ว) เลย detect ไม่ได้ → gate คงค่าเก่า · detect ทุกเทิร์นครอบเคสเปลี่ยนด้วย
   const prePayment = ordersActive && customer && preItems.length > 0 && !imageContent
     ? detectPaymentChoice(userMessage) : "";
+  // D-69: timeout จากชีต + การ์ด clamp (คำนวณครั้งเดียวต่อเทิร์น · regen ใช้ค่าเดียวกัน)
+  const timeouts = resolveGeminiTimeouts(config.geminiTimeoutMs, config.debounceWaitMs, WEBHOOK_MAX_DURATION_MS);
+
   let geminiOutput: GeminiTurnOutput = await withTimeout(
       runSalesTurn({
         config,
@@ -737,8 +745,9 @@ export async function processMessage(
         userMessage,
         currentStage: previousStage ?? "1",
         image: imageForGemini,
+        userId, // D-69: ผูกแถว ai_usage กับลูกค้า
       }),
-      GEMINI_TIMEOUT_MS,
+      timeouts.mainMs,
       {
         reply: defaultReply(config.botName),
         stage: previousStage ?? "1",
@@ -997,8 +1006,8 @@ export async function processMessage(
       phrases: config.assuranceBannedPhrases,
       regenerate: (correction) =>
         withTimeout<GeminiTurnOutput | null>(
-          runSalesTurn({ config, configText, stepText, faqText, catalogText, objectionText: objection.text, stateText, historyText, userMessage, currentStage: previousStage ?? "1", image: imageForGemini, correction }),
-          GEMINI_TIMEOUT_MS,
+          runSalesTurn({ config, configText, stepText, faqText, catalogText, objectionText: objection.text, stateText, historyText, userMessage, currentStage: previousStage ?? "1", image: imageForGemini, correction, userId }),
+          timeouts.regenMs, // D-69: regen ได้ครึ่งหนึ่งของคอลหลัก (ทางรอง + มี fallback ตัดบรรทัด)
           null, // timeout = ถือว่า regenerate ล้ม → caller ตกไปตัดประโยค (เจ้าของเคาะ #2)
         ),
       resolveReply: (raw) => resolveAllVars(raw, varCtx),
@@ -1054,6 +1063,12 @@ export async function processMessage(
   // D-45b: ตั้งธง "ส่งเนื้อหา step นี้แล้ว" เฉพาะเมื่อ deliver สำเร็จจริง + เทิร์นนี้มีเนื้อเต็มก้อนของ step อยู่ในข้อความ
   if (deliveredOk && deliverMarksStep && switches.memory && customer) {
     await addDeliveredStep(userId, geminiOutput.stage);
+  }
+
+  // 🔴 D-69: เทิร์นที่ระบบตอบไม่ทัน → แจ้งกลุ่มแอดมิน (ไม่ปิดบอท)
+  //    ข้อความที่บอกลูกค้าว่า "แจ้งทีมแอดมินให้แล้ว" ต้องเป็นจริง — ไม่งั้นคือโกหกลูกค้า
+  if (geminiOutput.degraded && !imageFallback) {
+    await pushSlowSystemNotify(userId, userMessage, transport);
   }
 
   // 🔴 D-61.C2 (v3): ธงสุขภาพต้องแจ้ง "เสมอ" — healthFlagged ตัดสินจาก keyword ตั้งแต่ก่อนเรียก AI
@@ -1423,7 +1438,27 @@ const varFallbackReply = (botName: string) => `ขอสักครู่นะ
 // 🔴 D-46: เทิร์นข้อความล้วนที่ Gemini ไม่ตอบ (blocked/timeout/parse-fail) — บอกตรงว่ายังไม่ได้รับ + ขอให้ส่งใหม่
 //    (ต่างจาก defaultReply "รอสักครู่แล้วทักใหม่" ที่ทำให้ลูกค้านั่งรอเฉยๆ ทั้งที่ข้อมูลเมื่อกี้ไม่ถึง)
 //    🔴 D-61.C2: ห้ามมีคำว่า "รบกวน" (กฎเหล็ก CLAUDE.md) — golden ชั้น D/G มี invariant คุมแล้ว
-const degradedNoInputReply = (botName: string) => `ขออภัยค่ะ ระบบสะดุดนิดหน่อย ${botName}ยังไม่ได้รับข้อความล่าสุดของลูกค้านะคะ ช่วยพิมพ์ส่งมาอีกครั้งนะคะ 🙏`;
+/**
+ * 🔴 D-69: ข้อความตอนระบบตอบไม่ทัน — ตั้งจากชีตได้ (`ข้อความ_ระบบช้า`) · `{ชื่อบอท}` ถูกแทนค่า
+ * ของเดิม ("ยังไม่ได้รับข้อความ ช่วยพิมพ์อีกครั้ง") มี 3 ปัญหา: ไม่จริง · สั่งพิมพ์ซ้ำ (บทยาวขึ้น → ช้าลงอีก
+ * = วงจรที่ทำให้อาการแย่ลงเอง) · สัญญาว่าจะกลับมาตอบทั้งที่ไม่มี retry
+ */
+const degradedNoInputReply = (config: AppConfig) => config.slowSystemMessage.split("{ชื่อบอท}").join(config.botName);
+
+/** 🔴 D-69: เทิร์นที่ระบบตอบไม่ทัน → แจ้งกลุ่มแอดมิน (ไม่ปิดบอท) — ข้อความบอกลูกค้าว่า "แจ้งทีมแอดมินแล้ว" ต้องเป็นจริง */
+async function pushSlowSystemNotify(userId: string, userMessage: string, transport: ChannelTransport): Promise<void> {
+  const adminGroupId = process.env.ADMIN_GROUP_ID;
+  if (!adminGroupId) return;
+  try {
+    const name = await transport.getProfileName();
+    await pushRawText(
+      adminGroupId,
+      `⏳ ระบบตอบไม่ทัน (degraded) — ${channelLabel(userId)} ${name} ยังไม่ได้คำตอบจากบอท ช่วยดูให้หน่อยนะคะ\nข้อความ: ${userMessage}`,
+    );
+  } catch (error) {
+    console.warn(JSON.stringify({ scope: "degraded", warning: "push แจ้งแอดมินไม่สำเร็จ", error: String(error).slice(0, 80) }));
+  }
+}
 
 /** D-61.C2: เนื้อ 🔔 กรณีเทิร์นธงสุขภาพจบแบบลูกค้าไม่ได้คำตอบ — แอดมินต้องตามด่วน (แยกจาก template ในชีต) */
 const HEALTH_NOTIFY_UNANSWERED =

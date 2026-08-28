@@ -36,6 +36,21 @@ export interface AppConfig {
   useEmoji: boolean;
   temperature: number;
   maxOutputTokens: number;
+  /**
+   * D-69 · โมเดล Gemini ที่ใช้ (คีย์ชีต `โมเดล`) — เจ้าของสลับเองได้ ไม่ต้องแก้โค้ด
+   * 🔴 ไม่มีแถวในชีต = `gemini-3.5-flash` (ค่าเดิม · ห้ามพังห้ามปิดฟีเจอร์)
+   */
+  geminiModel: string;
+  /**
+   * D-69 · ระดับการคิด (คีย์ชีต `ระดับการคิด`) — ค่าดิบจากชีต ยังไม่แปลง
+   * gemini-3.x รับ enum (minimal/low/medium/high) · 2.x รับตัวเลข (thinkingBudget)
+   * โค้ดเลือกพารามิเตอร์ให้ถูกตระกูลเองที่ `resolveThinkingConfig` (lib/gemini.ts)
+   */
+  thinkingLevelRaw: string;
+  /** D-69 · timeout คอลหลักของ Gemini (คีย์ชีต `timeout_วินาที` · default 15 วิ) — clamp ตาม maxDuration ที่ handler */
+  geminiTimeoutMs: number;
+  /** D-69 · ข้อความตอนระบบช้า/ตอบไม่ทัน (คีย์ชีต `ข้อความ_ระบบช้า`) — `{ชื่อบอท}` ในข้อความจะถูกแทนค่า */
+  slowSystemMessage: string;
   showTyping: boolean;
   debounceWaitMs: number;
   /** หน่วง_ระหว่างบอลลูน — อ่านไว้แต่ปัจจุบันยังส่งบอลลูนใน reply เดียว (ยังไม่ได้ใช้หน่วงจริง) */
@@ -146,6 +161,21 @@ function splitList(v: string | undefined): string[] | undefined {
   return v.split(",").map((s) => cleanCell(s)).filter(Boolean);
 }
 
+/**
+ * D-69 · ค่าเริ่มต้นของการเรียก Gemini — 🔴 ห้ามเปลี่ยนโมเดลเริ่มต้นในคอมมิตนี้ (เจ้าของจะสลับเองจากชีตแล้ววัด)
+ * ชีตไม่มีแถว = ใช้ค่าพวกนี้ → พฤติกรรมเดิม 100%
+ */
+export const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash";
+export const DEFAULT_THINKING_LEVEL = "low";
+/**
+ * D-69 · ข้อความตอนระบบช้า (แทนของเดิมที่บอกว่า "ยังไม่ได้รับข้อความ ช่วยพิมพ์อีกครั้ง")
+ * 🔴 ของเดิมมี 3 ปัญหา: (1) ไม่จริง — ระบบได้รับแล้วแต่ตอบไม่ทัน (2) สั่งให้พิมพ์ซ้ำ = บทยาวขึ้น → ช้าลงอีก
+ *    (วงจรที่ทำให้อาการแย่ลงเอง) (3) สัญญาว่าจะกลับมาตอบ ทั้งที่ระบบไม่มี retry
+ * ตัวนี้: ไม่โกหก · ไม่สัญญา · ไม่สั่งพิมพ์ซ้ำ · ชวนคุยต่อ (เทิร์นใหม่ = ได้ลองใหม่)
+ */
+export const DEFAULT_SLOW_SYSTEM_MESSAGE =
+  "ขออภัยค่ะ ตอนนี้ระบบตอบช้ากว่าปกตินิดนึงนะคะ {ชื่อบอท}แจ้งทีมแอดมินให้แล้วค่ะ ลูกค้าพิมพ์คุยต่อได้เลยนะคะ";
+
 let cachedConfig: AppConfig | null = null;
 let cachedAt = 0;
 const CONFIG_MEMO_MS = 5_000;
@@ -253,6 +283,13 @@ export async function getConfig(): Promise<AppConfig> {
     // → finishReason=MAX_TOKENS → fallback → ลูกค้าเห็น "ปลาทูขัดข้อง" ตอนกำลังจะจ่ายเงิน
     // ชีตตั้ง 2048 ไว้ ซึ่งไม่พอจริง → โค้ดบังคับพื้นให้ (pattern เดียวกับที่เคยยกจาก 1024→2048)
     maxOutputTokens: Math.max(4096, numOf(4096, "maxOutputTokens", "max_output_tokens")),
+    // ---- D-69: การเรียก Gemini ตั้งจากชีตได้ (เจ้าของปรับเองแล้ววัดผล ไม่ต้องสั่ง CC) ----
+    // 🔴 ไม่มีแถวไหนเลย = ทำงานต่อด้วยค่าเดิมทุกตัว (default ปลอดภัย · ห้ามพัง/ห้ามปิดฟีเจอร์)
+    geminiModel: strOf(DEFAULT_GEMINI_MODEL, "โมเดล", "model", "gemini_model"),
+    thinkingLevelRaw: strOf(DEFAULT_THINKING_LEVEL, "ระดับการคิด", "thinking", "thinking_level"),
+    // 8 → 15 วิ (D-69: บทยาว 274 tokens เคยใช้ 10.7 วิ → degraded ทั้งที่โมเดลตอบได้)
+    geminiTimeoutMs: Math.max(1, numOf(15, "timeout_วินาที", "timeout_วิ", "gemini_timeout")) * 1000,
+    slowSystemMessage: strOf(DEFAULT_SLOW_SYSTEM_MESSAGE, "ข้อความ_ระบบช้า", "ข้อความ_ตอบช้า"),
     showTyping: boolOf(true, "แสดง_typing", "typing"),
     debounceWaitMs: debounceSec * 1000,
     delayBetweenBubblesMs: numOf(1, "หน่วง_ระหว่างบอลลูน", "หน่วง_ระหว่างข้อความ") * 1000,

@@ -139,6 +139,31 @@ export async function ensureSchema(): Promise<void> {
     )
   `;
 
+  /**
+   * D-69 · ai_usage — 1 แถวต่อ 1 การเรียก Gemini
+   * 🔴 log ใน Vercel หายตามเวลา · หน้าสรุปต้นทุน (D-70) ต้องมีข้อมูลย้อนหลัง → เก็บที่นี่ตั้งแต่วันนี้
+   * 🔴 call_kind สำคัญที่สุด: 'regen' = assurance guard ยิงซ้ำ = จ่ายสองเท่าในเทิร์นเดียว
+   *    เจ้าของต้องเห็นว่าเกิดบ่อยแค่ไหน (ถ้าถี่ = ต้องจูน prompt ไม่ใช่จ่ายเพิ่ม)
+   */
+  await sql`
+    CREATE TABLE IF NOT EXISTS ai_usage (
+      id BIGSERIAL PRIMARY KEY,
+      at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      user_id TEXT,
+      channel TEXT,
+      model TEXT NOT NULL,
+      call_kind TEXT NOT NULL,
+      prompt_tokens INTEGER NOT NULL DEFAULT 0,
+      candidates_tokens INTEGER NOT NULL DEFAULT 0,
+      thoughts_tokens INTEGER NOT NULL DEFAULT 0,
+      cached_tokens INTEGER NOT NULL DEFAULT 0,
+      latency_ms INTEGER NOT NULL DEFAULT 0,
+      degraded BOOLEAN NOT NULL DEFAULT false,
+      stage TEXT
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS ai_usage_at_idx ON ai_usage (at DESC)`;
+
   // D-53: สวิตช์บอทราย channel — key "line" | "fb:<pageId>" · ไม่มีแถว = เปิด (default true)
   await sql`
     CREATE TABLE IF NOT EXISTS channel_switches (
@@ -840,4 +865,42 @@ export async function deleteTrainSession(sessionId: string): Promise<void> {
   await ensureSchema();
   const sql = getSql();
   await sql`DELETE FROM train_sessions WHERE session_id = ${sessionId}`;
+}
+
+// ---- D-69 · บันทึกการเรียก Gemini (ต้นทุน/ความเร็ว) ----
+
+/** ประเภทการเรียก — 🔴 'regen' = assurance guard ยิงซ้ำ (จ่ายสองเท่าในเทิร์นเดียว) */
+export type AiCallKind = "main" | "regen" | "extraction";
+
+export interface AiUsageRow {
+  userId: string | null;
+  channel: string | null;
+  model: string;
+  callKind: AiCallKind;
+  promptTokens: number;
+  candidatesTokens: number;
+  thoughtsTokens: number;
+  cachedTokens: number;
+  latencyMs: number;
+  degraded: boolean;
+  stage: string | null;
+}
+
+/**
+ * เขียน 1 แถวต่อ 1 การเรียก — 🔴 **ห้ามบล็อกการตอบลูกค้า**
+ * เขียนพลาด (DB ล่ม/ตารางยังไม่มี) = log warning แล้วผ่านไป บอทต้องตอบต่อได้เสมอ
+ */
+export async function recordAiUsage(row: AiUsageRow): Promise<void> {
+  try {
+    if (!process.env.DATABASE_URL) return; // ไม่มี DB = ข้ามเงียบ (พฤติกรรมเดิม)
+    await ensureSchema();
+    const sql = getSql();
+    await sql`
+      INSERT INTO ai_usage (user_id, channel, model, call_kind, prompt_tokens, candidates_tokens, thoughts_tokens, cached_tokens, latency_ms, degraded, stage)
+      VALUES (${row.userId}, ${row.channel}, ${row.model}, ${row.callKind}, ${row.promptTokens}, ${row.candidatesTokens},
+              ${row.thoughtsTokens}, ${row.cachedTokens}, ${row.latencyMs}, ${row.degraded}, ${row.stage})
+    `;
+  } catch (error) {
+    console.warn(JSON.stringify({ scope: "ai-usage", warning: "บันทึกไม่สำเร็จ (ไม่กระทบการตอบลูกค้า)", error: String(error).slice(0, 120) }));
+  }
 }

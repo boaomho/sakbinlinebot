@@ -52,7 +52,7 @@
 ## Stack — ล็อกไว้ ห้ามเปลี่ยนเอง
 
 - Next.js 14 App Router + TypeScript
-- `@line/bot-sdk` (LINE Messaging API) · `@google/genai` model `gemini-3.5-flash`
+- `@line/bot-sdk` (LINE Messaging API) · `@google/genai` — 🔴 **D-69: โมเดล/ระดับการคิด/timeout ตั้งจาก CSV_Config ได้** (default `gemini-3.5-flash` · ไม่มีแถวในชีต = ค่าเดิม)
 - Neon Postgres · Google Sheet CSV (Step/FAQ/Config) + Google Sheets API (Orders) · Vercel Blob 2 store (สลิป private / สินค้า public)
 - Vercel hosting · external cron (cron-job.org) สำหรับ cron ออเดอร์
 
@@ -71,6 +71,7 @@ diag: `DIAG_PROMPT_TOKENS` (=1 → `gemini.ts` log token จริงต่อ s
 - ❌ เอาข้อความลูกค้าไปต่อเป็น system instruction — ใส่ฝั่ง user content ครอบด้วย tag (กัน injection)
 - ❌ ข้าม verify signature (`x-line-signature`) → 401
 - ❌ ข้าม timeout Gemini (8s) · cache ชีตเกิน 60 วิ · log ข้อความเต็มลูกค้า (PII)
+- ❌ hardcode โมเดล/thinking/timeout ในโค้ด — อ่านจาก CSV_Config (D-69) · 🔴 thinking ต้องเลือกพารามิเตอร์ตามตระกูลโมเดล (3.x=enum · 2.x=ตัวเลข) — ส่งผิดตัว/ส่งทั้งคู่ = HTTP 400
 - ❌ hardcode `maxOutputTokens` < 1024 — gemini-3.x นับ thinking+output รวม ถ้าต่ำจะตอบครึ่งประโยค
 - ❌ ทำฟีเจอร์ครึ่งๆ ตอน env/สวิตช์ไม่ครบ — ปิดทั้งฟีเจอร์ + log เตือน (All-or-nothing)
 - ❌ **เขียนโค้ด/เอกสารรองรับ v2 — v2 ถูกถอดออกหมดแล้ว (D-68)** · ไม่มี `SHEET_SCHEMA`/`prompt/system.ts`/verbatim/คำ_notify อีก · rollback = Vercel Instant Rollback ไม่ใช่สวิตช์ในโค้ด

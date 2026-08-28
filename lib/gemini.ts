@@ -1,6 +1,7 @@
 import { GoogleGenAI, ThinkingLevel, Type, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { buildSalesSystemV3, buildUserContent } from "@/prompt/system-v3";
-import { AppConfig, defaultReply } from "./config";
+import { AppConfig, defaultReply, DEFAULT_GEMINI_MODEL } from "./config";
+import { recordAiUsage, AiCallKind } from "./db";
 import { AiOrderItem } from "./core/pricing";
 
 /**
@@ -15,7 +16,145 @@ export interface OrderDataFromAI {
   items?: AiOrderItem[];
 }
 
-export const MODEL = "gemini-3.5-flash";
+/** @deprecated D-69: ใช้ `config.geminiModel` (ตั้งจากชีตได้) — คงไว้ให้ผู้ช่วยเทรนที่ยังไม่ผูกกับ AppConfig */
+export const MODEL = DEFAULT_GEMINI_MODEL;
+
+/**
+ * D-69 · เลือกพารามิเตอร์ "ระดับการคิด" ให้ถูกตระกูลโมเดล — pure (เทสได้)
+ * 🔴 Gemini 3.x ใช้ `thinkingLevel` (enum) · 2.x ใช้ `thinkingBudget` (int) — **ส่งผิดตัว/ส่งทั้งคู่ = HTTP 400**
+ * ค่าในชีตใช้กับตระกูลนั้นไม่ได้ → log เตือน + ใช้ default ของตระกูล (ห้ามยิงจนพัง)
+ */
+export function resolveThinkingConfig(model: string, raw: string): { thinkingLevel?: ThinkingLevel; thinkingBudget?: number } {
+  const m = (model ?? "").trim().toLowerCase();
+  const v = (raw ?? "").trim().toLowerCase();
+  const isV2 = m.startsWith("gemini-2");
+  const warn = (reason: string, used: string) =>
+    console.warn(JSON.stringify({ scope: "gemini-config", event: "thinking-invalid", model, raw, reason, usedDefault: used }));
+
+  if (isV2) {
+    // ตระกูล 2.x — ต้องเป็นตัวเลข (0 = ปิด · -1 = อัตโนมัติ)
+    const n = Number(v);
+    if (v !== "" && Number.isFinite(n)) return { thinkingBudget: n };
+    warn("gemini-2.x รับ thinkingBudget (ตัวเลข) เท่านั้น", "thinkingBudget=-1 (อัตโนมัติ)");
+    return { thinkingBudget: -1 };
+  }
+  // ตระกูล 3.x (และรุ่นใหม่กว่า) — enum
+  const levels: Record<string, ThinkingLevel> = {
+    minimal: ThinkingLevel.MINIMAL,
+    low: ThinkingLevel.LOW,
+    medium: ThinkingLevel.MEDIUM,
+    high: ThinkingLevel.HIGH,
+  };
+  const hit = levels[v];
+  if (hit) return { thinkingLevel: hit };
+  warn("gemini-3.x รับ enum minimal/low/medium/high เท่านั้น (ตัวเลขใช้ไม่ได้)", "thinkingLevel=LOW");
+  return { thinkingLevel: ThinkingLevel.LOW };
+}
+
+/**
+ * D-69 · งบเวลาต่อเทิร์น — timeout ตั้งจากชีตได้ (`timeout_วินาที`) แต่ต้องอยู่ในเพดาน Vercel
+ * 🔴 การ์ด: debounce + คอลหลัก + regen ≤ maxDuration − HEADROOM
+ *    เผื่อ HEADROOM ไว้ให้ sheet load / Neon / LINE API ที่กินเวลาด้วย (ไม่ใช่แค่ Gemini)
+ * regen (assurance guard) ได้ครึ่งหนึ่งของคอลหลัก — เป็นทางรองและมี fallback ตัดบรรทัดอยู่แล้ว
+ */
+const TIMEOUT_HEADROOM_MS = 6_000;
+
+export interface GeminiTimeouts {
+  mainMs: number;
+  regenMs: number;
+  clamped: boolean;
+}
+
+/** pure: คำนวณ timeout จริงที่ใช้ + clamp ถ้าเกินงบ (เทสได้ · ไม่ต้องยิง Gemini) */
+export function resolveGeminiTimeouts(requestedMainMs: number, debounceMs: number, maxDurationMs: number): GeminiTimeouts {
+  const budget = maxDurationMs - TIMEOUT_HEADROOM_MS - debounceMs;
+  const wanted = Math.max(1_000, requestedMainMs);
+  // main + regen(ครึ่งหนึ่ง) = wanted * 1.5 ต้องอยู่ในงบ
+  if (wanted * 1.5 <= budget) return { mainMs: wanted, regenMs: Math.round(wanted / 2), clamped: false };
+  const fitted = Math.max(1_000, Math.floor(budget / 1.5));
+  console.warn(JSON.stringify({
+    scope: "gemini-config", event: "timeout-clamped",
+    requestedSec: Math.round(requestedMainMs / 1000), usedSec: Math.round(fitted / 1000),
+    debounceSec: Math.round(debounceMs / 1000), maxDurationSec: Math.round(maxDurationMs / 1000),
+    reason: "debounce + main + regen เกินเพดาน maxDuration (เผื่อ headroom 6 วิ)",
+  }));
+  return { mainMs: fitted, regenMs: Math.round(fitted / 2), clamped: true };
+}
+
+/**
+ * D-69 · ราคาต่อ 1M tokens (USD) — 🔴 **ตัวเลขประมาณเท่านั้น สำหรับดูแนวโน้ม/เทียบรุ่น**
+ * ตัวเลขที่ใช้ตัดสินใจจริง = cost log รายวันของ Google ต่อ API key (เจ้าของมีอยู่แล้ว · D-70 ใช้เป็นตัวหลัก)
+ * อ้างอิง ai.google.dev/gemini-api/docs/pricing · ดึงเมื่อ 2026-08-28
+ * ⚠️ 3.6/3.7-flash เป็น **ราคาโปรถึง 31 ธ.ค. 2026** หลังจากนั้นขึ้นเป็น 2 เท่า (input 1.50 / output 7.50)
+ * 🔴 โมเดลที่ไม่อยู่ในตาราง = ไม่เดาราคา (log ว่าไม่ทราบ)
+ */
+const PRICE_PER_1M_USD: Record<string, { in: number; out: number; cached: number }> = {
+  "gemini-3.5-flash": { in: 1.5, out: 9.0, cached: 0.15 },
+  "gemini-3.6-flash": { in: 0.75, out: 3.75, cached: 0.075 },
+  "gemini-3.7-flash": { in: 0.75, out: 3.75, cached: 0.075 },
+};
+/** อัตราแลกเปลี่ยนคร่าว ๆ สำหรับอ่านง่าย (ไม่ใช่ตัวเลขบัญชี) */
+const USD_TO_THB = 35;
+
+export interface AiCallUsage {
+  model: string;
+  promptTokens: number;
+  candidatesTokens: number;
+  thoughtsTokens: number;
+  cachedTokens: number;
+  latencyMs: number;
+  costUsd: number | null;
+  costThb: number | null;
+}
+
+/** ประเมินค่าใช้จ่ายต่อการเรียก 1 ครั้ง — null = ไม่รู้ราคาโมเดลนี้ (ไม่เดา) */
+function estimateCost(model: string, promptTokens: number, outputTokens: number, cachedTokens: number): number | null {
+  const price = PRICE_PER_1M_USD[(model ?? "").trim().toLowerCase()];
+  if (!price) return null;
+  const fresh = Math.max(0, promptTokens - cachedTokens);
+  return (fresh * price.in + cachedTokens * price.cached + outputTokens * price.out) / 1_000_000;
+}
+
+/**
+ * D-69 · สรุป usage ของการเรียก 1 ครั้ง + log + บันทึกลง Neon (fire-and-forget)
+ * 🔴 เขียน DB ห้ามบล็อก/ห้ามทำให้บอทเงียบ — พลาดก็แค่ log
+ */
+/** D-69: prefix user_id → channel (ทะเบียนเดียวกับ REPO-MAP §5) */
+function channelOfUserId(userId: string | undefined): string | null {
+  if (!userId) return null;
+  if (userId.startsWith("fb:")) return "fb";
+  if (userId.startsWith("TRAIN:")) return "train";
+  return "line";
+}
+
+function reportUsage(
+  kind: AiCallKind,
+  model: string,
+  usage: { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number; cachedContentTokenCount?: number } | undefined,
+  latencyMs: number,
+  extra: Record<string, unknown> = {},
+): AiCallUsage {
+  const promptTokens = usage?.promptTokenCount ?? 0;
+  const candidatesTokens = usage?.candidatesTokenCount ?? 0;
+  const thoughtsTokens = usage?.thoughtsTokenCount ?? 0;
+  const cachedTokens = usage?.cachedContentTokenCount ?? 0;
+  const costUsd = estimateCost(model, promptTokens, candidatesTokens + thoughtsTokens, cachedTokens);
+  const out: AiCallUsage = {
+    model, promptTokens, candidatesTokens, thoughtsTokens, cachedTokens, latencyMs,
+    costUsd,
+    costThb: costUsd === null ? null : costUsd * USD_TO_THB,
+  };
+  console.log(JSON.stringify({
+    scope: "ai-usage", callKind: kind, model, latencyMs,
+    promptTokens, candidatesTokens, thoughtsTokens, cachedTokens,
+    // cachedTokens > 0 = implicit caching ทำงานอยู่ (Gemini 2.5+ เปิดเองอัตโนมัติ · ขั้นต่ำ 4,096 tok)
+    costUsd: costUsd === null ? "unknown-model-price" : Number(costUsd.toFixed(6)),
+    costThb: out.costThb === null ? "unknown-model-price" : Number(out.costThb.toFixed(4)),
+    priceNote: "ประมาณเท่านั้น — ตัวเลขจริงดู cost log ของ Google",
+    ...extra,
+  }));
+  return out;
+}
 
 /**
  * safetySettings = OFF ทั้ง 5 หมวดที่ปรับได้ (D-46) — บอทรับออเดอร์: ชื่อ/ที่อยู่/เบอร์/เลขบัญชี/สลิป
@@ -50,6 +189,8 @@ export interface GeminiTurnInput {
   image?: GeminiImageInput;
   /** D-61.A (v3): regenerate 1 ครั้งจาก assurance guard — ข้อความแก้ไขแนบท้าย user content (v2 ไม่ใช้) */
   correction?: string;
+  /** D-69: ผูกแถว ai_usage กับลูกค้า (optional · ไม่ส่ง = บันทึกเป็น null) */
+  userId?: string;
 }
 
 /** ช่องทางชำระเงินที่ AI ประเมินใหม่ทุกเทิร์นจากบทสนทนาล่าสุด · "" = ยังไม่ตัดสิน */
@@ -242,19 +383,27 @@ async function runExtraction(input: GeminiTurnInput): Promise<GeminiTurnOutput |
     "สกัดจาก \"ข้อความลูกค้า\" ด้านล่าง: ชื่อผู้รับ / ที่อยู่จัดส่ง (ก้อนดิบตามที่พิมพ์) / เบอร์โทร / " +
     "วิธีชำระ (payment_method = \"โอน\" หรือ \"COD\" หรือ \"\") / จำนวนสินค้า (items:[{qty}])\n" +
     "🔴 ใส่เฉพาะที่ลูกค้าให้จริงในข้อความนี้ · ไม่ได้ให้ = เว้นว่าง/ไม่ใส่ key · ห้ามเดา · เลขจำนวน = qty ไม่ใช่เบอร์";
+  const model = input.config.geminiModel;
+  const startedAt = Date.now();
   try {
     const response = await getClient().models.generateContent({
-      model: MODEL,
+      model,
       contents: [{ text: `ข้อความลูกค้า: ${input.userMessage}` }],
       config: {
         systemInstruction: system,
         temperature: 0.1,
         maxOutputTokens: 1024,
-        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+        thinkingConfig: resolveThinkingConfig(model, input.config.thinkingLevelRaw),
         responseMimeType: "application/json",
         responseSchema: EXTRACT_SCHEMA,
         safetySettings: SAFETY_SETTINGS,
       },
+    });
+    const eu = reportUsage("extraction", model, response.usageMetadata, Date.now() - startedAt, { stage: input.currentStage });
+    void recordAiUsage({
+      userId: input.userId ?? null, channel: channelOfUserId(input.userId), model, callKind: "extraction",
+      promptTokens: eu.promptTokens, candidatesTokens: eu.candidatesTokens, thoughtsTokens: eu.thoughtsTokens,
+      cachedTokens: eu.cachedTokens, latencyMs: eu.latencyMs, degraded: false, stage: input.currentStage,
     });
     const text = response.text;
     if (!text) {
@@ -362,7 +511,7 @@ export async function runSalesTurn(input: GeminiTurnInput): Promise<GeminiTurnOu
     const countTok = async (text: string): Promise<number> => {
       if (!text) return 0;
       try {
-        const r = await getClient().models.countTokens({ model: MODEL, contents: text });
+        const r = await getClient().models.countTokens({ model: input.config.geminiModel, contents: text });
         return r.totalTokens ?? -1;
       } catch {
         return -1;
@@ -390,15 +539,20 @@ export async function runSalesTurn(input: GeminiTurnInput): Promise<GeminiTurnOu
     );
   }
 
+  // D-69: โมเดล + ระดับการคิด ตั้งจากชีตได้ · ไม่มีแถว = ค่าเดิม (gemini-3.5-flash / low)
+  const model = input.config.geminiModel;
+  const thinkingConfig = resolveThinkingConfig(model, input.config.thinkingLevelRaw);
+  const startedAt = Date.now();
+
   try {
     const response = await getClient().models.generateContent({
-      model: MODEL,
+      model,
       contents: parts,
       config: {
         systemInstruction,
         temperature: input.config.temperature,
         maxOutputTokens: input.config.maxOutputTokens,
-        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+        thinkingConfig,
         responseMimeType: "application/json",
         responseSchema: RESPONSE_SCHEMA,
         safetySettings: SAFETY_SETTINGS, // D-46: OFF 5 หมวด (บอทรับ PII เป็นเนื้องาน)
@@ -407,9 +561,18 @@ export async function runSalesTurn(input: GeminiTurnInput): Promise<GeminiTurnOu
 
     const finishReason = response.candidates?.[0]?.finishReason;
     const usage = response.usageMetadata;
+    // D-69: kind = regen เมื่อมี correction (assurance guard ยิงซ้ำ = จ่ายสองเท่าในเทิร์นเดียว)
+    const kind: AiCallKind = input.correction ? "regen" : "main";
+    const u = reportUsage(kind, model, usage, Date.now() - startedAt, { finishReason, stage: input.currentStage });
+    void recordAiUsage({
+      userId: input.userId ?? null, channel: channelOfUserId(input.userId), model, callKind: kind,
+      promptTokens: u.promptTokens, candidatesTokens: u.candidatesTokens, thoughtsTokens: u.thoughtsTokens,
+      cachedTokens: u.cachedTokens, latencyMs: u.latencyMs, degraded: finishReason === "MAX_TOKENS", stage: input.currentStage,
+    });
     // thinking+output ใช้เพดานร่วมกัน → ต้องเห็นสัดส่วนถึงจะรู้ว่าใครกิน budget
     const budget = {
       finishReason,
+      model,
       maxOutputTokens: input.config.maxOutputTokens,
       thoughtsTokenCount: usage?.thoughtsTokenCount, // thinking กินเท่าไหร่
       candidatesTokenCount: usage?.candidatesTokenCount, // คำตอบจริงกินเท่าไหร่

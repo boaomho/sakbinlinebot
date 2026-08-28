@@ -119,7 +119,7 @@ describe("D-51 ทักทายรายวัน — เติม prefix บ�
     scriptGemini([turn({ reply: "AI", stage: "S1", degraded: true })]);
     await sendText(U, "สนใจ");
     expect(firstText(0), "degraded = ไม่ทัก").not.toMatch(/^สวัสดีค่ะ /);
-    expect(customerText()).toContain("ยังไม่ได้รับข้อความล่าสุด");
+    expect(customerText(), "D-69: ข้อความระบบช้า").toContain("ระบบตอบช้ากว่าปกติ");
   });
 
   it("config ค่าว่าง → ปิดฟีเจอร์ (ไม่มี prefix)", async () => {
@@ -139,7 +139,8 @@ describe("D-51 ทักทายรายวัน — เติม prefix บ�
 
 // ──────────────────────────── 3 · D-46 degraded ────────────────────────────
 describe("D-46 degraded — Gemini ไม่ตอบ (blocked/timeout) → ข้อความขัดข้อง ไม่ยัดเนื้อ step", () => {
-  const DEGRADED = "ยังไม่ได้รับข้อความล่าสุด";
+  // 🔴 D-69: ข้อความเปลี่ยน — เดิมบอกว่า "ยังไม่ได้รับข้อความ" (ไม่จริง) + สั่งให้พิมพ์ซ้ำ (วงจรบทยาว→ช้าลง)
+  const DEGRADED = "ระบบตอบช้ากว่าปกติ";
 
   it("🔴 degraded + step เคยส่งแล้ว → ข้อความขัดข้อง (ไม่ resend เนื้อ step = รากบั๊กลูปขอที่อยู่)", async () => {
     harnessOverrides.config = { raw: cfg() };
