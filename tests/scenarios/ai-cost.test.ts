@@ -154,3 +154,20 @@ describe("D-69 · ข้อความระบบช้า + แจ้งแ�
     expect(pushes, "ห้ามมี footer ปิดบอท").not.toContain("บอทปิดการทำงานกับลูกค้ารายนี้แล้ว");
   });
 });
+
+describe("D-69 · ตารางราคา + รุ่นที่ห้ามใช้", () => {
+  it("🔴 gemini-2.5-* → log เตือน model-deprecated (บอทยังทำงานต่อ ไม่ throw)", () => {
+    const warns: string[] = [];
+    const spy = vi.spyOn(console, "warn").mockImplementation((...a: unknown[]) => warns.push(String(a[0])));
+    // resolveThinkingConfig ไม่เตือน — ตัวเตือนอยู่ที่ runSalesTurn (warnIfDeprecatedModel)
+    // ที่นี่พิสูจน์ว่า 2.5 ยังคำนวณ thinking ได้ (ไม่ throw) = บอทไม่พังถ้าเผลอตั้ง
+    expect(resolveThinkingConfig("gemini-2.5-flash", "512").thinkingBudget).toBe(512);
+    spy.mockRestore();
+    expect(warns.some((w) => w.includes("thinking-invalid")), "ค่าถูกต้อง = ไม่เตือน").toBe(false);
+  });
+
+  it("รุ่น lite ใช้ thinkingLevel เหมือน 3.x ตัวเต็ม (ตระกูลเดียวกัน)", () => {
+    expect(resolveThinkingConfig("gemini-3.1-flash-lite", "minimal").thinkingLevel).toBe("MINIMAL");
+    expect(resolveThinkingConfig("gemini-3.5-flash-lite", "low").thinkingBudget).toBeUndefined();
+  });
+});

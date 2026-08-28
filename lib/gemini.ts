@@ -82,17 +82,41 @@ export function resolveGeminiTimeouts(requestedMainMs: number, debounceMs: numbe
 }
 
 /**
- * D-69 · ราคาต่อ 1M tokens (USD) — 🔴 **ตัวเลขประมาณเท่านั้น สำหรับดูแนวโน้ม/เทียบรุ่น**
+ * D-69 · ราคาต่อ 1M tokens (USD · text/image/video) — 🔴 **ตัวเลขประมาณเท่านั้น สำหรับดูแนวโน้ม/เทียบรุ่น**
  * ตัวเลขที่ใช้ตัดสินใจจริง = cost log รายวันของ Google ต่อ API key (เจ้าของมีอยู่แล้ว · D-70 ใช้เป็นตัวหลัก)
- * อ้างอิง ai.google.dev/gemini-api/docs/pricing · ดึงเมื่อ 2026-08-28
- * ⚠️ 3.6/3.7-flash เป็น **ราคาโปรถึง 31 ธ.ค. 2026** หลังจากนั้นขึ้นเป็น 2 เท่า (input 1.50 / output 7.50)
+ *
+ * 📅 **อ้างอิง ai.google.dev/gemini-api/docs/pricing · ดึงเมื่อ 2026-08-28**
+ * ⏳ **วันหมดอายุ/วันขึ้นราคาต่อรุ่น** (คอลัมน์ `note` ในตาราง — ต้องทบทวนเมื่อถึงกำหนด):
+ *   · `gemini-3.6-flash` / `gemini-3.7-flash` — ราคาโปร **ถึง 31 ธ.ค. 2026** แล้วขึ้นเป็น 2 เท่า (in 1.50 / out 7.50)
+ *   · `gemini-3.1-flash-lite` / `gemini-3.5-flash-lite` — ราคามาตรฐาน ยังไม่มีกำหนดเปลี่ยน
+ *   · 🔴 `gemini-2.5-*` — **Google ปิดบริการ 16 ต.ค. 2026 (ข้อมูลจากเจ้าของ)** → **ห้ามใช้**
+ *     คงราคาไว้ในตารางเพื่อความครบเท่านั้น (เผื่ออ่าน log เก่าย้อนหลัง) · ตั้งในชีตแล้วจะโดน log เตือน
  * 🔴 โมเดลที่ไม่อยู่ในตาราง = ไม่เดาราคา (log ว่าไม่ทราบ)
  */
-const PRICE_PER_1M_USD: Record<string, { in: number; out: number; cached: number }> = {
-  "gemini-3.5-flash": { in: 1.5, out: 9.0, cached: 0.15 },
-  "gemini-3.6-flash": { in: 0.75, out: 3.75, cached: 0.075 },
-  "gemini-3.7-flash": { in: 0.75, out: 3.75, cached: 0.075 },
+const PRICE_PER_1M_USD: Record<string, { in: number; out: number; cached: number; note?: string }> = {
+  // ---- ใช้งานได้ (เรียงจากแพงไปถูก) ----
+  "gemini-3.5-flash": { in: 1.5, out: 9.0, cached: 0.15, note: "baseline ปัจจุบัน · แพงสุดในกลุ่ม flash" },
+  "gemini-3.6-flash": { in: 0.75, out: 3.75, cached: 0.075, note: "ราคาโปรถึง 2026-12-31 แล้วขึ้น 2 เท่า" },
+  "gemini-3.7-flash": { in: 0.75, out: 3.75, cached: 0.075, note: "ราคาโปรถึง 2026-12-31 แล้วขึ้น 2 เท่า" },
+  "gemini-3.5-flash-lite": { in: 0.3, out: 2.5, cached: 0.03 },
+  "gemini-3.1-flash-lite": { in: 0.25, out: 1.5, cached: 0.025, note: "ถูกสุดที่ใช้ได้" },
+  // ---- 🔴 DEPRECATED — ห้ามใช้ (Google ปิด 2026-10-16) · ไว้อ่าน log เก่าเท่านั้น ----
+  "gemini-2.5-flash": { in: 0.3, out: 2.5, cached: 0.03, note: "🔴 DEPRECATED ปิด 2026-10-16 ห้ามใช้" },
+  "gemini-2.5-flash-lite": { in: 0.1, out: 0.4, cached: 0.01, note: "🔴 DEPRECATED ปิด 2026-10-16 ห้ามใช้" },
 };
+
+/** 🔴 รุ่นที่ Google จะปิด — ตั้งในชีตแล้วต้องเตือนดัง ๆ (บอทยังทำงานต่อ ไม่พัง) */
+const DEPRECATED_MODEL_PREFIXES = ["gemini-2.5", "gemini-2.0", "gemini-1."];
+
+/** เตือนเมื่อชีตตั้งโมเดลที่จะถูกปิด — เรียกครั้งเดียวต่อการเรียก (ไม่ throw) */
+function warnIfDeprecatedModel(model: string): void {
+  const m = (model ?? "").trim().toLowerCase();
+  if (!DEPRECATED_MODEL_PREFIXES.some((p) => m.startsWith(p))) return;
+  console.warn(JSON.stringify({
+    scope: "gemini-config", event: "model-deprecated", model,
+    reason: "Google ปิดบริการรุ่นนี้ (2.5 = 16 ต.ค. 2026) — เปลี่ยนคีย์ `โมเดล` ในชีตเป็นรุ่น 3.x",
+  }));
+}
 /** อัตราแลกเปลี่ยนคร่าว ๆ สำหรับอ่านง่าย (ไม่ใช่ตัวเลขบัญชี) */
 const USD_TO_THB = 35;
 
@@ -541,6 +565,7 @@ export async function runSalesTurn(input: GeminiTurnInput): Promise<GeminiTurnOu
 
   // D-69: โมเดล + ระดับการคิด ตั้งจากชีตได้ · ไม่มีแถว = ค่าเดิม (gemini-3.5-flash / low)
   const model = input.config.geminiModel;
+  warnIfDeprecatedModel(model);
   const thinkingConfig = resolveThinkingConfig(model, input.config.thinkingLevelRaw);
   const startedAt = Date.now();
 
