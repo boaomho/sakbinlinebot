@@ -199,7 +199,7 @@ export async function getConfig(): Promise<AppConfig> {
   }
 
   const lib = await loadBotLibrary();
-  const rows = lib?.CSV_Config ?? null;
+  const rows = lib?.Config ?? null;
   const raw = new Map<string, string>();
   let loadFailed = false;
   let promptVisibleKeys: Set<string> | null = null; // D-61.B: null = ชีตไม่มีคอลัมน์ "เข้า prompt" (v2) → ดัมพ์หมดเหมือนเดิม
@@ -226,7 +226,7 @@ export async function getConfig(): Promise<AppConfig> {
     }
   } else {
     loadFailed = true;
-    console.warn(JSON.stringify({ scope: "config", warning: "CSV_Config โหลดไม่ได้ (SHEET_BOTLIB_V3_ID?) ใช้ค่า default" }));
+    console.warn(JSON.stringify({ scope: "config", warning: "Config โหลดไม่ได้ (SHEET_BOTLIB_ID?) ใช้ค่า default" }));
   }
 
   // lookup แบบรับหลายชื่อ (alias) กันชื่อคีย์ในชีตเพี้ยนจากที่โค้ดคาด (เช่น มี/ไม่มี suffix หน่วย)
@@ -277,7 +277,7 @@ export async function getConfig(): Promise<AppConfig> {
     shopName: strOf("สากบิน", "ชื่อร้าน/แบรนด์", "ชื่อร้าน"),
     personaGender: strOf("หญิง", "เพศบอท"),
     useEmoji: boolOf(false, "ใช้ emoji", "ใช้_emoji", "emoji"),
-    temperature: numOf(0.2, "temperature"), // 🔴 D-44: บทบาท "จำแนกและสกัด" ต้องนิ่ง (เดิม 1.0 = นักขายสร้างสรรค์) · ชีต CSV_Config ตั้งทับได้
+    temperature: numOf(0.2, "temperature"), // 🔴 D-44: บทบาท "จำแนกและสกัด" ต้องนิ่ง (เดิม 1.0 = นักขายสร้างสรรค์) · ชีต Config ตั้งทับได้
     // 🔴 พื้น 4096 — gemini-3.x นับ thinking+output รวมกันในเพดานนี้
     // ของจริงเคยชน 2032/2048 ตอนเทิร์นสรุปออเดอร์ (เทิร์นปิดการขาย = เทิร์นที่แพงที่สุด)
     // → finishReason=MAX_TOKENS → fallback → ลูกค้าเห็น "ปลาทูขัดข้อง" ตอนกำลังจะจ่ายเงิน
@@ -350,9 +350,9 @@ export function resolveFeatureSwitches(config: AppConfig): FeatureSwitches {
   // 🔴 Step 1: อ่านทุกแท็บ (Step/FAQ/Config) จาก BotLibrary ตัวเดียว → เช็ค SHEET_BOTLIB_ID
   // (เดิมเช็ค SHEET_STEP_URL + FAQ + CONFIG · ต้องเปลี่ยนพร้อม getConfig ในคอมมิตเดียว
   //  ไม่งั้น deploy กลางคัน salesCore=false บอทตายทั้งตัว)
-  const salesCore = Boolean(process.env.SHEET_BOTLIB_V3_ID);
+  const salesCore = Boolean(process.env.SHEET_BOTLIB_ID);
   if (!salesCore) {
-    warnDisabled("salesCore", "ต้องมี SHEET_BOTLIB_V3_ID (BotLibrary spreadsheet)");
+    warnDisabled("salesCore", "ต้องมี SHEET_BOTLIB_ID (BotLibrary spreadsheet)");
   }
 
   const memory = Boolean(process.env.DATABASE_URL);
@@ -387,10 +387,10 @@ export function resolveFeatureSwitches(config: AppConfig): FeatureSwitches {
     warnDisabled("orders", "ต้องมี ORDER_GROUP_ID + GOOGLE_SERVICE_ACCOUNT + SHEET_ORDERS_ID + BLOB_SLIPS_TOKEN + memory ครบทุกตัว");
   }
 
-  const followReady = Boolean(process.env.SHEET_BOTLIB_V3_ID && memory); // CSV_Follow อยู่ใน BotLibrary แล้ว
+  const followReady = Boolean(process.env.SHEET_BOTLIB_ID && memory); // Follow อยู่ใน BotLibrary แล้ว
   const follow = config.rawSwitches.follow && followReady;
   if (config.rawSwitches.follow && !followReady) {
-    warnDisabled("follow", "ต้องมี SHEET_BOTLIB_V3_ID + memory (DATABASE_URL)");
+    warnDisabled("follow", "ต้องมี SHEET_BOTLIB_ID + memory (DATABASE_URL)");
   }
 
   const flexCards = config.rawSwitches.flexCards;

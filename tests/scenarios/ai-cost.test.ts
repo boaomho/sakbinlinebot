@@ -13,7 +13,7 @@ import { resolveThinkingConfig, resolveGeminiTimeouts } from "@/lib/gemini";
 const U = "U" + "d69".padEnd(32, "0");
 
 /**
- * seed CSV_Config แล้วอ่านด้วย getConfig **ตัวจริง**
+ * seed Config แล้วอ่านด้วย getConfig **ตัวจริง**
  * 🔴 harness mock `@/lib/config.getConfig` ให้คืน fixture → ถ้าเรียกตัว mock จะไม่ได้พิสูจน์ว่า "อ่านจากชีตจริง"
  *    ต้อง importActual เหมือน v3-adapter.test.ts (เส้นทางเดียวกับ prod: loader → adapter → getConfig)
  */

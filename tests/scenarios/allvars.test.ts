@@ -87,7 +87,7 @@ describe("resolveAllVars — pass เดียว ครบทุกกลุ่
   });
 });
 
-describe("D-43 · catalog/config/composed/CSV_Vars resolvers", () => {
+describe("D-43 · catalog/config/composed/Vars resolvers", () => {
   it("catalog ใหม่: {เลข อย.}/{ราคาต่อหน่วย}/{รูปสินค้า}(URL ดิบ)", () => {
     const out = resolveCatalogVars("{เลข อย.} {ราคาต่อหน่วย} [[รูป:{รูปสินค้า}]]", productsRows(), promoRows(), NOW);
     expect(out).toBe("22-2-02365-6-0041 95 [[รูป:https://ex/npt.jpg]]");
@@ -111,11 +111,11 @@ describe("D-43 · catalog/config/composed/CSV_Vars resolvers", () => {
     expect(findBadPrices(resolved, allowed), "30/275 ต้องอยู่ใน allowed").toEqual([]);
   });
 
-  it("CSV_Vars: loadLiveVars กรอง draft + แถวกติกา (เหลือ live)", () => {
+  it("Vars: loadLiveVars กรอง draft + แถวกติกา (เหลือ live)", () => {
     const live = loadLiveVars(varsRows());
     expect(live.map((v) => v.name)).toEqual(["{สัดส่วนปลาทู}"]);
   });
-  it("🔴 CSV_Vars ชื่อชนตัวแปรระบบ → ระบบชนะ ({ชื่อสินค้า} ไม่ถูกแทนด้วยค่า Vars)", () => {
+  it("🔴 Vars ชื่อชนตัวแปรระบบ → ระบบชนะ ({ชื่อสินค้า} ไม่ถูกแทนด้วยค่า Vars)", () => {
     const rows = [["ตัวแปร", "ค่า", "หมายเหตุ", "สถานะ"], ["{ชื่อสินค้า}", "ของปลอม", "", "live"], ["{สัดส่วนปลาทู}", "45%", "", "live"]];
     expect(resolveCsvVars("{ชื่อสินค้า} {สัดส่วนปลาทู}", rows, KNOWN_RUNTIME_VARS)).toBe("{ชื่อสินค้า} 45%");
   });

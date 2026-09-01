@@ -1,6 +1,6 @@
 import { resolveAllVars, KNOWN_RUNTIME_VARS, computeQuote, AllVarsContext } from "@/lib/agent/quote";
 import { buildProductNameMap, RuntimeVarContext } from "@/lib/core/pricing";
-import { joinVerbatimParts, buildFaqInjection, buildObjectionInjection } from "@/lib/agent/inject";
+import { joinVerbatimParts, buildFaqInjection } from "@/lib/agent/inject";
 import { cleanHeader, cleanCell } from "@/lib/sheets/clean";
 import { tabKeyColumn } from "./sandbox";
 import { lintPattern, LintFinding } from "./lint";
@@ -17,10 +17,9 @@ const EMPTY_VARS: RuntimeVarContext = { summary: null, total: null, payment: nul
 
 /** คอลัมน์ที่แก้ได้ (=บอลลูน) ต่อแท็บ */
 export const EDITABLE_COLS: Record<string, string[]> = {
-  CSV_Step: ["ตัวอย่างคำตอบ", "ตัวอย่างประโยคปิดท้าย"],
-  CSV_Objections: ["ตัวอย่างคำตอบ"],
-  CSV_FAQ: ["คำตอบ"],
-  CSV_Vars: ["ค่า"],
+  Steps: ["ตัวอย่างคำตอบ", "ตัวอย่างประโยคปิดท้าย"],
+  Knowledge: ["คำตอบ"],
+  Vars: ["ค่า"],
 };
 
 export interface ReplySource {
@@ -68,7 +67,7 @@ function replySource(lib: BotLibrary, tab: string, key: string): ReplySource | n
   const keyCol = tabKeyColumn(tab);
   if (!row || !keyCol) return null;
   const cols = EDITABLE_COLS[tab] ?? [];
-  const label = tab === "CSV_FAQ" ? `${tab} · ${key.slice(0, 24)}` : `${tab} · ${key}`;
+  const label = tab === "Knowledge" ? `${tab} · ${key.slice(0, 24)}` : `${tab} · ${key}`;
   return { tab, key, keyCol, label, columns: cols.map((name) => ({ name, value: row[name] ?? "" })) };
 }
 
@@ -78,7 +77,7 @@ export function buildTrainVarCtx(customer: CustomerState | null, lib: BotLibrary
   const pending = customer?.pendingOrder ?? {};
   const quote = computeQuote(pending, lib, config, now);
   const lastOrder = customer?.lastOrder ?? null;
-  const nameMap = buildProductNameMap(lib.CSV_Products ?? []);
+  const nameMap = buildProductNameMap(lib.Products ?? []);
   const lastOrderItemsText = lastOrder?.items?.length
     ? lastOrder.items.map((it) => `${nameMap.get(it.sku) ?? it.sku} x${it.qty}`).join(" · ")
     : "";
@@ -88,19 +87,18 @@ export function buildTrainVarCtx(customer: CustomerState | null, lib: BotLibrary
     lastOrder,
     lastOrderItemsText,
     pending,
-    products: lib.CSV_Products ?? [],
-    promo: lib.CSV_Promo ?? [],
-    varsRows: lib.CSV_Vars ?? [],
+    products: lib.Products ?? [],
+    promo: lib.Promo ?? [],
+    varsRows: lib.Vars ?? [],
     now,
   };
 }
 
 /** คอลัมน์ "สิ่งที่ลูกค้าพูด/ถาม" ต่อแท็บ — ใช้ตรวจ H1: ถ้าแถวนี้ trigger เรื่องสุขภาพ คำตอบต้องเป็น handoff */
 const H1_TRIGGER_COLS: Record<string, string[]> = {
-  CSV_FAQ: ["คำถาม", "keywords"],
-  CSV_Objections: ["ลูกค้าพูดแบบไหนบ้าง"],
-  CSV_Step: [],
-  CSV_Vars: [],
+  Knowledge: ["คำถาม", "keywords"],
+  Steps: [],
+  Vars: [],
 };
 
 /** รวมข้อความ trigger (คำถาม/สิ่งที่ลูกค้าพูด) ของแถว — ป้อน lintHealthH1 คู่กับคำตอบ */
@@ -108,19 +106,18 @@ export function triggerTextForTab(tab: string, cols: Record<string, string>): st
   return (H1_TRIGGER_COLS[tab] ?? []).map((c) => cols[c] ?? "").filter(Boolean).join(" ");
 }
 
-/** D-58: ประตู CSV_Step funnel=handoff/handoff_notify → ยกเว้น H1 block (คำตอบสุขภาพเป็นดีไซน์) · notify → +warn วลีรับรอง */
+/** D-58: ประตู Steps funnel=handoff/handoff_notify → ยกเว้น H1 block (คำตอบสุขภาพเป็นดีไซน์) · notify → +warn วลีรับรอง */
 export function h1FlagsForRow(tab: string, cols: Record<string, string>): { h1Exempt: boolean; h1Notify: boolean } {
-  if (tab !== "CSV_Step") return { h1Exempt: false, h1Notify: false };
+  if (tab !== "Steps") return { h1Exempt: false, h1Notify: false };
   const f = (cols["funnel_stage"] ?? "").toLowerCase();
   return { h1Exempt: f === "handoff" || f === "handoff_notify", h1Notify: f === "handoff_notify" };
 }
 
 /** สร้างแพตเทิร์นจากคอลัมน์ (draft ทับแล้ว) ตามแท็บ — reuse โดย write.ts (lint gate) */
 export function patternFromColumns(tab: string, cols: Record<string, string>): string {
-  if (tab === "CSV_Step") return joinVerbatimParts(cols["ตัวอย่างคำตอบ"] ?? "", cols["ตัวอย่างประโยคปิดท้าย"] ?? "");
-  if (tab === "CSV_Objections") return (cols["ตัวอย่างคำตอบ"] ?? "").trim();
-  if (tab === "CSV_FAQ") return (cols["คำตอบ"] ?? "").trim();
-  if (tab === "CSV_Vars") return (cols["ค่า"] ?? "").trim();
+  if (tab === "Steps") return joinVerbatimParts(cols["ตัวอย่างคำตอบ"] ?? "", cols["ตัวอย่างประโยคปิดท้าย"] ?? "");
+  if (tab === "Knowledge") return (cols["คำตอบ"] ?? "").trim();
+  if (tab === "Vars") return (cols["ค่า"] ?? "").trim();
   return "";
 }
 
@@ -162,7 +159,7 @@ export function renderPreview(
   });
 
   const payment = customer?.pendingOrder["การชำระเงิน"] ?? "";
-  const lint = lintPattern(rawPattern, { config, lib, payment, now, trigger: triggerTextForTab(tab, cols), ...h1FlagsForRow(tab, cols), varName: tab === "CSV_Vars" ? key : undefined });
+  const lint = lintPattern(rawPattern, { config, lib, payment, now, trigger: triggerTextForTab(tab, cols), ...h1FlagsForRow(tab, cols), varName: tab === "Vars" ? key : undefined });
 
   return { rawPattern, columns: Object.entries(cols).filter(([k]) => (EDITABLE_COLS[tab] ?? []).includes(k)).map(([name, value]) => ({ name, value })), segments, vars, lint };
 }
@@ -182,20 +179,16 @@ export function buildReplySources(
   const stage = (vb?.stage as string | undefined) ?? fallbackStage ?? "";
   const out: (ReplySource | null)[] = [];
 
-  if (source === "objection") {
-    const obj = buildObjectionInjection(lib.CSV_Objections, userMessage, 5);
-    if (obj.verbatim) out.push(replySource(lib, "CSV_Objections", obj.verbatim.id));
-    out.push(replySource(lib, "CSV_Step", stage)); // กลับบ้าน
-  } else if (source === "faq") {
-    const faq = buildFaqInjection(lib.CSV_FAQ, userMessage);
+  if (source === "faq") {
+    const faq = buildFaqInjection(lib.Knowledge, userMessage);
     if (faq.verbatim) {
-      const key = faqKeyByAnswer(lib.CSV_FAQ, faq.verbatim.answer);
-      if (key) out.push(replySource(lib, "CSV_FAQ", key));
+      const key = faqKeyByAnswer(lib.Knowledge, faq.verbatim.answer);
+      if (key) out.push(replySource(lib, "Knowledge", key));
     }
-    out.push(replySource(lib, "CSV_Step", stage)); // กลับบ้าน
+    out.push(replySource(lib, "Steps", stage)); // กลับบ้าน
   } else if (stage) {
     // step / step-complete / undefined → ประตูที่ส่ง
-    out.push(replySource(lib, "CSV_Step", stage));
+    out.push(replySource(lib, "Steps", stage));
   }
   return out.filter((s): s is ReplySource => s !== null);
 }

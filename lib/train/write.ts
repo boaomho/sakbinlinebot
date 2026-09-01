@@ -12,13 +12,13 @@ import { VALID_FUNNEL_STAGES, isActiveStatus, statusColumnIndex } from "@/lib/ag
 
 /**
  * lib/train/write.ts — เฟส ค: เขียน draft กลับชีต BotLibrary จริง
- * 🔴 รันนอก sandbox (getSheets = client จริง) · เขียนเฉพาะ SHEET_BOTLIB_V3_ID · ห้ามแตะ Orders (hard guard)
+ * 🔴 รันนอก sandbox (getSheets = client จริง) · เขียนเฉพาะ SHEET_BOTLIB_ID · ห้ามแตะ Orders (hard guard)
  * 🔴 target สดทุกครั้ง: หา row/col จาก key column + ชื่อ header ตอนเขียน (ไม่จำ A1/index)
  */
 
-// 🔴 D-68: ตัด CSV_Objections — v3 ยุบรวมเข้าแท็บ "ความรู้" แล้ว (adapter คืน [] เสมอ)
+// 🔴 D-72a: แท็บ Objections ถูกลบออกจากระบบ (v3 ยุบเข้า Knowledge ตั้งแต่ D-61.B)
 //    เก็บไว้ = เจ้าของแก้แล้วบอทไม่เห็น = กับดักแบบเดียวกับ "แนวตอบ" (D-66 §4)
-const EDITABLE_TABS = ["CSV_Step", "CSV_FAQ", "CSV_Vars"];
+const EDITABLE_TABS = ["Steps", "Knowledge", "Vars"];
 const TRAIN_LOG_TAB = "TRAIN_LOG";
 const TRAIN_LOG_HEADER = ["เวลา", "แท็บ", "key", "คอลัมน์", "ค่าเก่า(ย่อ)", "ค่าใหม่(ย่อ)", "ประเภท"];
 const DRAFT = "draft";
@@ -30,11 +30,11 @@ export type WriteResult =
   | { status: "not_found" };
 
 function botlibId(): string {
-  const id = resolveSpreadsheetId(process.env.SHEET_BOTLIB_V3_ID, "SHEET_BOTLIB_V3_ID");
+  const id = resolveSpreadsheetId(process.env.SHEET_BOTLIB_ID, "SHEET_BOTLIB_ID");
   // hard guard ระดับ spreadsheetId: ต้องไม่ใช่ชีต Orders เด็ดขาด
   try {
     if (process.env.SHEET_ORDERS_ID && id === resolveSpreadsheetId(process.env.SHEET_ORDERS_ID, "SHEET_ORDERS_ID")) {
-      throw new Error("SHEET_BOTLIB_V3_ID ชนกับ SHEET_ORDERS_ID — ปฏิเสธการเขียน (กันเขียนโดนชีตออเดอร์)");
+      throw new Error("SHEET_BOTLIB_ID ชนกับ SHEET_ORDERS_ID — ปฏิเสธการเขียน (กันเขียนโดนชีตออเดอร์)");
     }
   } catch (e) {
     if (String(e).includes("ชนกับ")) throw e; // เฉพาะเคสชนจริง · resolve Orders ไม่ได้ = ข้าม (ยังเขียน BotLibrary ได้)
@@ -44,7 +44,7 @@ function botlibId(): string {
 
 /**
  * 🔴 D-68: ปิดทางเขียนชีตชั่วคราว — เขียนไม่ได้จริงในโหมด v3 ด้วยเหตุ 2 ชั้น (KI D-65 ฉบับแก้)
- *   ชั้น 1 ชื่อแท็บใน EDITABLE_TABS ("CSV_Step"/"CSV_FAQ") = ชื่อ **shape ภายใน** ไม่มีอยู่จริงบนชีต v3
+ *   ชั้น 1 ชื่อแท็บใน EDITABLE_TABS ("Steps"/"Knowledge") = ชื่อ **shape ภายใน** ไม่มีอยู่จริงบนชีต v3
  *          (แท็บจริงชื่อ "เส้นทางขาย"/"ความรู้") → range ที่ประกอบขึ้นชี้แท็บที่ไม่มี
  *   ชั้น 2 `locateInLib` หา row/col index จาก bundle ที่ **adapter แปลงแล้ว** แล้วเอาไปเขียน **ชีตดิบ**
  *          (คนละ header คนละลำดับ) → ต่อให้แก้ชื่อแท็บถูก ก็จะเขียนทับผิดช่องแบบเงียบ
@@ -115,7 +115,7 @@ export async function writeCell(tab: string, key: string, column: string, newVal
   // lint gate ฝั่ง server (ไม่เชื่อ client) — lint full-row pattern ที่ทับ draft แล้ว
   const config = await getConfig();
   const merged = { ...loc.rowCols, [column]: newValue };
-  const findings = lintPattern(patternFromColumns(tab, merged), { config, lib, payment: "", now: new Date(), trigger: triggerTextForTab(tab, merged), ...h1FlagsForRow(tab, merged), varName: tab === "CSV_Vars" ? key : undefined });
+  const findings = lintPattern(patternFromColumns(tab, merged), { config, lib, payment: "", now: new Date(), trigger: triggerTextForTab(tab, merged), ...h1FlagsForRow(tab, merged), varName: tab === "Vars" ? key : undefined });
   if (findings.some((f) => f.level === "block")) return { status: "lint", lint: findings };
 
   assertWritable(); // 🔴 D-68: ปิดทางเขียน — throw ก่อนแตะ Google
@@ -170,7 +170,7 @@ export async function listTabRows(tab: string): Promise<TabRowsResult> {
 
 /** เสนอ key ถัดไป (เฉพาะแท็บที่ key เป็น id มีเลขต่อท้าย: step_id/objection_id) · FAQ/Vars = คนพิมพ์เอง → null */
 export function suggestNextKey(tab: string, keys: string[]): string | null {
-  if (tab !== "CSV_Step" && tab !== "CSV_Objections") return null;
+  if (tab !== "Steps") return null;
   let best: { prefix: string; num: number } | null = null;
   for (const k of keys) {
     const m = /^(.*?)(\d+)$/.exec(k.trim());
@@ -183,7 +183,7 @@ export function suggestNextKey(tab: string, keys: string[]): string | null {
 
 function validateNewKey(tab: string, key: string): string | null {
   if (!key) return "ต้องระบุ key (คอลัมน์หลักของแท็บ)";
-  if (tab === "CSV_Vars" && !(key.startsWith("{") && key.endsWith("}"))) return "ชื่อตัวแปรต้องครอบด้วยปีกกา { } เช่น {สัดส่วนปลาทู}";
+  if (tab === "Vars" && !(key.startsWith("{") && key.endsWith("}"))) return "ชื่อตัวแปรต้องครอบด้วยปีกกา { } เช่น {สัดส่วนปลาทู}";
   return null;
 }
 
@@ -222,7 +222,7 @@ export async function appendRow(tab: string, cols: Record<string, string>, origi
 
   // funnel_stage (Step · ตาข่าย handoff H1) — ต้องเป็น enum ที่ถูก
   const funnelIdx = header.indexOf("funnel_stage");
-  if (tab === "CSV_Step" && funnelIdx >= 0) {
+  if (tab === "Steps" && funnelIdx >= 0) {
     const fv = cleanCell(cols["funnel_stage"] ?? "").toLowerCase();
     if (!(VALID_FUNNEL_STAGES as readonly string[]).includes(fv)) {
       return { status: "funnel", message: `funnel_stage "${cols["funnel_stage"] ?? "(ว่าง)"}" ไม่ถูกต้อง — ต้องเป็นหนึ่งใน: ${VALID_FUNNEL_STAGES.join(", ")}` };
@@ -231,7 +231,7 @@ export async function appendRow(tab: string, cols: Record<string, string>, origi
 
   // lint คำตอบ (รวม H1 trigger-aware block) — ไม่เชื่อ client
   const config = await getConfig();
-  const findings = lintPattern(patternFromColumns(tab, cols), { config, lib, payment: "", now: new Date(), trigger: triggerTextForTab(tab, cols), ...h1FlagsForRow(tab, cols), varName: tab === "CSV_Vars" ? key : undefined });
+  const findings = lintPattern(patternFromColumns(tab, cols), { config, lib, payment: "", now: new Date(), trigger: triggerTextForTab(tab, cols), ...h1FlagsForRow(tab, cols), varName: tab === "Vars" ? key : undefined });
   if (findings.some((f) => f.level === "block")) return { status: "lint", lint: findings };
 
   // สร้างแถวตามลำดับ header · บังคับ status=draft · key ช่องหลัก

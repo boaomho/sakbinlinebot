@@ -76,8 +76,8 @@ async function buildXray(ctx: TrainSandbox, customer: CustomerState | null): Pro
   const stage = customer?.stage ?? null;
   return {
     stage,
-    stageName: stage && lib ? stepNameOf(lib.CSV_Step, stage) : null,
-    funnel: stage && lib ? funnelStageOf(lib.CSV_Step, stage) : null,
+    stageName: stage && lib ? stepNameOf(lib.Steps, stage) : null,
+    funnel: stage && lib ? funnelStageOf(lib.Steps, stage) : null,
     pendingOrder: (customer?.pendingOrder ?? {}) as Record<string, unknown>,
     deliveredSteps: customer?.deliveredSteps ?? [],
     tags: customer?.tags ?? [],

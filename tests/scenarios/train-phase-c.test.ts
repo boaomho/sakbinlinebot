@@ -27,7 +27,7 @@ describe("🔴 D-68 · เขียนชีต v3 ยังไม่รอง�
     seedBotLib({ stepRows: steps() });
     sheetsCalls.batchUpdates.length = 0;
     sheetsCalls.appends.length = 0;
-    await expect(writeCell("CSV_Step", "S2", "ตัวอย่างคำตอบ", "ใหม่", "รับออเดอร์แล้วค่ะ")).rejects.toThrow(/ยังเขียนชีต v3 ไม่ได้/);
+    await expect(writeCell("Steps", "S2", "ตัวอย่างคำตอบ", "ใหม่", "รับออเดอร์แล้วค่ะ")).rejects.toThrow(/ยังเขียนชีต v3 ไม่ได้/);
     expect(sheetsCalls.batchUpdates, "ห้ามแตะชีต").toHaveLength(0);
     expect(sheetsCalls.appends, "ห้ามแม้แต่ TRAIN_LOG").toHaveLength(0);
   });
@@ -37,8 +37,8 @@ describe("🔴 D-68 · เขียนชีต v3 ยังไม่รอง�
     seedBotLib({ stepRows: steps() });
     sheetsCalls.batchUpdates.length = 0;
     sheetsCalls.appends.length = 0;
-    await expect(appendRow("CSV_Vars", { ตัวแปร: "{ใหม่}", ค่า: "x" })).rejects.toThrow(/ยังเขียนชีต v3 ไม่ได้/);
-    await expect(setRowStatus("CSV_Step", "S1", "live")).rejects.toThrow(/ยังเขียนชีต v3 ไม่ได้/);
+    await expect(appendRow("Vars", { ตัวแปร: "{ใหม่}", ค่า: "x" })).rejects.toThrow(/ยังเขียนชีต v3 ไม่ได้/);
+    await expect(setRowStatus("Steps", "S1", "live")).rejects.toThrow(/ยังเขียนชีต v3 ไม่ได้/);
     expect([...sheetsCalls.batchUpdates, ...sheetsCalls.appends]).toHaveLength(0);
   });
 });
@@ -47,7 +47,7 @@ describe("เฟส ค · กันชนกัน (conflict)", () => {
   it("🔴 expectedOld ไม่ตรงค่าจริงในชีต → conflict + คืนค่าจริง · ไม่เขียน", async () => {
     seedBotLib({ stepRows: steps() });
     const before = sheetsCalls.batchUpdates.length;
-    const res = await writeCell("CSV_Step", "S2", "ตัวอย่างคำตอบ", "ใหม่", "ค่าที่คนอื่นแก้ไปแล้ว");
+    const res = await writeCell("Steps", "S2", "ตัวอย่างคำตอบ", "ใหม่", "ค่าที่คนอื่นแก้ไปแล้ว");
     expect(res.status).toBe("conflict");
     if (res.status === "conflict") expect(res.current).toBe("รับออเดอร์แล้วค่ะ");
     expect(sheetsCalls.batchUpdates.length, "ไม่เขียนทับ").toBe(before);
@@ -62,7 +62,7 @@ describe("เฟส ค · hard guard — ห้ามแตะ Orders / แท�
   });
   it("คอลัมน์นอก whitelist ของแท็บ → throw", async () => {
     seedBotLib({ stepRows: steps() });
-    await expect(writeCell("CSV_Step", "S1", "step_id", "hack", "S1")).rejects.toThrow(/แก้ไม่ได้/);
+    await expect(writeCell("Steps", "S1", "step_id", "hack", "S1")).rejects.toThrow(/แก้ไม่ได้/);
   });
 });
 
@@ -70,7 +70,7 @@ describe("เฟส ค · lint gate ฝั่ง server (ไม่เชื่�
   it("🔴 ค่าใหม่มีราคานอกระบบ/ตัวแปรผิด → status lint · ไม่เขียน", async () => {
     seedBotLib({ stepRows: steps() });
     const before = sheetsCalls.batchUpdates.length;
-    const res = await writeCell("CSV_Step", "S1", "ตัวอย่างคำตอบ", "พิเศษ 999 บาท {ตัวแปรมั่ว}", "สวัสดีค่ะ");
+    const res = await writeCell("Steps", "S1", "ตัวอย่างคำตอบ", "พิเศษ 999 บาท {ตัวแปรมั่ว}", "สวัสดีค่ะ");
     expect(res.status).toBe("lint");
     if (res.status === "lint") expect(res.lint.some((f) => f.level === "block")).toBe(true);
     expect(sheetsCalls.batchUpdates.length, "lint block = ไม่เขียน").toBe(before);
@@ -80,10 +80,10 @@ describe("เฟส ค · lint gate ฝั่ง server (ไม่เชื่�
 describe("เฟส ค · diffCell อ่านค่าปัจจุบันสด", () => {
   it("คืนค่าเก่าจริงในชีต + exists", async () => {
     seedBotLib({ stepRows: steps() });
-    const d = await diffCell("CSV_Step", "S2", "ตัวอย่างประโยคปิดท้าย");
+    const d = await diffCell("Steps", "S2", "ตัวอย่างประโยคปิดท้าย");
     expect(d.exists).toBe(true);
     expect(d.old).toBe(""); // S2 ไม่มีปิดท้าย
-    const d2 = await diffCell("CSV_Step", "S1", "ตัวอย่างคำตอบ");
+    const d2 = await diffCell("Steps", "S1", "ตัวอย่างคำตอบ");
     expect(d2.old).toBe("สวัสดีค่ะ");
   });
 
@@ -95,7 +95,7 @@ describe("เฟส ค · diffCell อ่านค่าปัจจุบั�
       { step_id: "S1", guide: "สวัสดีค่ะ (แก้ในชีตแล้ว)" },
       { step_id: "S2", guide: "รับออเดอร์แล้วค่ะ" },
     ]);
-    const d = await diffCell("CSV_Step", "S1", "ตัวอย่างคำตอบ");
+    const d = await diffCell("Steps", "S1", "ตัวอย่างคำตอบ");
     expect(d.old, "reset cache ก่อนอ่าน → ค่าล่าสุด ไม่ใช่ cache เก่า (client ใช้ตอนเปิด editor)").toBe("สวัสดีค่ะ (แก้ในชีตแล้ว)");
   });
 });

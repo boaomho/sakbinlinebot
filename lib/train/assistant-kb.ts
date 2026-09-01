@@ -10,11 +10,11 @@ import { statusColumnIndex, isActiveStatus } from "@/lib/agent/inject";
  * header จริงทุกแท็บ + key/keywords ที่มีอยู่ (กันซ้ำ/ชน) + claims blocklist + ข้อมูลสินค้า
  */
 
-// 🔴 D-68: ตัด CSV_Objections (v3 ยุบเข้าแท็บ "ความรู้" — adapter คืน [] เสมอ)
-export const ASSISTANT_TABS = ["CSV_FAQ", "CSV_Step", "CSV_Vars"] as const;
+// 🔴 D-72a: แท็บ Objections ถูกลบออกจากระบบ (v3 ยุบเข้า Knowledge ตั้งแต่ D-61.B)
+export const ASSISTANT_TABS = ["Knowledge", "Steps", "Vars"] as const;
 
 /** คอลัมน์ "คีย์เวิร์ด/สิ่งที่ลูกค้าพูด" ต่อแท็บ — โชว์ให้ AI กันชน substring */
-const KW_COL: Record<string, string> = { CSV_FAQ: "keywords" };
+const KW_COL: Record<string, string> = { Knowledge: "keywords" };
 
 function tabSummary(tab: string, rows: string[][]): string {
   if (rows.length < 1) return `${tab}: (โหลดไม่ได้)`;
@@ -42,7 +42,7 @@ function tabSummary(tab: string, rows: string[][]): string {
 }
 
 function productFacts(lib: BotLibrary): string {
-  const rows = lib.CSV_Products ?? [];
+  const rows = lib.Products ?? [];
   if (rows.length < 2) return "(ไม่มีข้อมูลสินค้า)";
   const h = rows[0].map(cleanHeader);
   const idx = (name: string) => h.indexOf(name);
@@ -57,7 +57,7 @@ function productFacts(lib: BotLibrary): string {
 }
 
 function varsFacts(lib: BotLibrary): string {
-  const rows = lib.CSV_Vars ?? [];
+  const rows = lib.Vars ?? [];
   if (rows.length < 2) return "(ไม่มีตัวแปร)";
   const h = rows[0].map(cleanHeader);
   const nIdx = h.indexOf("ตัวแปร");

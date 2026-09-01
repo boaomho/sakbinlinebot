@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const lib = await loadBotLibrary(); // funnel map + (ถ้า null → funnelStage=null, status ยังทำงาน)
-    const stepRows = lib?.CSV_Step ?? [];
+    const stepRows = lib?.Steps ?? [];
 
     const [counts, won, amounts, rows, channels] = await Promise.all([
       dashboardSummaryCounts(start),

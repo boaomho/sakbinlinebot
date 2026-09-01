@@ -238,7 +238,7 @@ describe("pricing — config ตัวเลขอ่านไม่ได้ �
     const bad = { ...CONFIG };
     delete bad.ยอดขั้นต่ำส่งฟรี_บาท;
     const r = calc([{ sku: "NPT-10G", qty: 3 }], "โอน", bad);
-    expect(r.error).toMatch(/CSV_Config/);
+    expect(r.error).toMatch(/Config/);
     expect(r.needsHandoff).toBe(true);
   });
 });

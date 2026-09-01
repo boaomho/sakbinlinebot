@@ -179,7 +179,7 @@ describe("D-50 · cron แจ้งเลขพัสดุ", () => {
   });
 
   // 🔴 D-61.C: cron ต้องทำงานเหมือนกันทั้งสองโหมด (ยืนยันข้อ 4 ของเจ้าของ)
-  //    cron แตะ schema ทางเดียว = getConfig (CSV_Config) · ไฟล์ Orders คนละไฟล์ (SHEET_ORDERS_ID) ไม่เกี่ยว
+  //    cron แตะ schema ทางเดียว = getConfig (Config) · ไฟล์ Orders คนละไฟล์ (SHEET_ORDERS_ID) ไม่เกี่ยว
   it("🔴 โหมด v3: แจกเลข + แจ้งพัสดุ + greeting ทำงานครบเหมือน v2", async () => {
     try {
       harnessOverrides.config = { raw: new Map([["ทักทายรายวัน", "สวัสดีค่ะ "]]) };

@@ -1,14 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { sendText } from "../harness/replay";
 import { scriptGemini, turn, lineCalls, sheetsCalls } from "../harness/state";
-import { seedBotLib } from "../harness/botlib-fixture";
+import { seedBotLib, TAB } from "../harness/botlib-fixture";
 import { getConfig, resolveFeatureSwitches, __resetConfigCache } from "@/lib/config";
 import { loadBotLibrary, __resetBotLibraryCache } from "@/lib/sheets/loader";
 
 /**
  * D-68 · v3 = ทางเดียว — พิสูจน์ว่าไม่มี ENV `SHEET_SCHEMA` แล้วยังได้พฤติกรรม v3 ครบ
  * 🔴 ไฟล์นี้ห้ามตั้ง SHEET_SCHEMA เด็ดขาด (นั่นคือประเด็นทั้งหมดของเทส)
- * ครอบ: เทิร์นจริง 1 เทิร์น (เรียบเรียงสด ไม่ verbatim) · การ์ด salesCore ชี้ SHEET_BOTLIB_V3_ID ·
+ * ครอบ: เทิร์นจริง 1 เทิร์น (เรียบเรียงสด ไม่ verbatim) · การ์ด salesCore ชี้ SHEET_BOTLIB_ID ·
  *       loader อ่านไฟล์ v3 · ปุ่มเขียนใน /train ชี้ไฟล์ v3 (ปิด known issue D-65)
  */
 
@@ -35,32 +35,34 @@ describe("D-68 · ไม่มี ENV SHEET_SCHEMA → ยังเป็น v3 
     expect(config.quotaSaver).toBe(false);
   });
 
-  it("🔴 การ์ด salesCore ชี้ SHEET_BOTLIB_V3_ID — ไม่มีค่า = ปิดแกนขาย (ไม่ใช่ SHEET_BOTLIB_ID เดิม)", async () => {
+  it("🔴 การ์ด salesCore ชี้ SHEET_BOTLIB_ID — ไม่มีค่า = ปิดแกนขาย (ไม่ใช่ SHEET_BOTLIB_ID เดิม)", async () => {
     const config = await getConfig();
-    const saved = process.env.SHEET_BOTLIB_V3_ID;
+    const saved = process.env.SHEET_BOTLIB_ID;
     const savedOld = process.env.SHEET_BOTLIB_ID;
     try {
       process.env.SHEET_BOTLIB_ID = "sheet-v2-เก่า-ต้องไม่มีผล";
-      delete process.env.SHEET_BOTLIB_V3_ID;
+      delete process.env.SHEET_BOTLIB_ID;
       expect(resolveFeatureSwitches(config).salesCore, "มีแต่ ENV เก่า = ต้องปิด").toBe(false);
-      process.env.SHEET_BOTLIB_V3_ID = "sheet-v3";
+      process.env.SHEET_BOTLIB_ID = "sheet-v3";
       expect(resolveFeatureSwitches(config).salesCore).toBe(true);
     } finally {
-      if (saved === undefined) delete process.env.SHEET_BOTLIB_V3_ID;
-      else process.env.SHEET_BOTLIB_V3_ID = saved;
+      if (saved === undefined) delete process.env.SHEET_BOTLIB_ID;
+      else process.env.SHEET_BOTLIB_ID = saved;
       if (savedOld === undefined) delete process.env.SHEET_BOTLIB_ID;
       else process.env.SHEET_BOTLIB_ID = savedOld;
     }
   });
 
-  it("loader ขอแท็บ v3 เสมอ (เส้นทางขาย/ความรู้) — ไม่มี dispatch v2 แล้ว", async () => {
+  it("loader ขอแท็บตาม SHEET_TABS เสมอ (D-72a: Steps/Knowledge) — ไม่มี dispatch v2 แล้ว", async () => {
     __resetBotLibraryCache();
     sheetsCalls.lastBatchGetRanges = [];
     await loadBotLibrary();
     const ranges = sheetsCalls.lastBatchGetRanges.join(" ");
-    expect(ranges, "ต้องขอแท็บ v3").toContain("เส้นทางขาย");
-    expect(ranges).toContain("ความรู้");
-    expect(ranges, "แท็บ v2 ต้องไม่ถูกขอแล้ว").not.toContain("CSV_Step");
+    expect(ranges, "ต้องขอแท็บจริง").toContain(`${TAB.steps}!A:Z`);
+    expect(ranges).toContain(`${TAB.knowledge}!A:Z`);
+    // 🔴 D-72a: ชื่อแท็บเก่า (ไทย/CSV_) ต้องหมดแล้ว
+    expect(ranges, "ชื่อแท็บเก่าต้องไม่ถูกขอแล้ว").not.toContain("เส้นทางขาย");
+    expect(ranges).not.toContain("CSV_");
   });
 });
 
@@ -68,11 +70,11 @@ describe("D-68 · ปุ่มเขียนใน /train — ปิดตา�
   afterEach(() => vi.unstubAllEnvs());
 
   it("🔴 เขียนไม่ได้ + ไม่แตะชีตเลย · error บอกทั้งสาเหตุและทางออก", async () => {
-    vi.stubEnv("SHEET_BOTLIB_V3_ID", "1BBBsheetV3newYYYYYYYYYYYYYYYYYYYYYYYYYYY");
+    vi.stubEnv("SHEET_BOTLIB_ID", "1BBBsheetV3newYYYYYYYYYYYYYYYYYYYYYYYYYYY");
     const { appendRow } = await import("@/lib/train/write");
     sheetsCalls.appends.length = 0;
     sheetsCalls.batchUpdates.length = 0;
-    await expect(appendRow("CSV_Vars", { ตัวแปร: "{รูปทดสอบ}", ค่า: "https://blob.test/x.jpg" }))
+    await expect(appendRow("Vars", { ตัวแปร: "{รูปทดสอบ}", ค่า: "https://blob.test/x.jpg" }))
       .rejects.toThrow(/ยังเขียนชีต v3 ไม่ได้[\s\S]*D-69/);
     expect([...sheetsCalls.appends, ...sheetsCalls.batchUpdates], "ห้ามแตะชีตแม้แต่ TRAIN_LOG").toHaveLength(0);
   });

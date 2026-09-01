@@ -43,7 +43,7 @@ const H1_ASSURANCE_TERMS = ["ทานได้", "กินได้", "ปล�
  * 🔴 H1 gate: ถ้า "แถวนี้เกี่ยวสุขภาพ/แพ้อาหาร" (คำสุขภาพอยู่ใน trigger=คำถาม/สิ่งที่ลูกค้าพูด หรือในคำตอบ)
  *    → คำตอบ "ต้องเป็นการส่งต่อแอดมิน" · ไม่งั้น block (เคส "แพ้กุ้งทานได้ไหม" → "ทานได้ค่ะ" = คดี)
  *    trigger สำคัญ: คำตอบอาจดูไม่มีคำสุขภาพ ("ทานได้ค่ะ") แต่ถ้า "คำถาม" เกี่ยวแพ้ = อันตราย
- * opts (D-58): exempt = ประตู CSV_Step funnel=handoff/handoff_notify (คำตอบสุขภาพเป็นดีไซน์ที่เจ้าของคุม → ไม่ block)
+ * opts (D-58): exempt = ประตู Steps funnel=handoff/handoff_notify (คำตอบสุขภาพเป็นดีไซน์ที่เจ้าของคุม → ไม่ block)
  *              notify = ประตู handoff_notify → เพิ่ม warn เหลืองถ้าใช้วลี "รับรอง" สุขภาพ (ควรให้ข้อมูลกลางๆ)
  */
 export function lintHealthH1(triggerText: string, answerText: string, opts: { exempt?: boolean; notify?: boolean } = {}): LintFinding[] {
@@ -78,7 +78,7 @@ export function lintPattern(
   const systemVars = KNOWN_RUNTIME_VARS as readonly string[];
 
   // 1) ตัวแปร "ไม่รู้จัก" (typo / ยังไม่มี resolver) — จะหลุดดิบหรือโดนทิ้งบอลลูน
-  const csvVars = new Map(loadLiveVars(lib.CSV_Vars).map((v) => [v.name, v.value]));
+  const csvVars = new Map(loadLiveVars(lib.Vars).map((v) => [v.name, v.value]));
   const known = new Set<string>([...systemVars, ...csvVars.keys()]);
   const tokens = pattern.match(VAR_TOKEN) ?? [];
   const unknown = [...new Set(tokens.filter((t) => !known.has(t)))];
@@ -86,15 +86,15 @@ export function lintPattern(
     findings.push({ level: "block", kind: "unknown-var", hits: unknown, message: `ตัวแปรไม่รู้จัก (พิมพ์ผิด/ไม่มี resolver) — จะหลุดดิบหรือบอลลูนถูกทิ้ง: ${unknown.join(" ")}` });
   }
 
-  // 1ข) 🔴 D-67: ชื่อ CSV_Vars ชนตัวแปรระบบ — runtime ระบบชนะเสมอ (resolveCsvVars ข้าม+log) = ค่าที่เจ้าของตั้งไม่ถูกใช้เลย
-  //     ตรวจทั้ง token ที่ใช้ในแพตเทิร์น และชื่อแถว CSV_Vars เองตอนแก้ (opts.varName)
+  // 1ข) 🔴 D-67: ชื่อ Vars ชนตัวแปรระบบ — runtime ระบบชนะเสมอ (resolveCsvVars ข้าม+log) = ค่าที่เจ้าของตั้งไม่ถูกใช้เลย
+  //     ตรวจทั้ง token ที่ใช้ในแพตเทิร์น และชื่อแถว Vars เองตอนแก้ (opts.varName)
   const collided = [...new Set(tokens.filter((t) => csvVars.has(t) && systemVars.includes(t)))];
   if (opts.varName && systemVars.includes(opts.varName) && !collided.includes(opts.varName)) collided.push(opts.varName);
   if (collided.length > 0) {
     findings.push({ level: "warn", kind: "var-collision", hits: collided, message: `⚠︎ ชื่อชนตัวแปรระบบ — ค่าจากชีตจะไม่ถูกใช้ (ระบบชนะเสมอ) ให้เปลี่ยนชื่อ: ${collided.join(" ")}` });
   }
 
-  // 1ค) 🔴 D-67: แถว CSV_Vars live แต่ช่อง "ค่า" ว่าง — runtime ไม่แทนค่า (quote.ts) → ตัวแปรค้างดิบถึงลูกค้า / รูปหายเงียบ
+  // 1ค) 🔴 D-67: แถว Vars live แต่ช่อง "ค่า" ว่าง — runtime ไม่แทนค่า (quote.ts) → ตัวแปรค้างดิบถึงลูกค้า / รูปหายเงียบ
   //     เดิม lint นับว่า "รู้จัก" แค่ชื่อมีในชีต = เขียวทั้งที่ของจริงพัง
   const emptyVal = [...new Set(tokens.filter((t) => csvVars.has(t) && !systemVars.includes(t) && (csvVars.get(t) ?? "").trim() === ""))];
   if (emptyVal.length > 0) {
@@ -108,7 +108,7 @@ export function lintPattern(
   }
 
   // 3) ราคานอกระบบ (เลข "X บาท" ที่ hardcode ในแพตเทิร์น — ไม่ใช่ตัวแปรที่ resolve จาก Core)
-  const allowed = buildAllowedPriceStrings(lib.CSV_Products, lib.CSV_Promo, Object.fromEntries(config.raw), payment, now);
+  const allowed = buildAllowedPriceStrings(lib.Products, lib.Promo, Object.fromEntries(config.raw), payment, now);
   const badPrices = findBadPrices(pattern, allowed);
   if (badPrices.length > 0) {
     findings.push({ level: "block", kind: "price", hits: badPrices, message: `ราคานอกระบบ (ต้องมาจาก Products/Promo/Config หรือใช้ตัวแปร): ${badPrices.join(", ")} บาท` });

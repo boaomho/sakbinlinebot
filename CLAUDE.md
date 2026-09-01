@@ -17,7 +17,8 @@
   - บอทเขียนข้อความเอง ทุกเทิร์น — DNA กระจายอยู่ในบล็อก `<หมวกนักขาย 3 ใบ>` · `<3C>` · `<กลไกตอบแทรก-แล้วพากลับ>` · `<เส้นทางการขาย 4 ประตู>` · `<เคสสุขภาพ/แพ้อาหาร>` · `<งานที่ต้องทำต่อเทิร์น>` · `<รูปแบบคำตอบ>`
   - **สิ่งที่โค้ดบังคับ (ไม่พึ่ง prompt):** จบทุกเทิร์นด้วยทางเลือกที่พาไปประตูถัดไป · ห้าม "รับมั้ยคะ" · ห้าม "รบกวน" · FAQ แล้ววกกลับ funnel · เข้าประตูไหนก็ได้ · **ปิดท้ายด้วยข้อความเสมอ ห้ามจบด้วยรูป** (`enforceTextLast` + log) · คำถามพาไปต่อ = บอลลูนเดี่ยว (`splitClosingQuestion`) · ไม่รู้/ไม่มีข้อมูล = บอกตรงๆ + handoff
 - **ประตูการขาย (Step)** = เส้นทางหลัก บอทอ่านสถานะลูกค้า→รู้ว่าอยู่ประตูไหน→ทำตามเป้าหมายประตูนั้น→พาไปต่อ
-- 🔴 **v3: คอลัมน์ที่เข้า prompt มีแค่ `สาระที่ต้องสื่อ` (แท็บเส้นทางขาย) + `แนวตอบ` ของแท็บความรู้ (เฉพาะแถวที่ keyword ตรง)** — `แนวตอบ` ของแท็บเส้นทางขาย (= ช่อง "ตัวอย่างคำตอบ" ใน Train Studio) **ไม่เข้า prompt เลย** แก้ตรงนั้นบอทไม่เห็น (DECISIONS D-66 §4)
+- 🔴 **ชื่อแท็บในชีต = ชื่อคีย์ในโค้ด = ชื่อใน X-ray** (D-72a): `Steps` · `Knowledge` · `Products` · `Promo` · `Vars` · `Config` — ไม่มีชั้นแปลชื่อ ห้ามสร้างขึ้นมาใหม่
+- 🔴 **คอลัมน์ที่เข้า prompt มีแค่ `สาระที่ต้องสื่อ` (แท็บ Steps) + `แนวตอบ` ของแท็บ Knowledge (เฉพาะแถวที่ keyword ตรง)** — `แนวตอบ` ของแท็บ Steps (= ช่อง "ตัวอย่างคำตอบ" ใน Train Studio) **ไม่เข้า prompt เลย** แก้ตรงนั้นบอทไม่เห็น (DECISIONS D-66 §4)
 - บอทตอบเป็น **JSON** `{reply, stage, tags_add, handoff, handoff_reason, order_data, payment_method, order_edit_request, image_intent, image_note}` เท่านั้น
 
 ## 🔴 กฎความปลอดภัย พ.ร.บ.อาหาร (สำคัญสุด · ดูดจาก CONTRACTS-v1.5 §9)
@@ -39,7 +40,7 @@
 
 ## ฟีเจอร์ที่บอทมี (ทุกตัวเป็นโมดูล · อ่านสวิตช์จาก CSV_Config ก่อนทำงาน)
 
-- **แกนขาย** — แท็บ เส้นทางขาย (ประตูขาย) + ความรู้ (คลังคำตอบคลายกังวล) + Config (ค่าปรับแต่ง) · ทั้งหมดอยู่ในชีต v3 ไฟล์เดียว
+- **แกนขาย** — แท็บ `Steps` (ประตูขาย) + `Knowledge` (คลังคำตอบคลายกังวล) + `Config` (ค่าปรับแต่ง) · ทั้งหมดอยู่ในชีต `SakbinBotLibrary` ไฟล์เดียว
 - **ความจำลูกค้า (Neon)** — สถานะ/ประวัติ/แท็ก/ตัวนับ ต่อเนื่องข้ามบทสนทนา
 - **ติดแท็ก** — เก็บความสนใจลูกค้า (เช่น สนใจ:สินค้า, รอโอน)
 - **ส่งต่อแอดมิน (Handoff)** — 2 ชั้น: keyword pre-check ในโค้ด (คำชัดๆ) + AI ตัดสิน semantic
@@ -58,11 +59,11 @@
 
 ## Env vars (Vercel) — ห้าม hardcode
 
-หลัก: `LINE_CHANNEL_ACCESS_TOKEN` `LINE_CHANNEL_SECRET` `GEMINI_API_KEY` `DATABASE_URL` `SHEET_BOTLIB_V3_ID` (คลังความรู้ v3: เส้นทางขาย/ความรู้/Products/Promo/Vars/Config — batchGet ครั้งเดียวจาก `loader.ts` · **เป็นสวิตช์เปิด/ปิดแกนขายทั้งระบบ** `salesCore`)
+หลัก: `LINE_CHANNEL_ACCESS_TOKEN` `LINE_CHANNEL_SECRET` `GEMINI_API_KEY` `DATABASE_URL` `SHEET_BOTLIB_ID` (คลังความรู้: `Steps`/`Knowledge`/`Products`/`Promo`/`Vars`/`Config` — batchGet ครั้งเดียวจาก `loader.ts` · **เป็นสวิตช์เปิด/ปิดแกนขายทั้งระบบ** `salesCore`)
 ออเดอร์/handoff: `ADMIN_GROUP_ID` `ORDER_GROUP_ID` `SHEET_ORDERS_ID` `GOOGLE_SERVICE_ACCOUNT` `BLOB_SLIPS_TOKEN` `BLOB_PRODUCTS_TOKEN`
 cron: `CRON_SECRET` (ทุก endpoint cron เช็คจาก `Authorization: Bearer <CRON_SECRET>`)
 diag: `DIAG_PROMPT_TOKENS` (=1 → `gemini.ts` log token จริงต่อ segment ด้วย countTokens · ปกติปิด)
-> ⚠️ **โค้ดไม่อ่านแล้ว รอเจ้าของลบออกจาก Vercel:** `SHEET_SCHEMA` · `SHEET_BOTLIB_ID` (D-68 · 🔴 ลบ**หลัง** deploy ใหม่ขึ้นและ prod เขียวเท่านั้น) · `SHEET_STEP_URL` `SHEET_FAQ_URL` `SHEET_CONFIG_URL` `SHEET_FOLLOW_URL` · แหล่งจริงคือโค้ด ดู REPO-MAP.md §5
+> ⚠️ **โค้ดไม่อ่านแล้ว รอเจ้าของลบออกจาก Vercel:** `SHEET_SCHEMA` · `SHEET_BOTLIB_V3_ID` (D-72a · 🔴 ลบ**หลัง** deploy ใหม่ขึ้นและ prod เขียวเท่านั้น) · `SHEET_STEP_URL` `SHEET_FAQ_URL` `SHEET_CONFIG_URL` `SHEET_FOLLOW_URL` · แหล่งจริงคือโค้ด ดู REPO-MAP.md §5
 
 ## Don'ts
 
@@ -75,7 +76,7 @@ diag: `DIAG_PROMPT_TOKENS` (=1 → `gemini.ts` log token จริงต่อ s
 - ❌ hardcode `maxOutputTokens` < 1024 — gemini-3.x นับ thinking+output รวม ถ้าต่ำจะตอบครึ่งประโยค
 - ❌ ทำฟีเจอร์ครึ่งๆ ตอน env/สวิตช์ไม่ครบ — ปิดทั้งฟีเจอร์ + log เตือน (All-or-nothing)
 - ❌ **เขียนโค้ด/เอกสารรองรับ v2 — v2 ถูกถอดออกหมดแล้ว (D-68)** · ไม่มี `SHEET_SCHEMA`/`prompt/system.ts`/verbatim/คำ_notify อีก · rollback = Vercel Instant Rollback ไม่ใช่สวิตช์ในโค้ด
-- ❌ **seed fixture ในเทสเป็น shape ปลายทางตรง ๆ** — ต้อง seed "ชีตดิบ" แล้วปล่อยให้ loader+adapter ทำงานจริง (`v3StepRows()`/`v3KnowRows()` + `TAB` ใน `tests/harness/botlib-fixture.ts`) · 🔴 fixture ที่ไม่วิ่งเส้นทางเดียวกับ prod = **ความมั่นใจปลอม** (D-68 ข้อ 2 — ซ่อนฟีเจอร์ตายไว้ 2 เดือน)
+- ❌ **seed fixture ในเทสเป็น shape ปลายทางตรง ๆ** — ต้อง seed "ชีตดิบ" แล้วปล่อยให้ loader+normalizeBundle ทำงานจริง (`v3StepRows()`/`v3KnowRows()` + `TAB` ใน `tests/harness/botlib-fixture.ts`) · 🔴 fixture ที่ไม่วิ่งเส้นทางเดียวกับ prod = **ความมั่นใจปลอม** (D-68 ข้อ 2 — ซ่อนฟีเจอร์ตายไว้ 2 เดือน)
 - ❌ **เขียนทับทั้งไฟล์ที่มีภาษาไทย/emoji — ใช้ Edit tool เท่านั้น** · ทั้ง PowerShell (`Get-Content|Set-Content`) และ heredoc+python เคยทำไฟล์พังมาแล้ว (D-61.C4, D-65) · 🔴 **ปัญหาไม่ใช่เครื่องมือ แต่คือการเขียนทับทั้งไฟล์แทนการแก้เฉพาะจุด**
 
 ## เวลาแก้โค้ด

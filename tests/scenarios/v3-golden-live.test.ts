@@ -12,7 +12,7 @@ import { isClosingQuestion } from "@/lib/line";
 /**
  * D-61.C · golden ชั้น G — บทสนทนาจริง (Gemini จริง + ชีต v3 จริง) · ใช้ก่อน cutover
  * รัน: HARNESS_REAL_GEMINI=1 HARNESS_REAL_SHEET=1 npx vitest run v3-golden-live
- *   (ต้องมี GEMINI_API_KEY + SHEET_BOTLIB_V3_ID + GOOGLE_SERVICE_ACCOUNT ใน .env.test/.env.local)
+ *   (ต้องมี GEMINI_API_KEY + SHEET_BOTLIB_ID + GOOGLE_SERVICE_ACCOUNT ใน .env.test/.env.local)
  * 🔴 skip อัตโนมัติใน npm test ปกติ (ไม่ block CI)
  * ผลลัพธ์: scorecard `tmp/v3-golden-scorecard.md` — เจ้าของอ่านตัดสิน cutover
  * เคสสุขภาพ/ส่งต่อ (G14-G19, G21-G22) รัน ROUNDS รอบ ต้องผ่านครบทุกรอบ (เจ้าของเคาะ · non-deterministic)
@@ -127,9 +127,9 @@ beforeEach(async () => {
 describe.skipIf(!RUN)("D-61.C golden ชั้น G — ชีต v3 จริง + Gemini จริง", () => {
   it("ชีต v3 โหลดได้ + มีแถว live พอซ้อม", async () => {
     const lib = await loadBotLibrary();
-    expect(lib, "โหลดชีต v3 ไม่ได้ — เช็ค SHEET_BOTLIB_V3_ID/สิทธิ์ SA").not.toBeNull();
-    const steps = lib!.CSV_Step.length - 1;
-    const know = lib!.CSV_FAQ.length - 1;
+    expect(lib, "โหลดชีต v3 ไม่ได้ — เช็ค SHEET_BOTLIB_ID/สิทธิ์ SA").not.toBeNull();
+    const steps = lib!.Steps.length - 1;
+    const know = lib!.Knowledge.length - 1;
     record("S00", "ชีต v3 โหลดได้", steps > 0 && know > 0, `เส้นทางขาย ${steps} แถว · ความรู้ ${know} แถว (live)`);
     expect(steps).toBeGreaterThan(0);
     const cfg = await getConfig();
@@ -141,8 +141,8 @@ describe.skipIf(!RUN)("D-61.C golden ชั้น G — ชีต v3 จริ�
   it("S01 · แนวตอบในชีต v3 ต้องไม่มีคำต้องห้าม (รบกวน / ปิดการขายแบบรับ-ไม่รับ)", async () => {
     const lib = await loadBotLibrary();
     expect(lib).not.toBeNull();
-    const stepExamples = lib!.CSV_Step.slice(1).map((r) => r[7] ?? ""); // adapter: แนวตอบ → "ตัวอย่างคำตอบ"
-    const knowGuides = lib!.CSV_FAQ.slice(1).map((r) => {
+    const stepExamples = lib!.Steps.slice(1).map((r) => r[7] ?? ""); // adapter: แนวตอบ → "ตัวอย่างคำตอบ"
+    const knowGuides = lib!.Knowledge.slice(1).map((r) => {
       const answer = r[3] ?? ""; // ก้อนประกอบ: ความกังวลจริง / ข้อเท็จจริง / แนวตอบ
       const i = answer.indexOf("แนวตอบ");
       return i === -1 ? "" : answer.slice(i); // เอาเฉพาะท่อนแนวตอบ (ข้อเท็จจริงไม่อยู่ในกฎสำนวน)
@@ -260,7 +260,7 @@ describe.skipIf(!RUN)("D-61.C golden ชั้น G — ชีต v3 จริ�
     }, 240_000);
   }
 
-  // ---- D-67 · G31: ตัวแปรรูปจาก CSV_Vars — โมเดลต้อง copy token (ได้รูปจริง) และห้ามประดิษฐ์ตัวแปร ----
+  // ---- D-67 · G31: ตัวแปรรูปจาก Vars — โมเดลต้อง copy token (ได้รูปจริง) และห้ามประดิษฐ์ตัวแปร ----
   it(`G31 · S2 ส่งรูปโปรจาก {รูปโปรโมชั่น} + ไม่ประดิษฐ์ตัวแปร (${ROUNDS} รอบ ต้องผ่านครบ)`, async () => {
     const fails: string[] = [];
     let sample = "";
@@ -280,7 +280,7 @@ describe.skipIf(!RUN)("D-61.C golden ชั้น G — ชีต v3 จริ�
       if (leftover.length > 0) bad.push(`ตัวแปรค้างดิบ/ประดิษฐ์: ${[...new Set(leftover)].join(" ")}`);
       if (bad.length > 0) fails.push(`รอบ ${round}: ${bad.join(" · ")}`);
     }
-    record("G31", `ตัวแปรรูป CSV_Vars ×${ROUNDS}`, fails.length === 0, fails.join(" | ") || `รูปถึงลูกค้า + ไม่มี token ค้าง ครบ ${ROUNDS} รอบ`, sample);
+    record("G31", `ตัวแปรรูป Vars ×${ROUNDS}`, fails.length === 0, fails.join(" | ") || `รูปถึงลูกค้า + ไม่มี token ค้าง ครบ ${ROUNDS} รอบ`, sample);
     expect(fails, `G31 ล้ม: ${fails.join(" | ")}`).toHaveLength(0);
   }, 240_000);
 

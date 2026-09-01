@@ -38,7 +38,7 @@ export const sheetsCalls = {
   getReturn: [] as string[][],
   /** header row ของ Orders ที่ values.get คืนเมื่อขอ !1:1 (ตั้งค่าเพื่อจำลองสลับคอลัมน์) */
   ordersHeader: [] as string[],
-  /** ค่าที่จะให้ values.batchGet คืน — keyed ด้วยชื่อแท็บ (CSV_Step, CSV_FAQ, ...) */
+  /** ค่าที่จะให้ values.batchGet คืน — keyed ด้วยชื่อแท็บ (Steps, Knowledge, ...) */
   botLibReturn: {} as Record<string, string[][]>,
   /** ranges ที่ถูกขอครั้งล่าสุด (ตรวจว่ายิง 1 call ครบทุกแท็บ) */
   lastBatchGetRanges: [] as string[],

@@ -23,22 +23,22 @@ beforeEach(() => seedBotLib());
 // ---------- parser/schema ----------
 describe("D-59 · parseAssistantResponse", () => {
   it("cols array → record · action/tab ถูก", () => {
-    const raw = JSON.stringify({ reply: "โอเคค่ะ", proposals: [{ action: "add-row", tab: "CSV_FAQ", key: "ส่งไปตปท.ไหม", note: "n", cols: [{ name: "คำตอบ", value: "ส่งเฉพาะในไทยค่ะ" }, { name: "keywords", value: "ตปท,ต่างประเทศ" }] }] });
+    const raw = JSON.stringify({ reply: "โอเคค่ะ", proposals: [{ action: "add-row", tab: "Knowledge", key: "ส่งไปตปท.ไหม", note: "n", cols: [{ name: "คำตอบ", value: "ส่งเฉพาะในไทยค่ะ" }, { name: "keywords", value: "ตปท,ต่างประเทศ" }] }] });
     const out = parseAssistantResponse(raw);
     expect(out.reply).toBe("โอเคค่ะ");
     expect(out.proposals).toHaveLength(1);
     expect(out.proposals[0].cols).toEqual({ คำตอบ: "ส่งเฉพาะในไทยค่ะ", keywords: "ตปท,ต่างประเทศ" });
   });
   it("🔴 cap ≤3 proposals (กติกา 10)", () => {
-    const many = Array.from({ length: 5 }, (_, i) => ({ action: "add-row", tab: "CSV_FAQ", key: `k${i}`, note: "n", cols: [] }));
+    const many = Array.from({ length: 5 }, (_, i) => ({ action: "add-row", tab: "Knowledge", key: `k${i}`, note: "n", cols: [] }));
     const out = parseAssistantResponse(JSON.stringify({ reply: "x", proposals: many }));
     expect(out.proposals).toHaveLength(3);
   });
   it("🔴 scope guard: tab นอก 4 แท็บ / action ผิด → ตัดทิ้ง", () => {
     const out = parseAssistantResponse(JSON.stringify({ reply: "x", proposals: [
-      { action: "add-row", tab: "CSV_Config", key: "k", note: "n", cols: [] },
-      { action: "delete", tab: "CSV_FAQ", key: "k", note: "n", cols: [] },
-      { action: "add-row", tab: "CSV_Products", key: "k", note: "n", cols: [] },
+      { action: "add-row", tab: "Config", key: "k", note: "n", cols: [] },
+      { action: "delete", tab: "Knowledge", key: "k", note: "n", cols: [] },
+      { action: "add-row", tab: "Products", key: "k", note: "n", cols: [] },
     ] }));
     expect(out.proposals, "Config/Products/delete ถูกตัด").toHaveLength(0);
   });
@@ -48,7 +48,7 @@ describe("D-59 · parseAssistantResponse", () => {
     expect(out.reply).toContain("ขอถาม");
   });
   it("key ว่าง → ตัด · non-JSON → reply fallback", () => {
-    expect(parseAssistantResponse(JSON.stringify({ reply: "x", proposals: [{ action: "add-row", tab: "CSV_FAQ", key: "", note: "", cols: [] }] })).proposals).toHaveLength(0);
+    expect(parseAssistantResponse(JSON.stringify({ reply: "x", proposals: [{ action: "add-row", tab: "Knowledge", key: "", note: "", cols: [] }] })).proposals).toHaveLength(0);
     expect(parseAssistantResponse("ไม่ใช่ json").proposals).toHaveLength(0);
     expect(parseAssistantResponse(undefined).proposals).toHaveLength(0);
   });
@@ -56,7 +56,7 @@ describe("D-59 · parseAssistantResponse", () => {
 
 // ---------- D-60.2 · phase gate (invariant flow สัมภาษณ์อยู่ในโค้ด — บั๊กที่เทสเดิมจับไม่ได้เพราะ invariant อยู่แค่ใน prompt) ----------
 describe("D-60.2 · phase gate — จังหวะสัมภาษณ์ห้ามมี proposals", () => {
-  const prop = { action: "add-row", tab: "CSV_Step", key: "H5", note: "n", cols: [{ name: "funnel_stage", value: "handoff_notify" }] };
+  const prop = { action: "add-row", tab: "Steps", key: "H5", note: "n", cols: [{ name: "funnel_stage", value: "handoff_notify" }] };
   it('🔴 phase="interview" + โมเดลแอบส่ง proposals → server ทิ้งทั้งหมด (เคสบั๊กจริง H5)', () => {
     const out = parseAssistantResponse(JSON.stringify({ reply: "ขอถามก่อนค่ะ", phase: "interview", proposals: [prop] }));
     expect(out.phase).toBe("interview");
@@ -107,7 +107,7 @@ describe("D-59 · buildAssistantKB", () => {
   it("มี header/keys 4 แท็บ + วิธีใช้ + claims", async () => {
     const kb = await buildAssistantKB();
     expect(kb).toContain("วิธีใช้ระบบ");
-    expect(kb).toContain("CSV_FAQ");
+    expect(kb).toContain("Knowledge");
     expect(kb).toContain("ส่งกี่วัน"); // key จาก seedBotLib FAQ
     expect(kb).toContain("คำโฆษณาต้องห้าม");
   });
@@ -128,7 +128,7 @@ describe("D-59 · เขียน origin=ai → TRAIN_LOG ai-draft/ai-edit", () 
     //    การันตี origin=ai → ai-draft จะกลับมาพิสูจน์ได้เมื่อเปิดเขียนใน D-69
     seedBotLib({ knowRows: v3KnowRows([{ say: "x", keyword: "x", fact: "y" }]) });
     sheetsCalls.appends.length = 0;
-    await expect(appendRow("CSV_FAQ", { คำถาม: "ส่งเสาร์ไหม", keywords: "เสาร์", action: "answer", คำตอบ: "ส่งค่ะ" }, "ai"))
+    await expect(appendRow("Knowledge", { คำถาม: "ส่งเสาร์ไหม", keywords: "เสาร์", action: "answer", คำตอบ: "ส่งค่ะ" }, "ai"))
       .rejects.toThrow(/ยังเขียนชีต v3 ไม่ได้/);
     expect(lastTrainLog(), "ไม่แตะ TRAIN_LOG").toBeUndefined();
   });
@@ -136,18 +136,19 @@ describe("D-59 · เขียน origin=ai → TRAIN_LOG ai-draft/ai-edit", () 
     seedStep();
     sheetsCalls.batchUpdates.length = 0;
     sheetsCalls.appends.length = 0;
-    await expect(writeCell("CSV_Step", "S1", "ตัวอย่างคำตอบ", "สวัสดีจ้า", "สวัสดีค่ะ", "ai"))
+    await expect(writeCell("Steps", "S1", "ตัวอย่างคำตอบ", "สวัสดีจ้า", "สวัสดีค่ะ", "ai"))
       .rejects.toThrow(/ยังเขียนชีต v3 ไม่ได้/);
     expect([...sheetsCalls.batchUpdates, ...sheetsCalls.appends], "ห้ามแตะชีต/TRAIN_LOG").toHaveLength(0);
   });
   it("🔴 Config เขียนไม่ได้จริง (assertEditable) — AI สั่งก็ไม่ผ่าน", async () => {
-    await expect(appendRow("CSV_Config", { key: "x" }, "ai")).rejects.toThrow(/เขียนไม่ได้|Config/);
-    await expect(writeCell("CSV_Config", "k", "value", "9", "", "ai")).rejects.toThrow();
+    await expect(appendRow("Config", { key: "x" }, "ai")).rejects.toThrow(/เขียนไม่ได้|Config/);
+    await expect(writeCell("Config", "k", "value", "9", "", "ai")).rejects.toThrow();
   });
   it("🔴 lint block ไหลกลับ (status lint · ไม่เขียน) — H1 คำสุขภาพไม่ handoff", async () => {
+    // 🔴 D-72a: เดิมมีบรรทัด seed `botLibReturn.CSV_FAQ` ทับ — ตายมาตั้งแต่ D-61.B (ชื่อไม่ตรงแท็บจริง)
+    //    ลบทิ้ง → ใช้ Knowledge จาก seedBotLib() เหมือนที่เคยทำงานจริง (เคสนี้วัด lint ไม่ได้วัดแถวเดิม)
     seedBotLib();
-    sheetsCalls.botLibReturn.CSV_FAQ = [["คำถาม", "keywords", "action", "คำตอบ", "สถานะ"], ["x", "x", "answer", "y", "live"]];
-    const res = await appendRow("CSV_FAQ", { คำถาม: "แพ้กุ้งทานได้ไหม", keywords: "แพ้กุ้ง", action: "answer", คำตอบ: "ทานได้ค่ะ ไม่เป็นไร" }, "ai");
+    const res = await appendRow("Knowledge", { คำถาม: "แพ้กุ้งทานได้ไหม", keywords: "แพ้กุ้ง", action: "answer", คำตอบ: "ทานได้ค่ะ ไม่เป็นไร" }, "ai");
     expect(res.status).toBe("lint");
   });
 });
@@ -155,14 +156,14 @@ describe("D-59 · เขียน origin=ai → TRAIN_LOG ai-draft/ai-edit", () 
 // ---------- D-60 · per-door parse + system prompt + rewriteSafety ----------
 describe("D-59/60 · buildAssistantSystem — กติกา 11/12/persona", () => {
   it("มี flow สัมภาษณ์ (11) · เสียงนักขาย (12) · persona ค่ะ · เกลาเสียง · excludeKeys", () => {
-    const s = buildAssistantSystem("KB_PLACEHOLDER", ["CSV_FAQ::ส่งกี่วัน"]);
+    const s = buildAssistantSystem("KB_PLACEHOLDER", ["Knowledge::ส่งกี่วัน"]);
     expect(s).toContain("FLOW สัมภาษณ์");
     expect(s).toContain("3 แบบ");
     expect(s).toContain("เสียงนักขาย CX");
     expect(s).toContain("ค่ะ/นะคะ");
     expect(s).toContain("ห้าม ครับ/ผม");
     expect(s).toContain("เกลาเสียง");
-    expect(s, "excludeKeys ต่อท้าย").toContain("CSV_FAQ::ส่งกี่วัน");
+    expect(s, "excludeKeys ต่อท้าย").toContain("Knowledge::ส่งกี่วัน");
     expect(s).toContain("KB_PLACEHOLDER");
   });
   it("🔴 กติกา 12 เกลา — 3 หมวก + 3 เทคนิค (choice close/ดีขึ้น/say no) + 3C", () => {

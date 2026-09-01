@@ -4,7 +4,7 @@ import { listTabRows } from "@/lib/train/write";
 
 export const maxDuration = 20;
 
-const MANAGED_TABS = ["CSV_Step", "CSV_FAQ", "CSV_Vars"]; // D-68: ตัด CSV_Objections
+const MANAGED_TABS = ["Steps", "Knowledge", "Vars"]; // D-72a: ตรงกับชื่อแท็บในชีต
 
 /** T2-ค · list แถวของแท็บความรู้ (read-only · fresh) — ป้อน list view + ฟอร์มเพิ่มแถว (header-driven) */
 export async function POST(req: NextRequest) {

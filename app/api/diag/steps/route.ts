@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ status: "error", reason: "โหลด BotLibrary ไม่ได้ (SHEET_BOTLIB_ID?)" }, { status: 200 });
   }
 
-  const bad = validateStepFunnelStages(lib.CSV_Step);
+  const bad = validateStepFunnelStages(lib.Steps);
   return NextResponse.json(
     { status: bad.length === 0 ? "ok" : "invalid", badCount: bad.length, bad, allowed: VALID_FUNNEL_STAGES },
     { status: 200 },

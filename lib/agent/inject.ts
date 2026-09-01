@@ -28,7 +28,7 @@ const STEP_COLS = [
   "ตัวอย่างประโยคปิดท้าย",
 ];
 
-/** 🔴 ชื่อคอลัมน์สถานะที่รองรับ — ชีตจริงปนกัน: CSV_FAQ ใช้ "status" (อังกฤษ) · แท็บอื่นใช้ "สถานะ" (ไทย)
+/** 🔴 ชื่อคอลัมน์สถานะที่รองรับ — ชีตจริงปนกัน: Knowledge ใช้ "status" (อังกฤษ) · แท็บอื่นใช้ "สถานะ" (ไทย)
  *  single source: ทุกที่ (prod status filter + T2-ค UI) ต้อง resolve ผ่านตัวนี้ · ห้าม hardcode ชื่อเดียว */
 const STATUS_COLUMN_ALIASES = ["status", "สถานะ"] as const;
 
@@ -95,7 +95,7 @@ interface ParsedSteps {
 
 function parseStepRows(rows: string[][]): ParsedSteps | null {
   if (rows.length < 2) return null;
-  const cols = resolveColumns(rows[0], STEP_COLS, "CSV_Step");
+  const cols = resolveColumns(rows[0], STEP_COLS, "Steps");
   if (!cols) return null;
 
   // optional cols (ไม่อยู่ใน required) — v2.0 ตัด คิดเอง (thinkIdx -1 → parseThinkMode("") → ปิด · D-40)
@@ -301,7 +301,7 @@ export function buildStepInjection(rows: string[][], input: StepInjectionInput):
   const parsed = parseStepRows(rows);
   if (!parsed) {
     const whole = tabToText(rows);
-    console.warn(JSON.stringify({ scope: "inject", tab: "CSV_Step", mode: "fallback-whole", chars: whole.length }));
+    console.warn(JSON.stringify({ scope: "inject", tab: "Steps", mode: "fallback-whole", chars: whole.length }));
     return whole;
   }
   const { steps, stepIds } = parsed;
@@ -397,7 +397,7 @@ function stripKeyAnnotation(key: string): string {
 }
 
 /**
- * อ่าน "คำอธิบาย" (คอลัมน์ E ของ CSV_Config) ของคีย์ที่ระบุ — เจ้าของเขียนวิธีคิดไว้ที่นี่
+ * อ่าน "คำอธิบาย" (คอลัมน์ E ของ Config) ของคีย์ที่ระบุ — เจ้าของเขียนวิธีคิดไว้ที่นี่
  * โค้ดอ่านค่า (คอลัมน์ C) ไปคำนวณ แต่คำอธิบายไม่เคยถึงบอท → ดึงมายัด prompt (อ่านจากชีต ไม่ hardcode)
  * ไม่มี header/คีย์/คำอธิบาย → คืน "" (graceful — บอทยังมีตารางราคาไว้ตอบได้)
  */
@@ -422,7 +422,7 @@ export function readConfigDescription(configRows: string[][], key: string): stri
 }
 
 export interface CatalogInput {
-  /** CSV_Config เป็น key→value (Object.fromEntries(config.raw)) — ให้ buildPriceTable คำนวณ */
+  /** Config เป็น key→value (Object.fromEntries(config.raw)) — ให้ buildPriceTable คำนวณ */
   config: Record<string, string>;
   /** ช่องทางชำระใน pending ("COD"/"โอน"/"") — ตารางต้องใช้ตัวเดียวกับที่ gate จะบันทึก */
   payment: string;
@@ -486,78 +486,10 @@ export function buildCatalogInjection(productsRows: string[][], promoRows: strin
   return parts.join("\n");
 }
 
-// ---- Objections (D-27) — เข้าใจ "ความกังวลจริง+หลักการตอบ" ประกอบคำตอบเอง ----
-
-// v2.0 (D-41): ตัด หลักการตอบ/ห้ามทำ/คิดเอง · pattern = "ตัวอย่างคำตอบ (บอลลูน)" · status filter
-const OBJECTION_COLS = ["objection_id", "ลูกค้าพูดแบบไหนบ้าง", "ความกังวลที่แท้จริง"];
-
-export interface ObjectionInjection {
-  text: string;
-  matchedIds: string[];
-  /**
-   * Phase2 ชั้น③ — ข้อโต้แย้งที่ match + คิดเอง=ปิด + มี pattern (ตัวแรก)
-   * มีค่า = objection ชนะ step (ส่ง pattern เป๊ะ) · null = ปล่อย AI ตัดสิน (เปิด/ไม่มี pattern = ไม่บังคับชนะ)
-   */
-  verbatim: { id: string; pattern: string } | null;
-}
-
-/**
- * ยัดข้อโต้แย้ง: สารบัญ (id+ชื่อ) ทุกแถวเสมอ + เต็มแถวเฉพาะที่ keyword match (สูงสุด cap)
- * 🔴 เจ้าของยังไม่เติมชีต → header ไม่ครบ/ว่าง = คืน "" ไม่ crash (Step/FAQ พอตอบได้)
- * เต็มแถว = ความกังวลจริง + หลักการตอบ + ห้ามทำ (บอทประกอบคำตอบเอง · ไม่ใช่สคริปต์)
- */
-export function buildObjectionInjection(rows: string[][], userMessage: string, cap: number): ObjectionInjection {
-  if (!rows || rows.length < 2) return { text: "", matchedIds: [], verbatim: null };
-  const cols = resolveColumns(rows[0], OBJECTION_COLS, "CSV_Objections");
-  if (!cols) {
-    console.warn(JSON.stringify({ scope: "inject", tab: "CSV_Objections", warning: "header ไม่ครบ — ข้าม (Step/FAQ พอ)" }));
-    return { text: "", matchedIds: [], verbatim: null };
-  }
-  const header = rows[0].map(cleanHeader);
-  const nameIdx = header.findIndex((h) => h.startsWith("ชื่อ")); // "ชื่อข้อโต้แย้ง"
-  const thinkIdx = header.indexOf("คิดเอง"); // v2.0 ไม่มี → -1 → parseThinkMode("") → ปิด (verbatim ชนะ · D-40)
-  const exampleIdx = header.indexOf("ตัวอย่างคำตอบ"); // "ตัวอย่างคำตอบ (บอลลูน)" — pattern verbatim
-  const statusIdx = statusColumnIndex(header); // status/สถานะ (single source)
-
-  interface Obj { id: string; name: string; says: string; concern: string; think: ThinkMode; pattern: string; }
-  const objs: Obj[] = [];
-  for (let i = 1; i < rows.length; i++) {
-    const id = cleanCell(cell(rows[i], cols, "objection_id"));
-    if (!id) continue;
-    if (statusIdx >= 0 && !isActiveStatus(rows[i][statusIdx])) continue; // v2.0: กรอง draft/ปิด
-    objs.push({
-      id,
-      name: nameIdx >= 0 ? cleanCell(rows[i][nameIdx]) : "",
-      says: cell(rows[i], cols, "ลูกค้าพูดแบบไหนบ้าง").trim(),
-      concern: cell(rows[i], cols, "ความกังวลที่แท้จริง").trim(),
-      think: parseThinkMode(thinkIdx >= 0 ? (rows[i][thinkIdx] ?? "") : ""),
-      pattern: exampleIdx >= 0 ? (rows[i][exampleIdx] ?? "").trim() : "",
-    });
-  }
-  if (objs.length === 0) return { text: "", matchedIds: [], verbatim: null };
-
-  // keyword match: คอลัมน์ "ลูกค้าพูดแบบไหนบ้าง" คั่นด้วย comma → เทียบ substring กับข้อความลูกค้า
-  const matched = objs
-    .filter((o) => o.says.split(",").map((s) => cleanCell(s)).some((p) => p.length > 0 && userMessage.includes(p)))
-    .slice(0, Math.max(0, cap));
-
-  // v2.0 (D-41): full-block = concern เท่านั้น (ตัด หลักการตอบ/ห้ามทำ) — AI ใช้ "จำแนก" objection ไม่ใช่แต่งคำตอบ
-  const fullBlocks = matched.map((o) =>
-    [`[${o.id}] ${o.name}`, o.concern && `ความกังวลที่แท้จริง: ${o.concern}`].filter(Boolean).join("\n"),
-  );
-
-  const text = [
-    "=== สารบัญข้อโต้แย้ง (id + ชื่อ) ===",
-    ...objs.map((o) => `${o.id} | ${o.name}`),
-    ...(fullBlocks.length > 0 ? ["", "=== ข้อโต้แย้งที่ตรวจพบ (ใช้จำแนก objection_detected) ===", ...fullBlocks] : []),
-  ].join("\n");
-
-  // Phase2 ชั้น③: objection ชนะ step เฉพาะเมื่อ คิดเอง=ปิด + มี pattern (เปิด/ไม่มี pattern = ไม่บังคับชนะ)
-  const vObj = matched.find((o) => o.think === "ปิด" && o.pattern.length > 0);
-  const verbatim = vObj ? { id: vObj.id, pattern: vObj.pattern } : null;
-
-  return { text, matchedIds: matched.map((o) => o.id), verbatim };
-}
+// ---- Objections: ลบทั้งบล็อก (D-72a) ----
+// v3 ยุบข้อโต้แย้งเข้าแท็บ Knowledge ตั้งแต่ D-61.B → ไม่มีแหล่งข้อมูลให้ฟังก์ชันนี้อีก
+// 🔴 prompt ไม่เปลี่ยน: handler ส่ง objectionText: "" → buildUserContent ระบุ "(ไม่มีข้อโต้แย้งที่ตรง...)" เหมือนเดิมเป๊ะ
+// (ก่อนลบ: buildObjectionInjection([]) ก็คืน text:"" อยู่แล้ว — ผลลัพธ์เท่าเดิมทุกบิต)
 
 // ---- Examples: ลบทั้งบล็อก (v2.0 · D-41) — เลิกใช้ "เลียนโทน" · verbatim ไม่ต้องมีตัวอย่างน้ำเสียง ----
 
@@ -575,7 +507,7 @@ interface FaqRow {
 
 function parseFaqRows(rows: string[][]): FaqRow[] | null {
   if (rows.length < 2) return null;
-  const cols = resolveColumns(rows[0], FAQ_COLS, "CSV_FAQ");
+  const cols = resolveColumns(rows[0], FAQ_COLS, "Knowledge");
   if (!cols) return null;
   const header = rows[0].map(cleanHeader);
   const statusIdx = statusColumnIndex(header); // v2.0: status filter (status/สถานะ · single source)
@@ -608,7 +540,7 @@ export interface FaqInjection {
 export function buildFaqInjection(rows: string[][], userMessage: string): FaqInjection {
   const faqs = parseFaqRows(rows);
   if (!faqs) {
-    console.warn(JSON.stringify({ scope: "inject", warning: "CSV_FAQ header ไม่ครบ fallback ยัดทั้งก้อน" }));
+    console.warn(JSON.stringify({ scope: "inject", warning: "Knowledge header ไม่ครบ fallback ยัดทั้งก้อน" }));
     return { text: tabToText(rows), verbatim: null };
   }
 

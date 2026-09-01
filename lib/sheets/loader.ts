@@ -2,7 +2,7 @@ import { getSheets } from "./client";
 import { resolveSpreadsheetId } from "@/lib/core/sheet-id";
 import { validateStepFunnelStages, VALID_FUNNEL_STAGES } from "@/lib/agent/inject";
 import { getTrainSandbox } from "@/lib/train/sandbox";
-import { V3_SHEET_TABS, adaptV3Bundle } from "./adapter-v3";
+import { SHEET_TABS, normalizeBundle } from "./normalize-bundle";
 
 /**
  * lib/sheets/loader.ts — โหลด BotLibrary ทุกแท็บด้วย batchGet 1 call จาก SHEET_BOTLIB_ID
@@ -12,17 +12,19 @@ import { V3_SHEET_TABS, adaptV3Bundle } from "./adapter-v3";
  * โหลดไม่ได้ → ใช้ cache เก่า · ไม่มี cache เลย → คืน null (ผู้เรียกปิดฟีเจอร์ all-or-nothing)
  */
 
-/** ชื่อแท็บใน BotLibrary (v2.0 · D-41) — key ที่ผู้เรียกใช้อ้าง
- *  🔴 ตัด CSV_Examples (เลิกใช้ "เลียนโทน" · verbatim ไม่ต้องมีตัวอย่างน้ำเสียง) · เพิ่ม CSV_Vars (ตัวแปรข้อความเจ้าของ · D-43) */
+/**
+ * คีย์ของ BotLibrary — 🔴 **D-72a: ตรงกับชื่อแท็บในชีตเป๊ะ** (ชีต = โค้ด = X-ray ชื่อเดียวกัน)
+ * `Follow` ไม่มีแท็บในชีต (dormant ตั้งแต่ B7) แต่คงคีย์ไว้ให้ cron/follow อ่านแล้ว skip เหมือนเดิม
+ * (D-72a ลบคีย์ `Objections` ทิ้ง — v3 ยุบเข้า Knowledge แล้ว คืน [] มาตลอด)
+ */
 export const BOTLIB_TABS = [
-  "CSV_Step",
-  "CSV_Objections",
-  "CSV_FAQ",
-  "CSV_Follow",
-  "CSV_Config",
-  "CSV_Products",
-  "CSV_Promo",
-  "CSV_Vars",
+  "Steps",
+  "Knowledge",
+  "Follow",
+  "Config",
+  "Products",
+  "Promo",
+  "Vars",
 ] as const;
 
 export type BotLibTab = (typeof BOTLIB_TABS)[number];
@@ -56,9 +58,9 @@ export async function loadBotLibrary(): Promise<BotLibrary | null> {
     return cache.bundle;
   }
 
-  // 🔴 D-68: v3 เส้นเดียว — อ่าน SHEET_BOTLIB_V3_ID เสมอ (ตัด dispatch v2/v3 ทิ้ง)
-  //    adapter ยังคงอยู่เป็นตัวแปลงแท็บ v3 → shape ภายใน (จะถูกถอดใน D-69 พร้อมเปลี่ยนชื่อภายในเป็นอังกฤษ)
-  const envKey = "SHEET_BOTLIB_V3_ID";
+  // 🔴 D-72a: ชื่อ ENV กลับมาเป็น SHEET_BOTLIB_ID (ไม่มี v2 ให้แยกแล้ว)
+  //    เจ้าของแก้ "ค่า" ของ ENV เดิมให้ชี้ชีต v3 ก่อน deploy → deploy เก่าไม่อ่าน = ไม่มีช่วงบอทดับ
+  const envKey = "SHEET_BOTLIB_ID";
   let spreadsheetId: string;
   try {
     spreadsheetId = resolveSpreadsheetId(process.env[envKey], envKey);
@@ -70,17 +72,17 @@ export async function loadBotLibrary(): Promise<BotLibrary | null> {
   try {
     const res = await getSheets().spreadsheets.values.batchGet({
       spreadsheetId,
-      ranges: V3_SHEET_TABS.map((t) => `${t}!A:Z`),
+      ranges: SHEET_TABS.map((t) => `${t}!A:Z`),
     });
     const valueRanges = res.data.valueRanges ?? [];
     // "order of ValueRanges is the same as requested ranges" (ยืนยันจาก types) → map ตาม index
     const rawByTab: Record<string, string[][]> = {};
-    V3_SHEET_TABS.forEach((tab, i) => {
+    SHEET_TABS.forEach((tab, i) => {
       rawByTab[tab] = (valueRanges[i]?.values as string[][] | undefined) ?? [];
     });
-    const bundle: BotLibrary = adaptV3Bundle(rawByTab); // normalize สถานะ (ว่าง=draft) + map แท็บ/คอลัมน์ — จุดเดียว
+    const bundle: BotLibrary = normalizeBundle(rawByTab); // normalize สถานะ (ว่าง=draft) + funnel + ประกอบคำตอบ — จุดเดียว
     if (!inSandbox) cache = { bundle, fetchedAt: now }; // 🔴 sandbox ไม่เขียน cache (กัน draft รั่ว prod)
-    logStepFunnelStageIssues(bundle.CSV_Step); // Step 6: validate funnel_stage ครั้งเดียวต่อ load (ไม่ spam per-turn)
+    logStepFunnelStageIssues(bundle.Steps); // Step 6: validate funnel_stage ครั้งเดียวต่อ load (ไม่ spam per-turn)
     return bundle;
   } catch (error) {
     console.error(JSON.stringify({ scope: "sheets", warning: "batchGet BotLibrary failed", error: String(error) }));
@@ -95,7 +97,7 @@ export async function loadBotLibrary(): Promise<BotLibrary | null> {
 function logStepFunnelStageIssues(stepRows: string[][]): void {
   for (const b of validateStepFunnelStages(stepRows)) {
     console.error(JSON.stringify({
-      scope: "sheets", tab: "CSV_Step",
+      scope: "sheets", tab: "Steps",
       error: b.severity === "high" ? "🔴 funnel_stage ผิด (ตาข่าย handoff หาย — เสี่ยง พ.ร.บ.อาหาร)" : "funnel_stage ไม่รู้จัก (ประตูไม่เข้า region)",
       severity: b.severity, stepId: b.stepId, value: b.value, allowed: VALID_FUNNEL_STAGES,
     }));

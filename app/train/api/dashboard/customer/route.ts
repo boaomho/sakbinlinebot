@@ -21,8 +21,8 @@ export async function POST(req: NextRequest) {
     if (!customer) return NextResponse.json({ error: "ไม่พบลูกค้า" }, { status: 404 });
 
     const [messages, lib] = await Promise.all([getRecentHistory(userId, 200), loadBotLibrary()]);
-    const nameMap = buildProductNameMap(lib?.CSV_Products ?? []);
-    const funnelStage = customer.stage ? funnelStageOf(lib?.CSV_Step ?? [], customer.stage) : null;
+    const nameMap = buildProductNameMap(lib?.Products ?? []);
+    const funnelStage = customer.stage ? funnelStageOf(lib?.Steps ?? [], customer.stage) : null;
 
     return NextResponse.json({
       userId,

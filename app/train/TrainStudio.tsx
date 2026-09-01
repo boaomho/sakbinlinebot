@@ -48,10 +48,12 @@ interface AsstCol { name: string; value: string }
 interface AsstProposal { id: number; action: "add-row" | "edit-row"; tab: string; key: string; cols: AsstCol[]; note: string; done?: boolean }
 
 const OVERLAY_KEY = "train-overlay-v1";
+// 🔴 D-72a: label = ชื่อแท็บในชีตเป๊ะ — เจ้าของเห็นชื่อไหนในหน้านี้ ก็เปิดแท็บนั้นในชีตได้เลย
+//    (เดิม label เป็น FAQ/ประตูขาย/ตัวแปร = ชื่อที่หาในชีตไม่เจอ เสียเวลาเปล่า — เจตนาหลักของ D-72)
 const MGMT_TABS: { tab: string; label: string }[] = [
-  { tab: "CSV_FAQ", label: "FAQ" },
-  { tab: "CSV_Step", label: "ประตูขาย" },
-  { tab: "CSV_Vars", label: "ตัวแปร" },
+  { tab: "Knowledge", label: "Knowledge" },
+  { tab: "Steps", label: "Steps" },
+  { tab: "Vars", label: "Vars" },
 ];
 
 function sessionIdFromStorage(): string {
@@ -120,7 +122,7 @@ export default function TrainStudio() {
   const [isMobile, setIsMobile] = useState(false);
   // T2-ค: จัดการแถวคลังความรู้
   const [mgmtOpen, setMgmtOpen] = useState(false);
-  const [mgmtTab, setMgmtTab] = useState("CSV_FAQ");
+  const [mgmtTab, setMgmtTab] = useState("Knowledge");
   const [mgmtData, setMgmtData] = useState<MgmtData | null>(null);
   const [mgmtBusy, setMgmtBusy] = useState(false);
   const [addForm, setAddForm] = useState<Record<string, string> | null>(null);
@@ -348,9 +350,9 @@ export default function TrainStudio() {
       const rest = prev.filter((o) => !(o.tab === mgmtTab && o.key === key && o.column === sCol));
       return [...rest, { tab: mgmtTab, key, column: sCol, value: "live" }];
     });
-    if (mgmtTab === "CSV_FAQ") setInput(key); // FAQ key = คำถาม → เติมให้เลย
+    if (mgmtTab === "Knowledge") setInput(key); // FAQ key = คำถาม → เติมให้เลย
     setMgmtOpen(false);
-    flash(mgmtTab === "CSV_FAQ" ? "▶ ใส่คำถามให้แล้ว — กดส่งเพื่อทดสอบ draft (ห้องซ้อมเห็น live)" : "▶ draft พร้อมทดสอบ — พิมพ์ข้อความที่จะกระตุ้นแถวนี้ (ห้องซ้อมเห็น live)");
+    flash(mgmtTab === "Knowledge" ? "▶ ใส่คำถามให้แล้ว — กดส่งเพื่อทดสอบ draft (ห้องซ้อมเห็น live)" : "▶ draft พร้อมทดสอบ — พิมพ์ข้อความที่จะกระตุ้นแถวนี้ (ห้องซ้อมเห็น live)");
   }
 
   // ---- D-59: ผู้ช่วยเทรน (แชท AI → proposal → ยืนยันผ่านเส้นทาง D-57) ----
@@ -417,7 +419,7 @@ export default function TrainStudio() {
     const rd = (await rr.json()) as { statusCol: string | null };
     if (!rd.statusCol) { flash("แท็บนี้ไม่มีคอลัมน์สถานะ — ทดสอบไม่ได้"); return; }
     setOverlay((prev) => [...prev.filter((o) => !(o.tab === tab && o.key === key && o.column === rd.statusCol)), { tab, key, column: rd.statusCol!, value: "live" }]);
-    if (tab === "CSV_FAQ") setInput(key);
+    if (tab === "Knowledge") setInput(key);
     setAsstOpen(false);
     flash("▶ draft พร้อมทดสอบ (ห้องซ้อมเห็น live · prod ยังกรอง draft)");
   }
@@ -631,7 +633,7 @@ export default function TrainStudio() {
                     <div key={h} style={{ marginBottom: 8 }}>
                       <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 2 }}>
                         {h}{h === mgmtData.keyCol && <span style={{ color: "#06735c" }}> (key)</span>}
-                        {mgmtTab === "CSV_Step" && h === "funnel_stage" && <span style={{ color: "#a10000", fontWeight: 400 }}> · ต้องเป็นสเตจที่ถูก (บอทใช้เป็นตาข่าย handoff)</span>}
+                        {mgmtTab === "Steps" && h === "funnel_stage" && <span style={{ color: "#a10000", fontWeight: 400 }}> · ต้องเป็นสเตจที่ถูก (บอทใช้เป็นตาข่าย handoff)</span>}
                       </div>
                       <textarea style={{ ...S.ta, minHeight: mgmtData.editableCols.includes(h) ? 70 : 38 }} value={addForm[h] ?? ""} onChange={(e) => setAddForm({ ...addForm, [h]: e.target.value })} />
                     </div>

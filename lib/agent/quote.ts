@@ -42,8 +42,8 @@ export function computeQuote(pending: PendingOrder, lib: BotLibrary | null, conf
   if (items.length === 0) return null;
   const price = calculatePrice(
     { items, paymentMethod: pending["การชำระเงิน"] ?? "", now },
-    lib?.CSV_Promo ?? [],
-    lib?.CSV_Products ?? [],
+    lib?.Promo ?? [],
+    lib?.Products ?? [],
     Object.fromEntries(config.raw),
   );
   const ok = price.error === null && !price.needsHandoff;
@@ -66,7 +66,7 @@ export function hasUnresolvedPricingVars(outgoing: string): boolean {
   return PRICING_RUNTIME_VARS.some((v) => outgoing.includes(v));
 }
 
-// ---- ตัวแปรข้อมูลโอนเงิน (โค้ด resolve จาก CSV_Config · guard ร้ายแรง ต่างจากราคาที่แค่ log) ----
+// ---- ตัวแปรข้อมูลโอนเงิน (โค้ด resolve จาก Config · guard ร้ายแรง ต่างจากราคาที่แค่ log) ----
 // {เลขที่บัญชี} = ชื่อใหม่ · {เลขพร้อมเพย์} = alias เก่า (กันหน้าต่างที่ชีต/สเต็ปยังไม่ตรงกัน)
 // 🔴 ค่าจริงเป็นเลขบัญชีธนาคาร ไม่ใช่พร้อมเพย์ — ปล่อยให้บอทพูด "โอนเข้าพร้อมเพย์ <เลข>" = ลูกค้าโอนไม่ได้
 const ACCOUNT_NO_TOKENS = ["{เลขที่บัญชี}", "{เลขพร้อมเพย์}"];
@@ -91,7 +91,7 @@ function pickConfig(config: AppConfig, keys: string[]): string {
 }
 
 /**
- * แทนตัวแปรข้อมูลโอนเงินในข้อความด้วยค่าจริงจาก CSV_Config (โค้ด resolve เอง ไม่พึ่ง AI)
+ * แทนตัวแปรข้อมูลโอนเงินในข้อความด้วยค่าจริงจาก Config (โค้ด resolve เอง ไม่พึ่ง AI)
  * 🔴 แทนเฉพาะเมื่อ config มีค่า (ไม่ว่าง) · ค่าว่าง/ไม่มี = ปล่อยวงเล็บค้างไว้ให้ guard จับ (กันส่ง "โอนเข้า ")
  */
 export function resolveTransferVars(text: string, config: AppConfig): string {
@@ -111,7 +111,7 @@ export function unresolvedTransferVars(outgoing: string): string[] {
 }
 
 // ---- ตัวแปร "ข้อมูลออเดอร์ล่าสุด" (D-32) — โค้ด resolve จาก last_order ให้ Step ทวน/แก้ ----
-// เจ้าของอ้างตัวแปรพวกนี้ในแถว S_EDIT ของ CSV_Step (ทวนข้อมูลใหม่ให้ลูกค้าหลังแก้)
+// เจ้าของอ้างตัวแปรพวกนี้ในแถว S_EDIT ของ Steps (ทวนข้อมูลใหม่ให้ลูกค้าหลังแก้)
 /** @param itemsText สรุปรายการที่ผู้เรียก resolve ชื่อสินค้าแล้ว ("น้ำพริกปลาทู x3") */
 export function resolveOrderVars(text: string, order: LastOrder | null, itemsText: string): string {
   if (!order) return text;
@@ -180,8 +180,8 @@ export function resolveConfigVars(text: string, config: AppConfig): string {
   return out;
 }
 
-// ---- CSV_Vars (D-43) — ตัวแปรข้อความเจ้าของนิยามเอง · โหลดเฉพาะ live · ตัวแปรระบบชนะ ----
-/** โหลด CSV_Vars เฉพาะ สถานะ=live + ชื่อมีปีกกา (กรอง draft/แถวกติกา) — pure */
+// ---- Vars (D-43) — ตัวแปรข้อความเจ้าของนิยามเอง · โหลดเฉพาะ live · ตัวแปรระบบชนะ ----
+/** โหลด Vars เฉพาะ สถานะ=live + ชื่อมีปีกกา (กรอง draft/แถวกติกา) — pure */
 export function loadLiveVars(varsRows: string[][]): { name: string; value: string }[] {
   if (!varsRows || varsRows.length < 2) return [];
   const header = varsRows[0].map(cleanHeader);
@@ -197,7 +197,7 @@ export function loadLiveVars(varsRows: string[][]): { name: string; value: strin
   return out;
 }
 
-/** แทนตัวแปร CSV_Vars (D-43) — 🔴 ชื่อชนตัวแปรระบบ (knownVars) → ข้าม+log (ระบบชนะ) */
+/** แทนตัวแปร Vars (D-43) — 🔴 ชื่อชนตัวแปรระบบ (knownVars) → ข้าม+log (ระบบชนะ) */
 export function resolveCsvVars(text: string, varsRows: string[][], knownVars: readonly string[]): string {
   const live = loadLiveVars(varsRows);
   if (live.length === 0) return text;
@@ -214,7 +214,7 @@ export function resolveCsvVars(text: string, varsRows: string[][], knownVars: re
 
 /**
  * D-39/D-43 var-guard — ตัวแปร "ที่ resolver ระบบรู้จัก" (pricing+transfer+order+catalog+pending+delivery+config)
- * 🔴 กันเฉพาะชุดนี้ ไม่ใช่ `{...}` ทุกตัว · CSV_Vars (dynamic) ไม่อยู่ในนี้ (resolve หมดก่อน · draft กรองตอนโหลด)
+ * 🔴 กันเฉพาะชุดนี้ ไม่ใช่ `{...}` ทุกตัว · Vars (dynamic) ไม่อยู่ในนี้ (resolve หมดก่อน · draft กรองตอนโหลด)
  */
 export const KNOWN_RUNTIME_VARS = [
   ...PRICING_RUNTIME_VARS, ...TRANSFER_VARS, ...ORDER_VARS,
@@ -235,7 +235,7 @@ export interface AllVarsContext {
   pending: PendingOrder;
   products: string[][];
   promo: string[][];
-  /** D-43: CSV_Vars ดิบ (ตัวแปรข้อความเจ้าของ) */
+  /** D-43: Vars ดิบ (ตัวแปรข้อความเจ้าของ) */
   varsRows: string[][];
   now: Date;
 }
@@ -254,7 +254,7 @@ export function resolveAllVars(text: string, ctx: AllVarsContext): string {
     const invite = buildPromoInviteVar(ctx.products, ctx.promo, Object.fromEntries(ctx.config.raw), ctx.pending["การชำระเงิน"] ?? "", ctxQty, ctx.now);
     if (invite) out = out.split(PROMO_INVITE_VAR).join(invite);
   }
-  out = resolveCsvVars(out, ctx.varsRows, KNOWN_RUNTIME_VARS); // D-43 CSV_Vars (ระบบชนะ) · ท้ายสุด
+  out = resolveCsvVars(out, ctx.varsRows, KNOWN_RUNTIME_VARS); // D-43 Vars (ระบบชนะ) · ท้ายสุด
   return out;
 }
 

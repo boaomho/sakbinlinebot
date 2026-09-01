@@ -2,18 +2,27 @@ import { cleanHeader, cleanCell } from "./clean";
 import type { BotLibrary } from "./loader";
 
 /**
- * lib/sheets/adapter-v3.ts — D-61.B · adapter ชีต v3 → BotLibrary shape เดิม (จุดแปลงเดียวทั้งระบบ)
- * consumers (inject/pricing/config/quote/train) ไม่รู้จัก v3 เลย — เห็น bundle shape เดิม + ค่าสถานะ canonical
+ * lib/sheets/normalize-bundle.ts — D-72a (เดิม adapter-v3.ts)
  *
- * 🔴 กติกาสถานะ v3 (B1): "ว่าง = draft" (กลับด้านจาก v2 · ปิด KI-08 ถาวร) — isolate ที่นี่บรรทัดเดียว:
- *    normalize ทุกแถว → "live" หรือ "draft" เท่านั้น · โค้ดข้างใน (isActiveStatus ว่าง=live / STATUS_LIVE==="live")
- *    ไม่มีวันเจอค่าว่างจาก v3 → ความหมายเดียวทั้งระบบ · แถว draft ไม่ถูกกรองทิ้ง (studio ต้องเห็น)
+ * 🔴 **ไม่ใช่ shim แปลชื่อแท็บ — ชื่อแท็บในชีต = ชื่อคีย์ใน BotLibrary แล้ว (D-72a)**
+ *    ไฟล์นี้เหลือหน้าที่ "แปลงความหมาย" 4 อย่างที่เป็นของจริง ลบทิ้งเฉย ๆ ไม่ได้:
+ *      1. normalize สถานะ "ว่าง = draft" (B1 · กลับด้านจาก v2 = ปิด KI-08 ถาวร)
+ *         🔴 consumer ใช้ `isActiveStatus` ซึ่ง **ว่าง = active** → ถ้าไม่ normalize ที่นี่
+ *            แถวที่เจ้าของยังไม่กรอกสถานะจะเด้งขึ้นหน้าร้านทันที
+ *      2. คำนวณ `funnel_stage` (FIXED_FUNNEL + flag handoff + คอลัมน์ optional D-68)
+ *      3. ประกอบ `คำตอบ` ของ Knowledge จาก 3 คอลัมน์ (ความกังวลจริง/ข้อเท็จจริง/แนวตอบ) → เข้า prompt
+ *      4. lowercase สถานะให้ Products/Promo (pricing เทียบ `!== "live"` แบบ case-sensitive)
+ *
+ * 🔴 D-72b จะ **แยกเส้นทาง** ไม่ใช่ลบไฟล์นี้: บอทอ่านของที่ normalize แล้ว · Studio/ปุ่มเขียนต้องเห็น
+ *    "แถวดิบตามชีตเป๊ะ" — โดยเฉพาะข้อ 3 ที่ยุบ 3 คอลัมน์เป็นก้อนเดียว **เขียนกลับไม่ได้โดยหลักการ**
+ *    (นี่คือเหตุผลที่แท้จริงที่ปุ่มเขียนใน /train พัง ไม่ใช่เรื่องชื่อแท็บ)
+ *
  * 🔴 ห้าม fallback ยัดดิบ (B1): header หลักขาด → แท็บนั้นคืนว่าง (ฟีเจอร์ degrade) + log structured ฟ้อง
  */
 
-/** ชื่อแท็บจริงในไฟล์ v3 (ตามลำดับ batchGet) — ใหม่ 2 แท็บชื่อไทยตาม spec B2/B3 · ที่เหลือคงชื่อ CSV_* */
-export const V3_SHEET_TABS = ["เส้นทางขาย", "ความรู้", "CSV_Products", "CSV_Promo", "CSV_Vars", "CSV_Config"] as const;
-export type V3Tab = (typeof V3_SHEET_TABS)[number];
+/** ชื่อแท็บจริงในชีต (ตามลำดับ batchGet) — 🔴 D-72a: ตรงกับคีย์ใน `BotLibrary` เป๊ะ ไม่มีชั้นแปลชื่อแล้ว */
+export const SHEET_TABS = ["Steps", "Knowledge", "Products", "Promo", "Vars", "Config"] as const;
+export type SheetTab = (typeof SHEET_TABS)[number];
 
 /** เคาะ #2: funnel map ตายตัวใน adapter (ชีต v3 ไม่มีคอลัมน์ funnel — ความหมายอยู่ที่นี่) · ประตูใหม่นอกลิสต์ → qualified + log */
 const FIXED_FUNNEL: Record<string, string> = {
@@ -39,11 +48,11 @@ function headerIndex(rows: string[][]): { header: string[]; idx: (name: string) 
 }
 
 function logMissing(tab: string, missing: string[]): void {
-  console.error(JSON.stringify({ scope: "sheets-v3", event: "header-missing", tab, missing, action: "degrade-tab" }));
+  console.error(JSON.stringify({ scope: "sheets", event: "header-missing", tab, missing, action: "degrade-tab" }));
 }
 
-/** เส้นทางขาย → CSV_Step (header v2-compatible + optional "สาระที่ต้องสื่อ" · เคาะ #3) */
-function adaptSteps(rows: string[][]): string[][] {
+/** Steps: แถวดิบ → header ที่ inject.ts อ่าน (+ funnel_stage ที่คำนวณ) */
+function normalizeSteps(rows: string[][]): string[][] {
   if (rows.length === 0) return [];
   const { idx } = headerIndex(rows);
   const iId = idx("step_id");
@@ -57,7 +66,7 @@ function adaptSteps(rows: string[][]): string[][] {
   const iFunnel = idx("funnel_stage"); // D-68: optional · ไม่มี = -1 → ใช้ FIXED_FUNNEL เดิม
   const iStatus = idx("สถานะ");
   if (iId === -1 || iEntry === -1) {
-    logMissing("เส้นทางขาย", [iId === -1 ? "step_id" : "", iEntry === -1 ? "เข้าเมื่อ" : ""].filter(Boolean));
+    logMissing("Steps", [iId === -1 ? "step_id" : "", iEntry === -1 ? "เข้าเมื่อ" : ""].filter(Boolean));
     return [];
   }
   const out: string[][] = [
@@ -76,7 +85,7 @@ function adaptSteps(rows: string[][]): string[][] {
     const explicitFunnel = cleanCell(g(r, iFunnel)).toLowerCase();
     let funnel = isHandoff ? "handoff" : explicitFunnel || FIXED_FUNNEL[stepId];
     if (!funnel) {
-      console.warn(JSON.stringify({ scope: "sheets-v3", event: "unknown-step-funnel", stepId, fallback: DEFAULT_FUNNEL }));
+      console.warn(JSON.stringify({ scope: "sheets", event: "unknown-step-funnel", stepId, fallback: DEFAULT_FUNNEL }));
       funnel = DEFAULT_FUNNEL; // เคาะ #2: ประตูใหม่นอกลิสต์ → default qualified + ฟ้อง
     }
     out.push([
@@ -95,8 +104,8 @@ function adaptSteps(rows: string[][]): string[][] {
   return out;
 }
 
-/** ความรู้ (FAQ+OBJ รวม) → CSV_FAQ · คำตอบ = ก้อนประกอบ ลำดับเคาะ #1: ความกังวลจริง → ข้อเท็จจริง → แนวตอบ */
-function adaptKnowledge(rows: string[][]): string[][] {
+/** Knowledge: ประกอบ `คำตอบ` จาก 3 คอลัมน์ (ลำดับเคาะ #1: ความกังวลจริง → ข้อเท็จจริง → แนวตอบ) */
+function normalizeKnowledge(rows: string[][]): string[][] {
   if (rows.length === 0) return [];
   const { idx } = headerIndex(rows);
   const iSay = idx("ลูกค้าพูดยังไง");
@@ -106,7 +115,7 @@ function adaptKnowledge(rows: string[][]): string[][] {
   const iKw = idx("keyword");
   const iStatus = idx("สถานะ");
   if (iSay === -1) {
-    logMissing("ความรู้", ["ลูกค้าพูดยังไง"]);
+    logMissing("Knowledge", ["ลูกค้าพูดยังไง"]);
     return [];
   }
   const out: string[][] = [["คำถาม", "keywords", "action", "คำตอบ", "สถานะ"]];
@@ -127,8 +136,8 @@ function adaptKnowledge(rows: string[][]): string[][] {
   return out;
 }
 
-/** แท็บ pass-through (Products/Promo/Vars) — โครงคอลัมน์เดิม แค่ normalize คอลัมน์ "สถานะ" เป็น canonical */
-function adaptPassthrough(tab: string, rows: string[][]): string[][] {
+/** Products/Promo/Vars — โครงคอลัมน์เดิม แค่ normalize คอลัมน์ "สถานะ" เป็น canonical (lowercase + ว่าง=draft) */
+function normalizeStatusTab(tab: string, rows: string[][]): string[][] {
   if (rows.length === 0) return [];
   const { idx } = headerIndex(rows);
   const iStatus = idx("สถานะ");
@@ -148,7 +157,7 @@ function adaptPassthrough(tab: string, rows: string[][]): string[][] {
 
 // ---- D-61.C: ตรวจสุขภาพชีต v3 (การ์ดใน /train/dashboard · ไม่ silent ตาม B1) ----
 
-export interface V3TabStat {
+export interface TabStat {
   tab: string;
   ok: boolean;
   /** header หลักที่ขาด (ทำให้แท็บ degrade) */
@@ -161,23 +170,23 @@ export interface V3TabStat {
 
 /** header หลักต่อแท็บ — ขาด = แท็บ degrade (ฟีเจอร์ที่พึ่งตัวนั้นปิด · ห้าม fallback ยัดดิบ) */
 const REQUIRED_HEADERS: Record<string, string[]> = {
-  เส้นทางขาย: ["step_id", "เข้าเมื่อ", "สถานะ"],
-  ความรู้: ["ลูกค้าพูดยังไง", "สถานะ"],
-  CSV_Products: ["sku", "ชื่อสินค้า", "ราคาปกติ_ต่อหน่วย", "สถานะ"],
-  CSV_Promo: ["promo_id", "sku", "จำนวน", "ราคาโปร", "สถานะ"],
-  CSV_Vars: ["ตัวแปร", "ค่า", "สถานะ"],
-  CSV_Config: ["key"],
+  Steps: ["step_id", "เข้าเมื่อ", "สถานะ"],
+  Knowledge: ["ลูกค้าพูดยังไง", "สถานะ"],
+  Products: ["sku", "ชื่อสินค้า", "ราคาปกติ_ต่อหน่วย", "สถานะ"],
+  Promo: ["promo_id", "sku", "จำนวน", "ราคาโปร", "สถานะ"],
+  Vars: ["ตัวแปร", "ค่า", "สถานะ"],
+  Config: ["key"],
 };
 
 /** สถิติ+ปัญหาต่อแท็บ (pure) — dashboard ใช้โชว์ ✅/⚠️ ก่อน cutover */
-export function validateV3Bundle(rawByTab: Record<string, string[][]>): V3TabStat[] {
-  return V3_SHEET_TABS.map((tab) => {
+export function validateBundle(rawByTab: Record<string, string[][]>): TabStat[] {
+  return SHEET_TABS.map((tab) => {
     const rows = rawByTab[tab] ?? [];
     if (rows.length === 0) return { tab, ok: false, missing: ["(แท็บว่าง/ไม่พบ)"], rows: 0, live: 0, draft: 0 };
     const { idx } = headerIndex(rows);
     const missing = (REQUIRED_HEADERS[tab] ?? []).filter((h) => idx(h) === -1);
     const statusIdx = idx("สถานะ");
-    const keyIdx = idx(tab === "เส้นทางขาย" ? "step_id" : tab === "ความรู้" ? "ลูกค้าพูดยังไง" : tab === "CSV_Config" ? "key" : tab === "CSV_Vars" ? "ตัวแปร" : tab === "CSV_Promo" ? "promo_id" : "sku");
+    const keyIdx = idx(tab === "Steps" ? "step_id" : tab === "Knowledge" ? "ลูกค้าพูดยังไง" : tab === "Config" ? "key" : tab === "Vars" ? "ตัวแปร" : tab === "Promo" ? "promo_id" : "sku");
     let live = 0;
     let draft = 0;
     let count = 0;
@@ -191,17 +200,19 @@ export function validateV3Bundle(rawByTab: Record<string, string[][]>): V3TabSta
   });
 }
 
-/** ประกอบ bundle v3 → BotLibrary shape เดิม (CSV_Objections=[] แท็บรวมแล้ว · CSV_Follow=[] ไม่ยกมา B7) */
-export function adaptV3Bundle(rawByTab: Record<string, string[][]>): BotLibrary {
-  const get = (tab: V3Tab) => rawByTab[tab] ?? [];
+/**
+ * แถวดิบจากชีต → BotLibrary (normalize ความหมาย · **ไม่แปลงชื่อแท็บแล้ว** — ชื่อตรงกันทั้งสองฝั่ง)
+ * `Follow: []` — dormant ตั้งแต่ B7 (ชีตไม่มีแท็บนี้) · คงคีย์ไว้ให้ cron/follow อ่านแล้ว skip ได้เหมือนเดิม
+ */
+export function normalizeBundle(rawByTab: Record<string, string[][]>): BotLibrary {
+  const get = (tab: SheetTab) => rawByTab[tab] ?? [];
   return {
-    CSV_Step: adaptSteps(get("เส้นทางขาย")),
-    CSV_FAQ: adaptKnowledge(get("ความรู้")),
-    CSV_Objections: [], // B2: ยุบรวมเข้า "ความรู้" · v3 ไม่ใช้ OBJ verbatim อยู่แล้ว (เรียบเรียงสด)
-    CSV_Follow: [], // B7: dormant ไม่ยกมา
-    CSV_Config: get("CSV_Config"), // key-value · ไม่มีคอลัมน์สถานะ (B5)
-    CSV_Products: adaptPassthrough("CSV_Products", get("CSV_Products")),
-    CSV_Promo: adaptPassthrough("CSV_Promo", get("CSV_Promo")),
-    CSV_Vars: adaptPassthrough("CSV_Vars", get("CSV_Vars")),
+    Steps: normalizeSteps(get("Steps")),
+    Knowledge: normalizeKnowledge(get("Knowledge")),
+    Follow: [], // B7: dormant — ไม่มีแท็บนี้ในชีต
+    Config: get("Config"), // key-value · ไม่มีคอลัมน์สถานะ (B5)
+    Products: normalizeStatusTab("Products", get("Products")),
+    Promo: normalizeStatusTab("Promo", get("Promo")),
+    Vars: normalizeStatusTab("Vars", get("Vars")),
   };
 }

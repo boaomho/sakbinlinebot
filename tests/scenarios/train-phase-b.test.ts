@@ -65,12 +65,12 @@ describe("เฟส ข · overlay มีผลจริงตอนเล่น
 });
 
 describe("เฟส ข · provenance — เทิร์นนี้มาจากแถวไหน", () => {
-  it("step turn → sources ชี้ CSV_Step + step_id ที่ส่ง", async () => {
+  it("step turn → sources ชี้ Steps + step_id ที่ส่ง", async () => {
     seedBotLib({ stepRows: steps() });
     scriptGemini([turn({ reply: "AI", stage: "S1" })]);
     const res = await runTrainTurn("train-prov-0001", "สวัสดีค่ะ");
     expect(res.sources.length).toBeGreaterThan(0);
-    expect(res.sources[0]).toMatchObject({ tab: "CSV_Step", key: "S1", keyCol: "step_id" });
+    expect(res.sources[0]).toMatchObject({ tab: "Steps", key: "S1", keyCol: "step_id" });
     expect(res.sources[0].columns.map((c) => c.name)).toContain("ตัวอย่างคำตอบ");
   });
 });
@@ -93,14 +93,14 @@ describe("เฟส ข · dropped bubble ไม่หายเงียบ", ()
 describe("เฟส ข · preview + lint สด (reuse guard production)", () => {
   it("preview render บอลลูน + mark ตัวที่จะถูกทิ้ง", async () => {
     seedBotLib({ stepRows: steps() });
-    const pv = await runTrainPreview("train-pv-0001", "CSV_Step", "S3", {});
+    const pv = await runTrainPreview("train-pv-0001", "Steps", "S3", {});
     expect(pv.segments.some((s) => s.text.includes("ยืนยัน") && !s.dropped)).toBe(true);
     expect(pv.segments.some((s) => s.dropped && s.vars.includes("{ออเดอร์_ที่อยู่}")), "บอลลูน {ออเดอร์_ที่อยู่} มาร์ค dropped").toBe(true);
   });
 
   it("🔴 lint: ตัวแปรไม่รู้จัก + ราคานอกระบบ → block · (draft ทับสด)", async () => {
     seedBotLib({ stepRows: steps() });
-    const pv = await runTrainPreview("train-pv-0002", "CSV_Step", "S1", { "ตัวอย่างคำตอบ": "ราคา 999 บาท {ตัวแปรมั่ว}ค่ะ" });
+    const pv = await runTrainPreview("train-pv-0002", "Steps", "S1", { "ตัวอย่างคำตอบ": "ราคา 999 บาท {ตัวแปรมั่ว}ค่ะ" });
     const kinds = pv.lint.map((f) => f.kind);
     expect(kinds, "ตัวแปรไม่รู้จัก").toContain("unknown-var");
     expect(kinds, "ราคานอกระบบ 999").toContain("price");
@@ -109,7 +109,7 @@ describe("เฟส ข · preview + lint สด (reuse guard production)", () =
 
   it("preview ที่สะอาด → ไม่มี lint block", async () => {
     seedBotLib({ stepRows: steps() });
-    const pv = await runTrainPreview("train-pv-0003", "CSV_Step", "S1", {});
+    const pv = await runTrainPreview("train-pv-0003", "Steps", "S1", {});
     expect(pv.lint.filter((f) => f.level === "block").length).toBe(0);
     expect(sheetsCalls.appends.length, "preview ไม่แตะชีตจริง").toBe(0);
   });

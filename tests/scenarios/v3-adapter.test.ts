@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { sheetsCalls } from "../harness/state";
 import { TAB } from "../harness/botlib-fixture";
-import { adaptV3Bundle } from "@/lib/sheets/adapter-v3";
+import { normalizeBundle } from "@/lib/sheets/normalize-bundle";
 import { loadBotLibrary, __resetBotLibraryCache } from "@/lib/sheets/loader";
 import { buildStepInjection, buildCatalogInjection } from "@/lib/agent/inject";
 import { resolveCatalogVars } from "@/lib/core/pricing";
@@ -33,67 +33,66 @@ const PROD_V3 = [
 ];
 
 function v3Raw(over: Record<string, string[][]> = {}): Record<string, string[][]> {
-  return { เส้นทางขาย: STEP_V3, ความรู้: KNOW_V3, CSV_Products: PROD_V3, CSV_Promo: [], CSV_Vars: [], CSV_Config: [], ...over };
+  return { Steps: STEP_V3, Knowledge: KNOW_V3, Products: PROD_V3, Promo: [], Vars: [], Config: [], ...over };
 }
 
-describe("D-61.B · adaptV3Bundle (pure)", () => {
+describe("D-61.B · normalizeBundle (pure)", () => {
   it("🔴 สถานะ normalize: ว่าง→draft · live→live — isolate ที่ adapter (โค้ดข้างในไม่เจอค่าว่างจาก v3)", () => {
-    const b = adaptV3Bundle(v3Raw());
-    const statusCol = b.CSV_Step[0].indexOf("สถานะ");
-    const bySid = Object.fromEntries(b.CSV_Step.slice(1).map((r) => [r[0], r[statusCol]]));
+    const b = normalizeBundle(v3Raw());
+    const statusCol = b.Steps[0].indexOf("สถานะ");
+    const bySid = Object.fromEntries(b.Steps.slice(1).map((r) => [r[0], r[statusCol]]));
     expect(bySid.S1).toBe("live");
     expect(bySid.SD, "ว่าง = draft (กลับด้านจาก v2)").toBe("draft");
-    const pStatus = b.CSV_Products[0].indexOf("สถานะ");
-    expect(b.CSV_Products[2][pStatus], "Products ว่าง = draft (กติกาเดียวทั้งไฟล์)").toBe("draft");
+    const pStatus = b.Products[0].indexOf("สถานะ");
+    expect(b.Products[2][pStatus], "Products ว่าง = draft (กติกาเดียวทั้งไฟล์)").toBe("draft");
   });
 
   it("🔴 funnel map ตายตัว (เคาะ #2): S1→lead S2→qualified · handoff flag→handoff · นอกลิสต์→qualified", () => {
-    const b = adaptV3Bundle(v3Raw());
-    const f = Object.fromEntries(b.CSV_Step.slice(1).map((r) => [r[0], r[1]]));
+    const b = normalizeBundle(v3Raw());
+    const f = Object.fromEntries(b.Steps.slice(1).map((r) => [r[0], r[1]]));
     expect(f.S1).toBe("lead");
     expect(f.S2).toBe("qualified");
     expect(f.HX, "flag handoff").toBe("handoff");
     expect(f.S9, "นอกลิสต์ default qualified").toBe("qualified");
   });
 
-  it("🔴 ความรู้→CSV_FAQ: ก้อนคำตอบลำดับ ความกังวลจริง→ข้อเท็จจริง→แนวตอบ (เคาะ #1) · OBJ/Follow ว่าง", () => {
-    const b = adaptV3Bundle(v3Raw());
-    const h = b.CSV_FAQ[0];
-    const row = b.CSV_FAQ[1];
+  it("🔴 ความรู้→Knowledge: ก้อนคำตอบลำดับ ความกังวลจริง→ข้อเท็จจริง→แนวตอบ (เคาะ #1) · OBJ/Follow ว่าง", () => {
+    const b = normalizeBundle(v3Raw());
+    const h = b.Knowledge[0];
+    const row = b.Knowledge[1];
     expect(row[h.indexOf("คำถาม")]).toBe("ส่งกี่วันถึง");
     expect(row[h.indexOf("keywords")]).toBe("ส่งกี่วัน");
     expect(row[h.indexOf("action")]).toBe("answer");
     const ans = row[h.indexOf("คำตอบ")];
     expect(ans.indexOf("ความกังวลจริง:")).toBeLessThan(ans.indexOf("ข้อเท็จจริง:"));
     expect(ans.indexOf("ข้อเท็จจริง:")).toBeLessThan(ans.indexOf("แนวตอบ"));
-    expect(b.CSV_Objections).toEqual([]);
-    expect(b.CSV_Follow).toEqual([]);
+    expect(b.Follow).toEqual([]);
   });
 
   it("header หลักขาด → แท็บ degrade เป็นว่าง (ห้าม fallback ยัดดิบ · B1)", () => {
-    const b = adaptV3Bundle(v3Raw({ เส้นทางขาย: [["ผิด", "หมด"], ["x", "y"]] }));
-    expect(b.CSV_Step).toEqual([]);
+    const b = normalizeBundle(v3Raw({ Steps: [["ผิด", "หมด"], ["x", "y"]] }));
+    expect(b.Steps).toEqual([]);
   });
 
-  it("adapted CSV_Step ผ่าน buildStepInjection ได้ (STEP_COLS ครบ) + มี 'สาระที่ต้องสื่อ' ใน block", () => {
-    const b = adaptV3Bundle(v3Raw());
-    const text = buildStepInjection(b.CSV_Step, { quoted: false, payment: "", userMessage: "สวัสดี", signals: [] });
+  it("adapted Steps ผ่าน buildStepInjection ได้ (STEP_COLS ครบ) + มี 'สาระที่ต้องสื่อ' ใน block", () => {
+    const b = normalizeBundle(v3Raw());
+    const text = buildStepInjection(b.Steps, { quoted: false, payment: "", userMessage: "สวัสดี", signals: [] });
     expect(text).not.toContain("fallback-whole");
     expect(text).toContain("สาระที่ต้องสื่อ: ทักทาย+เกริ่นสินค้า");
     expect(text, "แถว draft (SD) ต้องถูกกรอง").not.toContain("SD");
   });
 });
 
-describe("D-61.B · loader อ่านชีต v3 (SHEET_BOTLIB_V3_ID + แท็บ v3 → adapter)", () => {
-  // 🔴 D-68: SHEET_BOTLIB_V3_ID เป็น id เดียวของระบบแล้ว — ห้ามลบทิ้งตอนจบ (describe อื่นจะโหลดชีตไม่ได้) · คืนค่าเดิมแทน
-  const savedId = process.env.SHEET_BOTLIB_V3_ID;
+describe("D-61.B · loader อ่านชีต v3 (SHEET_BOTLIB_ID + แท็บ v3 → adapter)", () => {
+  // 🔴 D-68: SHEET_BOTLIB_ID เป็น id เดียวของระบบแล้ว — ห้ามลบทิ้งตอนจบ (describe อื่นจะโหลดชีตไม่ได้) · คืนค่าเดิมแทน
+  const savedId = process.env.SHEET_BOTLIB_ID;
   beforeEach(() => {
-    process.env.SHEET_BOTLIB_V3_ID = "1v3testspreadsheetid0000000000000000000000";
+    process.env.SHEET_BOTLIB_ID = "1v3testspreadsheetid0000000000000000000000";
     __resetBotLibraryCache();
   });
   afterEach(() => {
-    if (savedId === undefined) delete process.env.SHEET_BOTLIB_V3_ID;
-    else process.env.SHEET_BOTLIB_V3_ID = savedId;
+    if (savedId === undefined) delete process.env.SHEET_BOTLIB_ID;
+    else process.env.SHEET_BOTLIB_ID = savedId;
     __resetBotLibraryCache();
   });
 
@@ -101,13 +100,13 @@ describe("D-61.B · loader อ่านชีต v3 (SHEET_BOTLIB_V3_ID + แท
     sheetsCalls.botLibReturn = v3Raw();
     const lib = await loadBotLibrary();
     expect(lib).not.toBeNull();
-    expect(lib!.CSV_Step[1][0]).toBe("S1");
-    expect(lib!.CSV_FAQ[1][0]).toBe("ส่งกี่วันถึง");
-    expect(sheetsCalls.lastBatchGetRanges.some((r) => r.startsWith("เส้นทางขาย")), "ยิง range แท็บ v3").toBe(true);
+    expect(lib!.Steps[1][0]).toBe("S1");
+    expect(lib!.Knowledge[1][0]).toBe("ส่งกี่วันถึง");
+    expect(sheetsCalls.lastBatchGetRanges.some((r) => r.startsWith(TAB.steps)), "ยิง range แท็บจริง (D-72a: ชื่ออังกฤษ)").toBe(true);
   });
 
-  it("โหมด v3 แต่ SHEET_BOTLIB_V3_ID ไม่ตั้ง → null (all-or-nothing เดิม)", async () => {
-    delete process.env.SHEET_BOTLIB_V3_ID;
+  it("โหมด v3 แต่ SHEET_BOTLIB_ID ไม่ตั้ง → null (all-or-nothing เดิม)", async () => {
+    delete process.env.SHEET_BOTLIB_ID;
     expect(await loadBotLibrary()).toBeNull();
   });
 });

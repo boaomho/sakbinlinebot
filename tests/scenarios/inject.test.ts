@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { buildStepInjection, buildFaqInjection, buildCatalogInjection, buildObjectionInjection, readConfigDescription, resolveDestinations, validateStepFunnelStages, VALID_FUNNEL_STAGES, detectPaymentChoice, isPaymentChoiceOnly, resolvePaymentStep, redactFinancial } from "@/lib/agent/inject";
+import { buildStepInjection, buildFaqInjection, buildCatalogInjection, readConfigDescription, resolveDestinations, validateStepFunnelStages, VALID_FUNNEL_STAGES, detectPaymentChoice, isPaymentChoiceOnly, resolvePaymentStep, redactFinancial } from "@/lib/agent/inject";
 import { tabToText } from "@/lib/sheets/columns";
 import { cleanHeader } from "@/lib/sheets/clean";
 import { productsRows, promoRows, PRICING_CONFIG } from "../harness/botlib-fixture";
@@ -328,43 +328,8 @@ describe("cleanHeader — strip emoji/สัญลักษณ์/วงเล�
   });
 });
 
-describe("buildObjectionInjection — สารบัญเสมอ + เต็มเฉพาะ match (v2.0 D-41 · concern only)", () => {
-  // 🔴 header v2.0: ตัด หลักการตอบ/ห้ามทำ · "ตัวอย่างคำตอบ (บอลลูน)" = pattern verbatim · status filter
-  const OBJ = [
-    ["objection_id", "ชื่อข้อโต้แย้ง", "ลูกค้าพูดแบบไหนบ้าง (keywords/สำนวน)", "ความกังวลที่แท้จริง (Need)", "ตัวอย่างคำตอบ (บอลลูน)", "ถ้ายังยืนยัน", "โน้ตเจ้าของ (ไม่เข้า prompt)", "สถานะ"],
-    ["OBJ_PRICE", "ราคาแพง", "แพง,แพงจัง,ราคาสูง", "กลัวไม่คุ้มเงิน", "ตกมื้อละไม่กี่บาทค่ะ", "ลองชิมก่อนได้ค่ะ", "โน้ต", "live"],
-    ["OBJ_SHIP", "ค่าส่งแพง", "ค่าส่งแพง,ส่งแพง", "รู้สึกจ่ายเกิน", "", "", "", "live"],
-    ["OBJ_OLD", "เลิกใช้", "คำเลิกใช้", "ไม่ใช้แล้ว", "", "", "", "draft"], // status filter ต้องตัดทิ้ง
-  ];
-
-  it("🔴 header วงเล็บ resolve ได้ + full-block = concern (ตัด หลักการตอบ/ห้ามทำ · v2.0)", () => {
-    const r = buildObjectionInjection(OBJ, "โอ้โห แพงจังเลยค่ะ", 2);
-    expect(r.matchedIds).toEqual(["OBJ_PRICE"]);
-    expect(r.text, "full-block = ความกังวลจริง").toContain("กลัวไม่คุ้มเงิน");
-    expect(r.text, "ชื่อข้อโต้แย้ง resolve ได้").toContain("ราคาแพง");
-    expect(r.text, "สารบัญมี OBJ_SHIP").toContain("OBJ_SHIP");
-    expect(r.text, "v2.0: ไม่มี หลักการตอบ (ตัดคอลัมน์)").not.toMatch(/หลักการตอบ/);
-    expect(r.verbatim, "OBJ_PRICE ปิด(default)+มี pattern → verbatim ชนะ").toEqual({ id: "OBJ_PRICE", pattern: "ตกมื้อละไม่กี่บาทค่ะ" });
-  });
-
-  it("🔴 status filter: OBJ_OLD (draft) ไม่โผล่ในสารบัญ", () => {
-    const r = buildObjectionInjection(OBJ, "สนใจค่ะ", 2);
-    expect(r.text).toContain("OBJ_PRICE");
-    expect(r.text, "draft ถูกกรอง").not.toContain("OBJ_OLD");
-  });
-
-  it("ไม่ match → ไม่มีเต็มแถว (สารบัญยังอยู่) · matchedIds ว่าง", () => {
-    const r = buildObjectionInjection(OBJ, "สนใจน้ำพริกค่ะ", 2);
-    expect(r.matchedIds).toEqual([]);
-    expect(r.text).toContain("OBJ_PRICE"); // สารบัญ
-    expect(r.text).not.toContain("กลัวไม่คุ้มเงิน"); // ไม่เต็มแถว
-  });
-
-  it("header ไม่ครบ/ว่าง → '' ไม่ crash", () => {
-    expect(buildObjectionInjection([], "แพง", 2)).toEqual({ text: "", matchedIds: [], verbatim: null });
-    expect(buildObjectionInjection([["a", "b"], ["1", "2"]], "แพง", 2).text).toBe("");
-  });
-});
+// 🔴 D-72a: ลบ describe "buildObjectionInjection" — ฟังก์ชันถูกลบพร้อมแท็บ Objections
+//    (v3 ยุบเข้า Knowledge ตั้งแต่ D-61.B → ไม่มีแหล่งข้อมูล ไม่มีผู้เรียกใน prod)
 
 describe("readConfigDescription — ดึงคอลัมน์คำอธิบายของคีย์ (วิธีคิดจากชีต)", () => {
   const rows = [

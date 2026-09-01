@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { runSalesTurn } from "@/lib/gemini";
-import { buildStepInjection, buildObjectionInjection, buildCatalogInjection, buildFaqInjection, funnelStageOf } from "@/lib/agent/inject";
+import { buildStepInjection, buildCatalogInjection, buildFaqInjection, funnelStageOf } from "@/lib/agent/inject";
 import { productsRows, promoRows, varsRows, PRICING_CONFIG, seedBotLib } from "../harness/botlib-fixture";
 import { testConfig } from "../harness/fixtures";
 import { sendText } from "../harness/replay";
@@ -124,7 +124,6 @@ describe.skipIf(!RUN)("golden routing — 25 เคสจำแนกประ�
   it.each(RUN_CASES.map((c) => [c.id, c] as const))("%s", async (_id, c) => {
     const ctx = stateFor(c.prev);
     const stepText = buildStepInjection(STEPS, { quoted: ctx.quoted, payment: ctx.payment, userMessage: c.message, signals: ctx.signals, stayStage: ctx.currentStage || undefined });
-    const objection = buildObjectionInjection(OBJECTIONS, c.message, 2);
     const faq = buildFaqInjection(FAQ_ROWS, c.message);
 
     const out = await runSalesTurn({
@@ -133,7 +132,7 @@ describe.skipIf(!RUN)("golden routing — 25 เคสจำแนกประ�
       stepText,
       faqText: faq.text,
       catalogText: catalog,
-      objectionText: objection.text,
+      objectionText: "", // D-72a: แท็บ Objections ถูกลบ — prod ก็ส่ง "" เหมือนกัน
       stateText: ctx.stateText,
       historyText: ctx.historyText,
       userMessage: c.message,
@@ -174,18 +173,12 @@ function pipeSteps(): string[][] {
     ps("S_UNKNOWN", "handoff", "นอกตาราง", "ไม่เข้าเคสไหนเลย/นอกเรื่องธุรกิจ", "ขอให้แอดมินช่วยตอบนะคะ", ""),
   ];
 }
-const PIPE_FAQ: string[][] = [
-  ["faq_id", "หมวด", "คำถาม", "action", "คำตอบ (บอลลูน)", "keywords", "image_url", "status", "updated_at"],
-  ["FAQ01", "ปริมาณ", "ขนาดกี่กรัม", "answer", "1 ถ้วย 10 กรัมค่ะ", "ขนาด,กี่กรัม,น้ำหนัก", "", "live", ""],
-  ["FAQ03", "ชำระเงิน", "ชำระเงินยังไง", "answer", "โอนหรือเก็บเงินปลายทางได้ค่ะ", "ชำระยังไง,จ่ายยังไง,ชำระแบบไหน,ช่องทางชำระ,พร้อมเพย์,จ่ายผ่านอะไร", "", "live", ""],
-  ["FAQ04", "สุขภาพ", "กินคู่ยาได้ไหม", "handoff", "ปรึกษาแพทย์ก่อนนะคะ", "กินยา,ทานยา", "", "live", ""],
-  ["FAQ05", "เก็บรักษา", "เก็บได้นานแค่ไหน", "answer", "เก็บได้ 1 ปีนับจากวันผลิตค่ะ", "เก็บได้นาน,เก็บนานแค่ไหน,อายุการเก็บ,หมดอายุ", "", "live", ""],
-];
 const FOOTER45 = "บอทปิดการทำงานกับลูกค้ารายนี้แล้ว";
 
 function seedPipe(): void {
   seedBotLib({ stepRows: pipeSteps() });
-  sheetsCalls.botLibReturn.CSV_FAQ = PIPE_FAQ;
+  // 🔴 D-72a: ลบ seed `botLibReturn.CSV_FAQ = PIPE_FAQ` — ตายมาตั้งแต่ D-61.B (v2 shape · ชื่อไม่ตรงแท็บจริง)
+  //    เคสในไฟล์นี้ไม่มีเคสไหนพึ่ง FAQ เหล่านี้ → ใช้ Knowledge จาก seedBotLib() (golden เหมือนเดิมทุกบรรทัด)
   harnessOverrides.config = {
     raw: new Map<string, string>([
       ...Object.entries(PRICING_CONFIG),

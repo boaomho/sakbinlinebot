@@ -45,7 +45,7 @@ export interface AiOrderItem {
   qty: number;
 }
 
-/** sku ของสินค้า live ทั้งหมดใน CSV_Products (pure) */
+/** sku ของสินค้า live ทั้งหมดใน Products (pure) */
 export function liveProductSkus(productRows: string[][]): string[] {
   const pCols = resolveCols(productRows, [PRODUCT_COLS.sku, PRODUCT_COLS.status]);
   if (!pCols) return [];
@@ -90,7 +90,7 @@ export interface NextTier {
 export interface PriceLine {
   sku: string;
   name: string;
-  unit: string; // หน่วย (เช่น "ถ้วย") จาก CSV_Products — ใช้ในข้อความแจกแจง
+  unit: string; // หน่วย (เช่น "ถ้วย") จาก Products — ใช้ในข้อความแจกแจง
   qty: number;
   basePromoId: string | null; // promo_id ของฐาน (null = คิดราคาปกติ)
   basePromo: BasePromo | null; // ชั้นฐานแบบละเอียด
@@ -161,9 +161,9 @@ interface LivePromo {
 
 /**
  * คำนวณราคาออเดอร์ — กฎ a–k ตาม D-15 (เจ้าของตัดสินแล้ว)
- * @param promoRows  CSV_Promo ดิบ (มี header + แถวหมายเหตุ — ข้ามให้เอง)
- * @param productRows CSV_Products ดิบ
- * @param config     key→value ดิบจาก CSV_Config (เช่น Object.fromEntries(appConfig.raw))
+ * @param promoRows  Promo ดิบ (มี header + แถวหมายเหตุ — ข้ามให้เอง)
+ * @param productRows Products ดิบ
+ * @param config     key→value ดิบจาก Config (เช่น Object.fromEntries(appConfig.raw))
  */
 export function calculatePrice(
   input: PriceInput,
@@ -180,12 +180,12 @@ export function calculatePrice(
 
   // ── โครงสร้างชีต ──
   const pCols = resolveCols(productRows, [PRODUCT_COLS.sku, PRODUCT_COLS.name, PRODUCT_COLS.normalPrice, PRODUCT_COLS.status]);
-  if (!pCols) return { ...empty, error: "โครงสร้าง CSV_Products ผิด (คอลัมน์ไม่ครบ)", needsHandoff: true };
+  if (!pCols) return { ...empty, error: "โครงสร้าง Products ผิด (คอลัมน์ไม่ครบ)", needsHandoff: true };
   const prCols = resolveCols(promoRows, [
     PROMO_COLS.promoId, PROMO_COLS.sku, PROMO_COLS.qty, PROMO_COLS.promoPrice,
     PROMO_COLS.start, PROMO_COLS.end, PROMO_COLS.status,
   ]);
-  if (!prCols) return { ...empty, error: "โครงสร้าง CSV_Promo ผิด (คอลัมน์ไม่ครบ)", needsHandoff: true };
+  if (!prCols) return { ...empty, error: "โครงสร้าง Promo ผิด (คอลัมน์ไม่ครบ)", needsHandoff: true };
   const showTextIdx = promoRows[prCols.headerRow].map(normHeader).indexOf(PROMO_COLS.showText);
   const unitIdx = productRows[pCols.headerRow].map(normHeader).indexOf(PRODUCT_COLS.unit); // optional
 
@@ -231,10 +231,10 @@ export function calculatePrice(
   const isCod = cleanCell(input.paymentMethod) === PAYMENT_COD;
   const codSurcharge = toNum(config[CONFIG_KEYS.codSurcharge]);
   if (!Number.isFinite(freeShipMin) || !Number.isFinite(standardShipping) || !Number.isFinite(ceilingMultiplier)) {
-    return { ...empty, error: "CSV_Config ราคา/เพดาน อ่านไม่ได้ (ยอดขั้นต่ำส่งฟรี/ค่าส่ง/เพดาน)", needsHandoff: true };
+    return { ...empty, error: "Config ราคา/เพดาน อ่านไม่ได้ (ยอดขั้นต่ำส่งฟรี/ค่าส่ง/เพดาน)", needsHandoff: true };
   }
   if (isCod && !Number.isFinite(codSurcharge)) {
-    return { ...empty, error: "CSV_Config ค่าส่ง_COD_เพิ่ม อ่านไม่ได้", needsHandoff: true };
+    return { ...empty, error: "Config ค่าส่ง_COD_เพิ่ม อ่านไม่ได้", needsHandoff: true };
   }
 
   // ── วิธีคิด "เศษ" ที่เกินชั้นโปรฐาน (Step 3 · จำนวนที่ไม่มีโปร_คิดยังไง) ──
@@ -248,7 +248,7 @@ export function calculatePrice(
   } else if (extraMethodRaw === EXTRA_METHOD_NORMAL) {
     extraMethod = "normal";
   } else {
-    return { ...empty, error: `CSV_Config จำนวนที่ไม่มีโปร_คิดยังไง: ค่าไม่รู้จัก "${extraMethodRaw}" (ใช้ "${EXTRA_METHOD_PROMO_BASE}" หรือ "${EXTRA_METHOD_NORMAL}")`, needsHandoff: true };
+    return { ...empty, error: `Config จำนวนที่ไม่มีโปร_คิดยังไง: ค่าไม่รู้จัก "${extraMethodRaw}" (ใช้ "${EXTRA_METHOD_PROMO_BASE}" หรือ "${EXTRA_METHOD_NORMAL}")`, needsHandoff: true };
   }
 
   // ── เพดานจำนวน (กฎ j) ──
@@ -356,7 +356,7 @@ export interface PriceTableRow {
   total: number; // ยอดที่ลูกค้าจ่ายจริง (= เลขที่ gate เขียนชีต)
   freeShip: boolean;
   /**
-   * D-61.C5: qty นี้ตรง "ชั้นโปรใน CSV_Promo" พอดีหรือไม่
+   * D-61.C5: qty นี้ตรง "ชั้นโปรใน Promo" พอดีหรือไม่
    * ตารางแจกแจงทุกจำนวน 1..เพดาน (ราคาถูกทุกแถว) แต่มีแค่บางแถวที่เป็นโปรจริง
    * ถ้าไม่บอก บอทจะโชว์ทุกแถวเป็น "รายการโปรโมชั่น" → ลูกค้าเห็นโปรที่ร้านไม่ได้ตั้ง
    */
@@ -413,7 +413,7 @@ export function buildPriceTable(
 
 /**
  * เซตเลขราคา "ที่บอทพูดได้ถูกต้อง" (D-27 · KI-02 price guard) — ครอบทุกแบบกัน false-block:
- *   1. เลขดิบทุกตัวใน CSV_Products + CSV_Promo (ราคาปกติ/โปร/ประหยัด/ค่าส่ง/ยอดจ่าย — 95/285/275/35/…)
+ *   1. เลขดิบทุกตัวใน Products + Promo (ราคาปกติ/โปร/ประหยัด/ค่าส่ง/ยอดจ่าย — 95/285/275/35/…)
  *   2. ตารางคำนวณทุกจำนวน (subtotal/shippingFee/total จาก buildPriceTable)
  *   3. derived ต่อหน่วย: floor/round/ceil ของ subtotal÷qty และ total÷qty (เช่น 440÷5=88)
  * 🔴 กว้างไว้ก่อน (allowed หลุด = พิตช์ถูกโดนบล็อก แย่กว่าพูดผิดนานๆ ครั้ง) · เลขมั่ว (28/200) ไม่อยู่ในนี้
@@ -693,7 +693,7 @@ export function resolveDeliveryVar(text: string, cutoff: string, now: Date = new
   return day ? text.split("{วันจัดส่ง}").join(day) : text;
 }
 
-/** map sku → ชื่อสินค้า (CSV_Products) — ใช้แทน sku ในข้อความแจ้งแอดมิน (pure) */
+/** map sku → ชื่อสินค้า (Products) — ใช้แทน sku ในข้อความแจ้งแอดมิน (pure) */
 export function buildProductNameMap(productRows: string[][]): Map<string, string> {
   const map = new Map<string, string>();
   const pCols = resolveCols(productRows, [PRODUCT_COLS.sku, PRODUCT_COLS.name]);

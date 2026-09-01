@@ -11,23 +11,29 @@ export interface OverlayEntry {
 }
 
 /**
- * key column ต่อแท็บ (ใช้หาแถวที่จะทับ · header-driven ไม่ใช้ index ตายตัว)
- * 🔴 D-68: มีทั้งชื่อ **แท็บจริงบนชีต v3** (overlay ทับที่ชั้น batchGet = ชีตดิบ) และชื่อ **shape ภายใน**
- *    (preview/write ใช้ชื่อภายใน) — ต้องมีครบทั้งสองชุด ไม่งั้น overlay หาแถวไม่เจอแล้วเงียบ
- *    D-69 (ถอด adapter + ตั้งชื่ออังกฤษ) จะยุบเหลือชุดเดียว
+ * key column ต่อแท็บ — 🔴 **D-72a: ชื่อแท็บเหมือนกันทั้งสองฝั่งแล้ว แต่ "คอลัมน์ key" ยังคนละตัว**
+ *   · RAW = แถวดิบจากชีต (overlay ทับที่ชั้น batchGet ก่อน normalize)
+ *   · SHAPE = bundle ที่ normalize แล้ว (preview/write อ่าน)
+ * ต่างกันเฉพาะ `Knowledge`: ชีตใช้ `ลูกค้าพูดยังไง` · shape ภายในใช้ `คำถาม` (normalizeKnowledge เปลี่ยนชื่อ)
+ * 🔴 รวมสองอันเป็น map เดียวไม่ได้ — จะทับกันแล้ว overlay หาแถวไม่เจอ (เงียบ)
+ * D-72b ที่แยกเส้นทาง raw/normalize จะทำให้เรื่องนี้ชัดขึ้น (Studio อ่าน raw ตรง ๆ)
  */
+const RAW_TAB_KEY_COL: Record<string, string> = {
+  Steps: "step_id",
+  Knowledge: "ลูกค้าพูดยังไง",
+  Vars: "ตัวแปร",
+  Products: "sku",
+  Promo: "promo_id",
+  Config: "key",
+};
 const TAB_KEY_COL: Record<string, string> = {
-  // แท็บจริงบนชีต v3
-  เส้นทางขาย: "step_id",
-  ความรู้: "ลูกค้าพูดยังไง",
-  // shape ภายใน (adapter แปลงแล้ว)
-  CSV_Step: "step_id",
-  CSV_Objections: "objection_id",
-  CSV_FAQ: "คำถาม",
-  CSV_Vars: "ตัวแปร",
-  CSV_Follow: "follow_id",
+  Steps: "step_id",
+  Knowledge: "คำถาม",
+  Vars: "ตัวแปร",
+  Follow: "follow_id",
 };
 
+/** key column ของ "shape ภายใน" (preview/write) */
 export function tabKeyColumn(tab: string): string | null {
   return TAB_KEY_COL[tab] ?? null;
 }
@@ -36,7 +42,7 @@ export function tabKeyColumn(tab: string): string | null {
 export function applyOverlayToTab(tab: string, rows: string[][], overlay: OverlayEntry[]): string[][] {
   const entries = overlay.filter((o) => o.tab === tab);
   if (entries.length === 0 || rows.length === 0) return rows;
-  const keyColName = TAB_KEY_COL[tab];
+  const keyColName = RAW_TAB_KEY_COL[tab]; // 🔴 overlay ทับ "แถวดิบ" → ใช้ชื่อคอลัมน์ตามชีต
   if (!keyColName) return rows;
   const header = rows[0].map(cleanHeader);
   const keyIdx = header.indexOf(keyColName);

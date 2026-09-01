@@ -6,7 +6,7 @@ import { messagingApi } from "@line/bot-sdk";
 
 /**
  * D-26 claims guard (พ.ร.บ.อาหาร) — โหมด เตือน(default)=ส่ง+push · บล็อก=ไม่ส่ง+พักสาย+push
- * คำต้องห้าม/คำยกเว้น/โหมด อ่านจาก CSV_Config (เจ้าของสลับโหมดในชีตเองได้ ไม่ deploy)
+ * คำต้องห้าม/คำยกเว้น/โหมด อ่านจาก Config (เจ้าของสลับโหมดในชีตเองได้ ไม่ deploy)
  */
 
 const U = "Uharnesstestcustomer0000000000009";

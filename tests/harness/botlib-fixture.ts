@@ -22,7 +22,7 @@ const NOTE_PRODUCTS = ["หมายเหตุ: ช่องพื้นฟ้
 const NOTE_PROMO = ["หมายเหตุ: ช่องพื้นฟ้า = คนกรอก · ช่อง (auto) = สูตร", "", "", "", "", "", "", "", "", "", "", "", ""];
 const BLANK = ["", "", "", "", "", "", "", "", "", "", "", "", ""];
 
-/** CSV_Products จริง: NPT-10G live 95 · NPR-200ML coming_soon 90 + แถวว่าง + แถวหมายเหตุ */
+/** Products จริง: NPT-10G live 95 · NPR-200ML coming_soon 90 + แถวว่าง + แถวหมายเหตุ */
 export function productsRows(): string[][] {
   return [
     PRODUCTS_HEADER,
@@ -34,7 +34,7 @@ export function productsRows(): string[][] {
 }
 
 /**
- * CSV_Promo จริง: P1/P3/P5/P10 ผูก NPT-10G · เริ่มใช้ 2026-07-01 · สิ้นสุดว่าง (=ยัง live) + แถวว่าง + แถวหมายเหตุ
+ * Promo จริง: P1/P3/P5/P10 ผูก NPT-10G · เริ่มใช้ 2026-07-01 · สิ้นสุดว่าง (=ยัง live) + แถวว่าง + แถวหมายเหตุ
  * @param priceOverride แก้ราคาโปรรายตัว (เทสกันชีตเปลี่ยนแล้วโค้ดไม่รู้ตัว: P5 440→400)
  */
 export function promoRows(priceOverride: Record<string, string> = {}): string[][] {
@@ -51,7 +51,7 @@ export function promoRows(priceOverride: Record<string, string> = {}): string[][
   ];
 }
 
-/** CSV_Vars v2.0 (D-41/43): ตัวแปรข้อความเจ้าของ · header ตัวแปร/ค่า/หมายเหตุ/สถานะ · โหลดเฉพาะ live
+/** Vars v2.0 (D-41/43): ตัวแปรข้อความเจ้าของ · header ตัวแปร/ค่า/หมายเหตุ/สถานะ · โหลดเฉพาะ live
  *  🔴 มีแถว draft ({ตัวอย่าง_ตัวแปรใหม่}) + แถวกติกาสำหรับคน — ทั้งคู่ต้องถูกกรองทิ้ง (เทส D-43) */
 export function varsRows(): string[][] {
   return [
@@ -62,7 +62,7 @@ export function varsRows(): string[][] {
   ];
 }
 
-/** key ราคา/ค่าส่ง/เพดาน จริงใน CSV_Config (ใส่ลง testConfig.raw เพื่อให้ pricing อ่านได้) */
+/** key ราคา/ค่าส่ง/เพดาน จริงใน Config (ใส่ลง testConfig.raw เพื่อให้ pricing อ่านได้) */
 export const PRICING_CONFIG: Record<string, string> = {
   ยอดขั้นต่ำส่งฟรี_บาท: "275",
   ค่าส่ง_มาตรฐาน: "30",
@@ -73,16 +73,16 @@ export const PRICING_CONFIG: Record<string, string> = {
 // ══════════════════ D-68 · ชีต v3 (loader อ่านแท็บ v3 เส้นเดียวแล้ว) ══════════════════
 
 /**
- * 🔴 ชื่อแท็บอยู่ที่เดียวทั้ง repo — D-69 จะเปลี่ยนเป็นอังกฤษ (Steps/Knowledge/…) แก้ตรงนี้บรรทัดเดียวจบ
+ * 🔴 ชื่อแท็บอยู่ที่เดียวทั้ง repo — D-72a เปลี่ยนเป็นอังกฤษแล้ว (ตรงกับคีย์ BotLibrary เป๊ะ)
  * ห้ามเขียนชื่อแท็บเป็นสตริงตรง ๆ ในไฟล์เทส
  */
 export const TAB = {
-  steps: "เส้นทางขาย",
-  knowledge: "ความรู้",
-  products: "CSV_Products",
-  promo: "CSV_Promo",
-  vars: "CSV_Vars",
-  config: "CSV_Config",
+  steps: "Steps",
+  knowledge: "Knowledge",
+  products: "Products",
+  promo: "Promo",
+  vars: "Vars",
+  config: "Config",
 } as const;
 
 /** header แท็บ "เส้นทางขาย" (v3) — ตรงกับที่ adaptSteps อ่าน */

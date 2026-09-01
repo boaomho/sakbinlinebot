@@ -3,7 +3,7 @@ import { sendText, sendImage } from "../harness/replay";
 import { scriptGemini, turn, adminPushes, lineCalls, harnessOverrides, sheetsCalls } from "../harness/state";
 import { seedBotLib, PRICING_CONFIG } from "../harness/botlib-fixture";
 import { readCustomer } from "../harness/db";
-import { adaptV3Bundle, validateV3Bundle } from "@/lib/sheets/adapter-v3";
+import { normalizeBundle, validateBundle } from "@/lib/sheets/normalize-bundle";
 import { findAssuranceHits } from "@/lib/guards/assurance";
 import { createSandbox, runInSandbox } from "@/lib/train/sandbox";
 import { getConfig, __resetConfigCache } from "@/lib/config";
@@ -46,12 +46,12 @@ const V3_PROMO = [
 
 function seedV3Sheet(): void {
   seedBotLib();
-  const bundle = adaptV3Bundle({ เส้นทางขาย: V3_STEP, ความรู้: V3_KNOW, CSV_Products: V3_PRODUCTS, CSV_Promo: V3_PROMO, CSV_Vars: [], CSV_Config: [] });
-  sheetsCalls.botLibReturn.CSV_Step = bundle.CSV_Step;
-  sheetsCalls.botLibReturn.CSV_FAQ = bundle.CSV_FAQ;
-  sheetsCalls.botLibReturn.CSV_Objections = bundle.CSV_Objections;
-  sheetsCalls.botLibReturn.CSV_Products = bundle.CSV_Products;
-  sheetsCalls.botLibReturn.CSV_Promo = bundle.CSV_Promo;
+  // 🔴 D-72a: seed "แถวดิบตามชีต" แล้วปล่อยให้ loader→normalizeBundle ทำงานจริง (กติกา D-68 ข้อ 2)
+  //    เดิม seed ของที่ normalize มาแล้วทับคีย์ที่ไม่มีใครอ่าน = loader เห็นแค่ default ของ seedBotLib
+  sheetsCalls.botLibReturn.Steps = V3_STEP;
+  sheetsCalls.botLibReturn.Knowledge = V3_KNOW;
+  sheetsCalls.botLibReturn.Products = V3_PRODUCTS;
+  sheetsCalls.botLibReturn.Promo = V3_PROMO;
   harnessOverrides.config = {
     handoffKeywords: ["ขอแอดมิน", "คุยกับคน", "ฟ้อง"],
     healthFlagKeywords: ["แพ้", "เบาหวาน", "ท้อง"],
@@ -292,7 +292,7 @@ describe("D-61.C golden · G27/G28 ยามเดิม + delivery invariant �
 });
 
 // ═══ กลุ่ม G · sandbox + schema card ═══
-describe("D-61.C · sandbox + validateV3Bundle", () => {
+describe("D-61.C · sandbox + validateBundle", () => {
   it("🔴 config memo ไม่รั่วข้ามโหมด (sandbox ไม่เขียน cache)", async () => {
     __resetConfigCache();
     const ctx = createSandbox("sess-schema-2");
@@ -301,15 +301,15 @@ describe("D-61.C · sandbox + validateV3Bundle", () => {
     const prodCfg = await getConfig();
     expect(prodCfg).toBeTruthy();
   });
-  it("validateV3Bundle: แท็บครบ=ok · header ขาด=⚠️ + นับ live/draft", () => {
-    const stats = validateV3Bundle({ เส้นทางขาย: V3_STEP, ความรู้: V3_KNOW, CSV_Products: V3_PRODUCTS, CSV_Promo: V3_PROMO, CSV_Vars: [], CSV_Config: [] });
-    const know = stats.find((s) => s.tab === "ความรู้")!;
+  it("validateBundle: แท็บครบ=ok · header ขาด=⚠️ + นับ live/draft", () => {
+    const stats = validateBundle({ Steps: V3_STEP, Knowledge: V3_KNOW, Products: V3_PRODUCTS, Promo: V3_PROMO, Vars: [], Config: [] });
+    const know = stats.find((s) => s.tab === "Knowledge")!;
     expect(know.ok).toBe(true);
     expect(know.live).toBe(4);
     expect(know.draft, "K019 ว่าง = draft").toBe(1);
-    const vars = stats.find((s) => s.tab === "CSV_Vars")!;
+    const vars = stats.find((s) => s.tab === "Vars")!;
     expect(vars.ok, "แท็บว่าง = ไม่ ok (ฟ้อง)").toBe(false);
-    const broken = validateV3Bundle({ เส้นทางขาย: [["ผิด"], ["x"]] }).find((s) => s.tab === "เส้นทางขาย")!;
+    const broken = validateBundle({ Steps: [["ผิด"], ["x"]] }).find((s) => s.tab === "Steps")!;
     expect(broken.missing).toContain("step_id");
   });
 });

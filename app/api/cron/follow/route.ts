@@ -13,7 +13,7 @@ interface FollowRule {
 }
 
 /**
- * โครงชีต CSV_Follow จริง (คอลัมน์ตามลำดับ):
+ * โครงชีต Follow จริง (คอลัมน์ตามลำดับ):
  *   A=ชื่อกฎ  B=เงื่อนไข(เมื่อ...)  C=เริ่มนับจาก  D=รอกี่วัน  E=ข้อความที่ส่ง
  *   F=ปิดใช้หลังส่ง  G=หยุดตามเมื่อ
  * loader อ่านคอลัมน์ตาม "ชื่อ header" ก่อน (ทนต่อการสลับคอลัมน์) แล้ว fallback เป็น index
@@ -76,14 +76,14 @@ export async function GET(req: NextRequest) {
   }
 
   const lib = await loadBotLibrary();
-  const followRows = lib?.CSV_Follow ?? null;
+  const followRows = lib?.Follow ?? null;
   // D-68: ชีต v3 ไม่มีแท็บ Follow (spec B7 · dormant) → adapter คืน [] → skip พร้อม log ที่อ่านออก
   if (lib && (followRows?.length ?? 0) === 0) {
     console.log(JSON.stringify({ scope: "cron-follow", event: "skipped-no-follow-tab", reason: "ชีต v3 ไม่มีแท็บ Follow (D-61 B7 · dormant)" }));
     return NextResponse.json({ status: "skipped", reason: "ไม่มีแท็บ Follow (dormant ตาม D-61 B7)" }, { status: 200 });
   }
   if (!followRows || followRows.length === 0) {
-    return NextResponse.json({ status: "skipped", reason: "CSV_Follow โหลดไม่ได้ (SHEET_BOTLIB_V3_ID?)" }, { status: 200 });
+    return NextResponse.json({ status: "skipped", reason: "Follow โหลดไม่ได้ (SHEET_BOTLIB_V3_ID?)" }, { status: 200 });
   }
 
   const rules = parseFollowRules(followRows);

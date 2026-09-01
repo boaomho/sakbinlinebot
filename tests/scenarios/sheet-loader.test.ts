@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { resolveColumns, cell } from "@/lib/sheets/columns";
 import { cleanHeader } from "@/lib/sheets/clean";
 import { loadBotLibrary, BOTLIB_TABS } from "@/lib/sheets/loader";
-import { V3_SHEET_TABS } from "@/lib/sheets/adapter-v3";
+import { SHEET_TABS } from "@/lib/sheets/normalize-bundle";
 import { sheetsCalls } from "../harness/state";
 import { TAB, v3StepRows, v3KnowRows } from "../harness/botlib-fixture";
 
@@ -22,7 +22,7 @@ describe("resolveColumns — header-driven ทนสลับ/แทรก/เ�
   ];
 
   it("header ปกติ → map ครบ", () => {
-    const cols = resolveColumns(STEP_HEADERS, ["step_id", "หลักการนำพา", "ห้ามทำ"], "CSV_Step");
+    const cols = resolveColumns(STEP_HEADERS, ["step_id", "หลักการนำพา", "ห้ามทำ"], "Steps");
     expect(cols).not.toBeNull();
     expect(cols!["step_id"]).toBe(0);
     expect(cols!["หลักการนำพา"]).toBe(3);
@@ -31,7 +31,7 @@ describe("resolveColumns — header-driven ทนสลับ/แทรก/เ�
 
   it("🔴 สลับตำแหน่ง (funnel_stage ไปหลังสุด) → ยังหาถูกโดยชื่อ", () => {
     const swapped = ["step_id", "ชื่อประตู", "หลักการนำพา", "ห้ามทำ", "ไปประตูถัดไปเมื่อ", "funnel_stage"];
-    const cols = resolveColumns(swapped, ["step_id", "funnel_stage", "หลักการนำพา"], "CSV_Step");
+    const cols = resolveColumns(swapped, ["step_id", "funnel_stage", "หลักการนำพา"], "Steps");
     expect(cols!["funnel_stage"], "ย้ายไปช่องสุดท้าย = index 5").toBe(5);
     expect(cols!["หลักการนำพา"]).toBe(2);
   });
@@ -50,14 +50,14 @@ describe("resolveColumns — header-driven ทนสลับ/แทรก/เ�
   });
 
   it("🔴 ขาด header ที่ต้องใช้ → คืน null (all-or-nothing) ห้าม fallback เงียบ", () => {
-    const cols = resolveColumns(STEP_HEADERS, ["step_id", "คอลัมน์ที่ไม่มีในชีต"], "CSV_Step");
+    const cols = resolveColumns(STEP_HEADERS, ["step_id", "คอลัมน์ที่ไม่มีในชีต"], "Steps");
     expect(cols).toBeNull();
   });
 
   it("อักขระล่องหน + วงเล็บกำกับใน header → cleanHeader จับได้", () => {
     // header มี zero-width (U+200B) นำหน้า + วงเล็บกำกับ
     const dirty = ["​step_id", "funnel_stage (enum)", "หลักการนำพา"];
-    const cols = resolveColumns(dirty, ["step_id", "funnel_stage", "หลักการนำพา"], "CSV_Step");
+    const cols = resolveColumns(dirty, ["step_id", "funnel_stage", "หลักการนำพา"], "Steps");
     expect(cols, "ต้องหาเจอแม้ header สกปรก").not.toBeNull();
     expect(cleanHeader("funnel_stage (enum)")).toBe("funnel_stage");
   });
@@ -78,15 +78,18 @@ describe("loadBotLibrary — batchGet 1 call ทุกแท็บ + cache 60 �
 
     const lib = await loadBotLibrary();
     expect(lib).not.toBeNull();
-    expect(sheetsCalls.lastBatchGetRanges, "1 call ขอครบทุกแท็บ v3").toHaveLength(V3_SHEET_TABS.length);
+    expect(sheetsCalls.lastBatchGetRanges, "1 call ขอครบทุกแท็บ v3").toHaveLength(SHEET_TABS.length);
     expect(sheetsCalls.lastBatchGetRanges).toContain(`${TAB.steps}!A:Z`);
-    expect(sheetsCalls.lastBatchGetRanges, "🔴 D-68: ไม่ขอแท็บ v2 แล้ว").not.toContain("CSV_Step!A:Z");
+    // 🔴 D-72a: ชื่อแท็บเป็นอังกฤษแล้ว — ชื่อเก่า (ไทย/CSV_) ต้องไม่ถูกขออีกแล้ว
+    for (const old of ["เส้นทางขาย!A:Z", "ความรู้!A:Z", "CSV_Products!A:Z", "CSV_Config!A:Z"]) {
+      expect(sheetsCalls.lastBatchGetRanges, "ชื่อแท็บเก่าต้องหมดแล้ว").not.toContain(old);
+    }
     // adapter แปลงเป็น shape ภายใน: S1 → funnel lead (FIXED_FUNNEL · ชีตไม่มีคอลัมน์ funnel_stage)
-    expect(lib!["CSV_Step"][1][0]).toBe("S1");
-    expect(lib!["CSV_Step"][1][1]).toBe("lead");
-    expect(lib!["CSV_FAQ"][1][0]).toBe("ส่งกี่วัน");
+    expect(lib!["Steps"][1][0]).toBe("S1");
+    expect(lib!["Steps"][1][1]).toBe("lead");
+    expect(lib!["Knowledge"][1][0]).toBe("ส่งกี่วัน");
     // แท็บที่ไม่ได้ set → แถวว่าง (ไม่ throw)
-    expect(lib!["CSV_Promo"]).toEqual([]);
+    expect(lib!["Promo"]).toEqual([]);
   });
 
   it("cache: call ที่ 2 ภายใน 60 วิ ไม่ยิง Google ซ้ำ", async () => {
@@ -97,11 +100,14 @@ describe("loadBotLibrary — batchGet 1 call ทุกแท็บ + cache 60 �
     expect(sheetsCalls.lastBatchGetRanges, "hit cache = ไม่ยิงซ้ำ").toHaveLength(0);
   });
 
-  it("BOTLIB_TABS = คีย์ของ shape ภายใน (8 ช่อง) · V3_SHEET_TABS = แท็บจริงบนชีต (6)", () => {
-    expect(BOTLIB_TABS).toHaveLength(8);
-    expect(BOTLIB_TABS).toContain("CSV_Config");
-    expect(BOTLIB_TABS).toContain("CSV_Objections"); // ยังเป็นคีย์ใน shape (adapter คืน [] เสมอ)
-    expect(V3_SHEET_TABS).toHaveLength(6);
-    expect(V3_SHEET_TABS).toContain(TAB.steps);
+  it("🔴 D-72a: BOTLIB_TABS (7 คีย์ shape) ⊇ SHEET_TABS (6 แท็บจริง) · ต่างกันแค่ Follow", () => {
+    expect(BOTLIB_TABS).toHaveLength(7);
+    expect(BOTLIB_TABS).toContain("Config");
+    expect(BOTLIB_TABS).not.toContain("CSV_Objections"); // D-72a ลบแท็บ Objections ทิ้ง (v3 ยุบเข้า Knowledge ตั้งแต่ D-61.B)
+    expect(SHEET_TABS).toHaveLength(6);
+    expect(SHEET_TABS).toContain(TAB.steps);
+    // 🔴 หัวใจ D-72a: ชื่อแท็บบนชีต = คีย์ใน shape เป๊ะ (ไม่มีชั้นแปลชื่อ)
+    for (const t of SHEET_TABS) expect(BOTLIB_TABS as readonly string[]).toContain(t);
+    expect([...BOTLIB_TABS].filter((t) => !(SHEET_TABS as readonly string[]).includes(t))).toEqual(["Follow"]);
   });
 });

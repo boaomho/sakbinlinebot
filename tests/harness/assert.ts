@@ -78,7 +78,7 @@ export function assertNoPriceOutsideCatalog(userId: string, allowedPrices: strin
       const t = textOf(m);
       const nums = t.match(/\d{2,5}(?=\s*(บาท|฿))/g) ?? [];
       for (const n of nums) {
-        expect(allowedPrices, `ราคา ${n} ไม่มีใน CSV_Products/CSV_Promo`).toContain(n);
+        expect(allowedPrices, `ราคา ${n} ไม่มีใน Products/Promo`).toContain(n);
       }
     }
   }

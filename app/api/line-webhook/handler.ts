@@ -9,7 +9,7 @@ import {
 } from "@/lib/config";
 import { loadBotLibrary, BotLibrary } from "@/lib/sheets/loader";
 import { findAssuranceHits, cutAssuranceLines } from "@/lib/guards/assurance";
-import { buildStepInjection, buildFaqInjection, buildCatalogInjection, buildObjectionInjection, readConfigDescription, funnelStageOf, stepNameOf, stepVerbatim, stepClosing, joinVerbatimParts, detectPaymentChoice, isPaymentChoiceOnly, resolvePaymentStep, resolveRecoveredStage, redactFinancial } from "@/lib/agent/inject";
+import { buildStepInjection, buildFaqInjection, buildCatalogInjection, readConfigDescription, funnelStageOf, stepNameOf, stepVerbatim, stepClosing, joinVerbatimParts, detectPaymentChoice, isPaymentChoiceOnly, resolvePaymentStep, resolveRecoveredStage, redactFinancial } from "@/lib/agent/inject";
 import { isFirstMessageOfDay, prependToFirstTextBubble, DEFAULT_DAILY_GREETING } from "@/lib/greeting";
 import {
   ensureCustomer,
@@ -113,7 +113,7 @@ async function deliverReply(transport: ChannelTransport, text: string, quotaSave
 
 const EMPTY_VARS: RuntimeVarContext = { summary: null, total: null, payment: null, breakdown: null, nextTierOffer: null };
 
-/** "ชื่อสินค้า xqty · ..." สำหรับข้อความแจ้งแอดมิน (แทน sku ดิบด้วยชื่อจาก CSV_Products) */
+/** "ชื่อสินค้า xqty · ..." สำหรับข้อความแจ้งแอดมิน (แทน sku ดิบด้วยชื่อจาก Products) */
 function itemsToNames(items: PendingOrder["items"], nameMap: Map<string, string>): string {
   const norm = normalizeItems(items);
   return norm.length > 0 ? norm.map((it) => `${nameMap.get(it.sku) ?? it.sku} x${it.qty}`).join(" · ") : "(ไม่มี)";
@@ -652,7 +652,7 @@ export async function processMessage(
   // D-32: ออเดอร์ที่เขียนแล้ว (last_order) → สัญญาณ routing + บรรทัดสถานะ + ตัวแปรทวน (แยกจาก pending)
   const lastOrder = customer?.lastOrder ?? null;
   const orderLocked = customer?.lastOrderLocked ?? false;
-  const lastOrderNameMap = lib ? buildProductNameMap(lib.CSV_Products) : new Map<string, string>();
+  const lastOrderNameMap = lib ? buildProductNameMap(lib.Products) : new Map<string, string>();
   const lastOrderItemsText = lastOrder?.items?.length
     ? lastOrder.items.map((it) => `${lastOrderNameMap.get(it.sku) ?? it.sku} x${it.qty}`).join(" · ")
     : "";
@@ -663,8 +663,8 @@ export async function processMessage(
     : null;
 
   const stepTextRaw =
-    lib && lib.CSV_Step.length > 0
-      ? buildStepInjection(lib.CSV_Step, { quoted: preItems.length > 0, payment: customer?.pendingOrder["การชำระเงิน"] ?? "", userMessage, signals: orderSignals, stayStage: customer?.stage ?? undefined })
+    lib && lib.Steps.length > 0
+      ? buildStepInjection(lib.Steps, { quoted: preItems.length > 0, payment: customer?.pendingOrder["การชำระเงิน"] ?? "", userMessage, signals: orderSignals, stayStage: customer?.stage ?? undefined })
       : "(ไม่มีข้อมูลสเต็ป)";
 
   // D-15 pre-resolve: ถ้า pending มี items อยู่แล้ว (จากเทิร์นก่อน) → คำนวณยอด แล้วเติม
@@ -683,22 +683,22 @@ export async function processMessage(
     : null;
   const orderWarning = customer && preGate ? buildOrderStateWarning(customer.pendingOrder, preGate) : null;
 
-  const faqInj = lib && lib.CSV_FAQ.length > 0 ? buildFaqInjection(lib.CSV_FAQ, userMessage) : { text: "(ไม่มีข้อมูล FAQ)", verbatim: null };
+  const faqInj = lib && lib.Knowledge.length > 0 ? buildFaqInjection(lib.Knowledge, userMessage) : { text: "(ไม่มีข้อมูล FAQ)", verbatim: null };
   const faqText = faqInj.text;
-  // ยัดสินค้า+ราคาโปรเสมอ (บอทห้ามแต่งราคา C6) — CSV_Products/CSV_Promo ไม่เคยถูกยัดมาก่อน
+  // ยัดสินค้า+ราคาโปรเสมอ (บอทห้ามแต่งราคา C6) — Products/Promo ไม่เคยถูกยัดมาก่อน
   // ตารางราคาสำเร็จรูป (D-24): เลขทุกตัวจาก calculatePrice (แหล่งเดียวกับ gate) · payment ตาม pending เพื่อให้ตรงที่จะบันทึก
   const catalogText = lib
-    ? buildCatalogInjection(lib.CSV_Products, lib.CSV_Promo, {
+    ? buildCatalogInjection(lib.Products, lib.Promo, {
         config: Object.fromEntries(config.raw),
         payment: customer?.pendingOrder["การชำระเงิน"] ?? "",
         now: nowDate,
-        methodDescription: readConfigDescription(lib.CSV_Config, "จำนวนที่ไม่มีโปร_คิดยังไง"),
+        methodDescription: readConfigDescription(lib.Config, "จำนวนที่ไม่มีโปร_คิดยังไง"),
         includeAllergen: true, // D-61.B เคาะ #4ก — สารก่อภูมิแพ้เข้า prompt
       })
     : "(ไม่มีข้อมูลสินค้า)";
-  // D-27 Objections: keyword match → verbatim/จำแนก · cap จากชีต (ไม่ hardcode) · v2.0 (D-41): เลิก Examples
-  const objCap = numFromRaw(config, "จำนวนข้อโต้แย้งที่ยัดเข้า prompt", 2);
-  const objection = lib ? buildObjectionInjection(lib.CSV_Objections, userMessage, objCap) : { text: "", matchedIds: [] as string[], verbatim: null };
+  // 🔴 D-72a: ลบแท็บ Objections ทิ้ง (v3 ยุบเข้า Knowledge ตั้งแต่ D-61.B — คืน [] มาตลอด)
+  //    พร้อมคีย์ `จำนวนข้อโต้แย้งที่ยัดเข้า prompt` ที่ไม่มีผลอะไรแล้ว (D-68 จดไว้ว่าให้ลบพร้อม adapter)
+  //    `objection_detected` ใน JSON contract ยังอยู่ — AI จำแนกเองได้ ใช้เป็น log สัญญาณว่าลูกค้ากังวลอะไร
   const configText = formatConfigForPrompt(config);
   let stateText = buildStateText(customer, orderWarning, preOrderPriceStuck, lastOrderLine);
   // D-61.A (v3): hint เข้า state — delivered_steps ("อย่าทวนซ้ำยาว") + บริบทสุขภาพ (ธง A6)
@@ -739,7 +739,7 @@ export async function processMessage(
         stepText,
         faqText,
         catalogText,
-        objectionText: objection.text,
+        objectionText: "",
         stateText,
         historyText,
         userMessage,
@@ -769,13 +769,12 @@ export async function processMessage(
     console.log(JSON.stringify({ scope: "payment-precheck", payment: prePayment, lockedOverAI: true }));
   }
 
-  // D-27 log: objection ที่ AI ตรวจพบ vs code keyword-match → หาสำนวนที่ยังไม่อยู่ในชีต (เจ้าของเติมช่อง "ลูกค้าพูดแบบไหนบ้าง")
+  // D-27 log: objection ที่ AI ตรวจพบ (D-72a: ไม่มีแท็บให้ match แล้ว — เหลือเป็นสัญญาณว่าลูกค้ากังวลอะไร)
   if (geminiOutput.objectionDetected && geminiOutput.objectionDetected !== "none") {
     console.log(JSON.stringify({
       scope: "objection", event: "detected",
       aiDetected: geminiOutput.objectionDetected,
-      codeMatched: objection.matchedIds,
-      gap: objection.matchedIds.includes(geminiOutput.objectionDetected) ? null : "AI เจอแต่ keyword ไม่ match — เติมสำนวนในชีต",
+      note: "แท็บ Objections ถูกลบใน D-72a — ค่านี้มาจาก AI ล้วน ไม่มี keyword match ฝั่งโค้ด",
     }));
   }
 
@@ -813,7 +812,7 @@ export async function processMessage(
     if (editReceiver["ชื่อ"]?.trim()) changes["ชื่อ-นามสกุล"] = editReceiver["ชื่อ"].trim();
     if (editReceiver["ที่อยู่"]?.trim()) changes["ที่อยู่"] = editReceiver["ที่อยู่"].trim();
     if (editReceiver["เบอร์"]?.trim()) changes["เบอร์โทร"] = sanitizePhone(editReceiver["เบอร์"]);
-    const editItems = resolveAiItems(aiEditItems, lib?.CSV_Products ?? []);
+    const editItems = resolveAiItems(aiEditItems, lib?.Products ?? []);
     if (editItems.length > 0 && geminiOutput.paymentMethod) {
       const q = computeQuote({ items: editItems, การชำระเงิน: geminiOutput.paymentMethod }, lib, config, nowDate);
       if (q?.ok) {
@@ -846,13 +845,13 @@ export async function processMessage(
   // ---- order flow (1-pass · AI เป็นเจ้าของบทสนทนา · โค้ดเป็นเจ้าของเงิน) ----
   // merge order_data.items → pending → คำนวณราคา (Core) · ยอดที่เขียนชีต/แจ้งแอดมิน มาจาก Core เสมอ
   const runOrders = ordersActive && !editHandled && Boolean(customer);
-  const nameMap = lib ? buildProductNameMap(lib.CSV_Products) : new Map<string, string>();
+  const nameMap = lib ? buildProductNameMap(lib.Products) : new Map<string, string>();
   let pending: PendingOrder = customer?.pendingOrder ?? {};
   let postQuote = preQuote;
   if (runOrders && customer) {
     // D-20: AI ส่งแค่ qty → โค้ดใส่ sku จากสินค้า live (แมป sku ไม่ใช่งาน AI)
     const { items: aiItems, ...receiverFields } = geminiOutput.orderData;
-    const resolvedItems = resolveAiItems(aiItems, lib?.CSV_Products ?? []);
+    const resolvedItems = resolveAiItems(aiItems, lib?.Products ?? []);
 
     if (process.env.DIAG_PROMPT_TOKENS === "1") {
       const shape: Record<string, { len: number; digits: boolean }> = {};
@@ -893,7 +892,7 @@ export async function processMessage(
     const postGate = evaluateOrderGate({ pending, slipPresent: Boolean(customer.lastSlipPathname), priceOk: postQuote?.ok ?? false });
     orderCompleteThisTurn = postGate.complete;
     if (geminiOutput.recovered && lib) {
-      const dest = resolveRecoveredStage(lib.CSV_Step, postGate.complete, postGate.payment);
+      const dest = resolveRecoveredStage(lib.Steps, postGate.complete, postGate.payment);
       if (dest && dest !== geminiOutput.stage) {
         console.log(JSON.stringify({ scope: "recovered-stage", from: geminiOutput.stage, to: dest, complete: postGate.complete, payment: postGate.payment }));
         geminiOutput = { ...geminiOutput, stage: dest };
@@ -912,7 +911,7 @@ export async function processMessage(
   }
 
   // ---- เลือกที่มาข้อความ (D-61.A dispatch): v2 = precedence D-42 (composeReplyV2 · ก้อนเดิมทั้งดุ้น) · v3 = เรียบเรียงสด (composeReplyV3) ----
-  const stageFunnelReply = lib ? funnelStageOf(lib.CSV_Step, geminiOutput.stage) : null;
+  const stageFunnelReply = lib ? funnelStageOf(lib.Steps, geminiOutput.stage) : null;
   // v2: handoff_notify นับเป็น handoff turn (D-58 ส่ง pattern ประตู) · v3: ไม่มี notify force — ธงสุขภาพคุมผ่าน assurance guard แทน
   const isHandoffTurn = geminiOutput.handoff || stageFunnelReply === "handoff" || stageFunnelReply === "handoff_after_intake";
   const sel = composeReplyV3({ geminiOutput, imageFallback, config });
@@ -930,20 +929,20 @@ export async function processMessage(
     priceVars: outVars, config,
     lastOrder: synthLastOrder ?? lastOrder,
     lastOrderItemsText: synthLastOrder ? synthItemsText : lastOrderItemsText,
-    pending, products: lib?.CSV_Products ?? [], promo: lib?.CSV_Promo ?? [], varsRows: lib?.CSV_Vars ?? [], now: nowDate,
+    pending, products: lib?.Products ?? [], promo: lib?.Promo ?? [], varsRows: lib?.Vars ?? [], now: nowDate,
   };
   let outReply = resolveAllVars(baseReply, varCtx);
   // 🔴 guard ร้ายแรง (ต่างจากราคา): ตัวแปรโอนเงิน resolve ไม่ได้ → ห้ามส่งข้อความจริง (ลูกค้าโอนไม่ได้ + เสียเครดิต)
-  //    → ส่งข้อความพักสายปลอดภัยแทน + push แจ้งแอดมินให้แก้ CSV_Config
+  //    → ส่งข้อความพักสายปลอดภัยแทน + push แจ้งแอดมินให้แก้ Config
   const unresolvedTransfer = unresolvedTransferVars(outReply);
   if (unresolvedTransfer.length > 0) {
-    console.error(JSON.stringify({ scope: "orders", event: "transfer-vars-unresolved", tokens: unresolvedTransfer, hint: "ตรวจ CSV_Config: เลขที่บัญชี/ชื่อบัญชี/ธนาคาร" }));
+    console.error(JSON.stringify({ scope: "orders", event: "transfer-vars-unresolved", tokens: unresolvedTransfer, hint: "ตรวจ Config: เลขที่บัญชี/ชื่อบัญชี/ธนาคาร" }));
     const adminGroupId = process.env.ADMIN_GROUP_ID;
     if (adminGroupId) {
       const name = await transport.getProfileName();
       await pushRawText(
         adminGroupId,
-        `⚠️ ข้อมูลโอนเงิน resolve ไม่ได้: ${unresolvedTransfer.join(" ")} — บอทงดส่งข้อความโอนให้ลูกค้า\nตรวจ CSV_Config: เลขที่บัญชี / ชื่อบัญชี / ธนาคาร\n———\nLineOA: ${channelLabel(userId)} ${name}`,
+        `⚠️ ข้อมูลโอนเงิน resolve ไม่ได้: ${unresolvedTransfer.join(" ")} — บอทงดส่งข้อความโอนให้ลูกค้า\nตรวจ Config: เลขที่บัญชี / ชื่อบัญชี / ธนาคาร\n———\nLineOA: ${channelLabel(userId)} ${name}`,
       );
     }
     outReply = transferUnresolvedReply(config.botName);
@@ -976,8 +975,8 @@ export async function processMessage(
   // KI-02 price guard (D-27): เลข "X บาท" ที่บอทพูด ต้องอยู่ใน allowed (raw+ตาราง+derived) · โหมด เตือน(default)/บล็อก
   if (lib) {
     const priceAllowed = buildAllowedPriceStrings(
-      lib.CSV_Products,
-      lib.CSV_Promo,
+      lib.Products,
+      lib.Promo,
       Object.fromEntries(config.raw),
       customer?.pendingOrder["การชำระเงิน"] ?? "",
       nowDate,
@@ -1006,7 +1005,7 @@ export async function processMessage(
       phrases: config.assuranceBannedPhrases,
       regenerate: (correction) =>
         withTimeout<GeminiTurnOutput | null>(
-          runSalesTurn({ config, configText, stepText, faqText, catalogText, objectionText: objection.text, stateText, historyText, userMessage, currentStage: previousStage ?? "1", image: imageForGemini, correction, userId }),
+          runSalesTurn({ config, configText, stepText, faqText, catalogText, objectionText: "", stateText, historyText, userMessage, currentStage: previousStage ?? "1", image: imageForGemini, correction, userId }),
           timeouts.regenMs, // D-69: regen ได้ครึ่งหนึ่งของคอลหลัก (ทางรอง + มี fallback ตัดบรรทัด)
           null, // timeout = ถือว่า regenerate ล้ม → caller ตกไปตัดประโยค (เจ้าของเคาะ #2)
         ),
@@ -1083,7 +1082,7 @@ export async function processMessage(
   }
 
   // D-34/D-35: handoff_after_intake — คุยก่อนค่อยส่งคน · นับเทิร์น + reset (ออกประตู/handoff/เงียบนาน) + เพดาน/ขั้นต่ำ
-  const stageFunnel = lib ? funnelStageOf(lib.CSV_Step, geminiOutput.stage) : null;
+  const stageFunnel = lib ? funnelStageOf(lib.Steps, geminiOutput.stage) : null;
   const stageIsHandoff = stageFunnel === "handoff"; // ส่งต่อทันที (D-33)
   const stageIsIntake = stageFunnel === "handoff_after_intake";
   const stageIsNotify = stageFunnel === "handoff_notify"; // D-58: ตอบ+แจ้งแอดมิน แต่ห้ามปิดบอท
@@ -1106,7 +1105,7 @@ export async function processMessage(
 
   console.log(JSON.stringify({
     scope: "handoff-decision",
-    stage: geminiOutput.stage, funnelStage: stageFunnel, stepRows: lib?.CSV_Step.length ?? 0,
+    stage: geminiOutput.stage, funnelStage: stageFunnel, stepRows: lib?.Steps.length ?? 0,
     prevIntakeTurns, intakeTurns: newIntakeTurns, persistIntakeTurns, intakeStale, intakeMin, intakeCap,
     aiHandoffFlag: geminiOutput.handoff, stageIsIntake, stageIsHandoff,
     minReached: intakeMinReached, capReached: intakeCapReached, finalHandoff: doHandoff,
@@ -1155,8 +1154,8 @@ export async function processMessage(
     const adminGroupId = process.env.ADMIN_GROUP_ID;
     if (adminGroupId) {
       const name = await transport.getProfileName();
-      const prevDoor = (lib && customer?.stage ? stepNameOf(lib.CSV_Step, customer.stage) : null) ?? "เรื่องที่คุยค้าง";
-      const newDoor = (lib ? stepNameOf(lib.CSV_Step, geminiOutput.stage) : null) ?? "ประตูอื่น";
+      const prevDoor = (lib && customer?.stage ? stepNameOf(lib.Steps, customer.stage) : null) ?? "เรื่องที่คุยค้าง";
+      const newDoor = (lib ? stepNameOf(lib.Steps, geminiOutput.stage) : null) ?? "ประตูอื่น";
       await pushRawText(adminGroupId, `⚠️ ลูกค้าเพิ่งคุยเรื่อง "${prevDoor}" แล้วเปลี่ยนไป "${newDoor}" · รบกวนตรวจสอบเรื่องค้าง (บอทยังดูแลต่ออยู่)\nข้อความล่าสุด: ${userMessage}\n———\nLineOA: ${channelLabel(userId)} ${name}`);
     }
   }
@@ -1464,7 +1463,7 @@ async function pushSlowSystemNotify(userId: string, userMessage: string, transpo
 const HEALTH_NOTIFY_UNANSWERED =
   "ถามเรื่องสุขภาพ/แพ้อาหาร แต่ระบบสะดุด — 🔴 บอทยังไม่ได้ตอบคำถามนี้ ช่วยตามด่วนค่ะ (ลูกค้าอาจกำลังรออยู่)";
 
-/** อ่านค่าตัวเลขจาก CSV_Config (config.raw) · ไม่มี/อ่านไม่ได้ = fallback */
+/** อ่านค่าตัวเลขจาก Config (config.raw) · ไม่มี/อ่านไม่ได้ = fallback */
 function numFromRaw(config: AppConfig, key: string, fallback: number): number {
   const v = config.raw.get(key);
   if (v === undefined) return fallback;

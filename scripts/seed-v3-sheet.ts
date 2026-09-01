@@ -1,6 +1,6 @@
 /**
  * scripts/seed-v3-sheet.ts — D-61.B · seed ไฟล์ชีต v3 (รันมือครั้งเดียว)
- * รัน: npx tsx scripts/seed-v3-sheet.ts   (อ่าน SHEET_BOTLIB_V3_ID + GOOGLE_SERVICE_ACCOUNT จาก env / .env.local)
+ * รัน: npx tsx scripts/seed-v3-sheet.ts   (อ่าน SHEET_BOTLIB_ID + GOOGLE_SERVICE_ACCOUNT จาก env / .env.local)
  * 🔴 idempotent: แท็บที่มีอยู่แล้ว = ข้าม + ฟ้อง (ไม่เขียนทับ — กันลบงานที่เจ้าของกรอกไปแล้ว)
  * self-contained: ไม่ import โค้ดแอป (ไม่พึ่ง path alias) — googleapis ตรง
  */
@@ -137,10 +137,10 @@ const TABS: { title: string; rows: string[][] }[] = [
 
 async function main(): Promise<void> {
   loadEnvLocal();
-  const idRaw = process.env.SHEET_BOTLIB_V3_ID;
+  const idRaw = process.env.SHEET_BOTLIB_ID;
   const saRaw = process.env.GOOGLE_SERVICE_ACCOUNT;
   if (!idRaw || !saRaw) {
-    console.error("ต้องมี SHEET_BOTLIB_V3_ID และ GOOGLE_SERVICE_ACCOUNT ใน env/.env.local");
+    console.error("ต้องมี SHEET_BOTLIB_ID และ GOOGLE_SERVICE_ACCOUNT ใน env/.env.local");
     process.exit(1);
   }
   const spreadsheetId = idRaw.includes("/d/") ? /\/d\/([a-zA-Z0-9-_]+)/.exec(idRaw)![1] : idRaw.trim();

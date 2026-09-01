@@ -151,9 +151,9 @@ export interface UserContentParams {
   configText: string;
   stepText: string;
   faqText: string;
-  /** สินค้า+ตารางราคาสำเร็จรูป (จาก CSV_Products/CSV_Promo) — บอทหยิบเลขนี้เท่านั้น ห้ามคิดเอง (C6) */
+  /** สินค้า+ตารางราคาสำเร็จรูป (จากแท็บ Products/Promo) — บอทหยิบเลขนี้เท่านั้น ห้ามคิดเอง (C6) */
   catalogText: string;
-  /** ข้อโต้แย้งที่ตรวจพบ + สารบัญ (จาก CSV_Objections) — ใช้จำแนก objection_detected (D-27) · "" = ไม่มี */
+  /** 🔴 D-72a: แท็บ Objections ถูกลบ → ค่านี้เป็น "" เสมอ (คง field ไว้ — โครง prompt ไม่เปลี่ยนแม้แต่บิต) */
   objectionText: string;
   stateText: string;
   historyText: string;

@@ -9,15 +9,15 @@ import { loadBotLibrary } from "@/lib/sheets/loader";
 import { getConfig } from "@/lib/config";
 
 /**
- * D-67 · ปลดล็อกตัวแปรรูปในโหมด v3 — CSV_Vars = คลังรูป ตั้งชื่อเองได้
- * ครอบ: (1) [[รูป:{ชื่อตั้งเอง}]] จาก CSV_Vars → บอลลูนรูปจริง (2) ชนชื่อระบบ → ระบบชนะ + lint เตือน
+ * D-67 · ปลดล็อกตัวแปรรูปในโหมด v3 — Vars = คลังรูป ตั้งชื่อเองได้
+ * ครอบ: (1) [[รูป:{ชื่อตั้งเอง}]] จาก Vars → บอลลูนรูปจริง (2) ชนชื่อระบบ → ระบบชนะ + lint เตือน
  * (3) URL resolve ไม่ได้ → log event `image-dropped` + ห้องซ้อมโชว์บอลลูนขีดฆ่า (4) แถว live ค่าว่าง → lint เตือน
  * (5) token เข้า prompt ได้ทั้งจากเส้นทางขาย (สาระที่ต้องสื่อ) และแท็บความรู้ (คำตอบ)
  */
 
 const IMG_URL = "https://blob.test/skb-promo.jpg";
 
-/** CSV_Vars ที่มี: ตัวแปรรูปตั้งชื่อเอง · แถวชนชื่อระบบ · แถว live ค่าว่าง */
+/** Vars ที่มี: ตัวแปรรูปตั้งชื่อเอง · แถวชนชื่อระบบ · แถว live ค่าว่าง */
 function varsFixture(): string[][] {
   return [
     ["ตัวแปร", "ค่า", "หมายเหตุ", "สถานะ"],
@@ -39,14 +39,14 @@ function messagesOut(): { type: string; url?: string; text?: string }[] {
   });
 }
 
-describe("D-67 · [[รูป:{ตัวแปรตั้งเอง}]] จาก CSV_Vars → บอลลูนรูปจริง (v3)", () => {
+describe("D-67 · [[รูป:{ตัวแปรตั้งเอง}]] จาก Vars → บอลลูนรูปจริง (v3)", () => {
   it("โมเดล copy token → resolver แทน URL → ลูกค้าได้บอลลูนรูป + ข้อความปิดท้าย", async () => {
     scriptGemini([turn({ reply: "รายละเอียดค่ะ[[เว้น]][[รูป:{รูปโปรทดสอบ}]][[เว้น]]รับโปรไหนดีคะ", stage: "S2" })]);
     await sendText(U, "สนใจค่ะ");
     const out = messagesOut();
     const img = out.find((m) => m.type === "image");
     expect(img, "ต้องมีบอลลูนรูป").toBeTruthy();
-    expect(img?.url, "URL ต้องมาจาก CSV_Vars").toBe(IMG_URL);
+    expect(img?.url, "URL ต้องมาจาก Vars").toBe(IMG_URL);
     expect(out[out.length - 1].type, "ปิดท้ายด้วยข้อความ").toBe("text");
     expect(JSON.stringify(out), "token ต้องไม่ค้างดิบ").not.toContain("{รูปโปรทดสอบ}");
   });
@@ -96,7 +96,7 @@ describe("D-67 · lint — ชนชื่อระบบ + ค่าว่า�
     expect(f.some((x) => x.level === "block"), "collision ห้าม block").toBe(false);
   });
 
-  it("แถว CSV_Vars เองชื่อชนระบบ (opts.varName) → warn แม้ค่าไม่ถูกใช้ในแพตเทิร์น", async () => {
+  it("แถว Vars เองชื่อชนระบบ (opts.varName) → warn แม้ค่าไม่ถูกใช้ในแพตเทิร์น", async () => {
     const lib = (await loadBotLibrary())!;
     const f = lintPattern("999", { config: await getConfig(), lib, payment: "", now: new Date(), varName: "{ยอดรวม}" });
     expect(f.find((x) => x.kind === "var-collision")?.hits).toContain("{ยอดรวม}");
