@@ -45,7 +45,9 @@ interface Editor { turnIdx: number; srcIdx: number }
 interface MgmtRow { key: string; id: string; status: string; active: boolean; preview: string }
 interface MgmtData { header: string[]; keyCol: string | null; idCol: string | null; statusCol: string | null; hasStatusCol: boolean; editableCols: string[]; rows: MgmtRow[]; suggestedKey: string | null; suggestedId: string | null }
 interface AsstCol { name: string; value: string }
-interface AsstProposal { id: number; action: "add-row" | "edit-row"; tab: string; key: string; cols: AsstCol[]; note: string; done?: boolean }
+interface AsstProposal { id: number; action: "add-row" | "edit-row"; tab: string; key: string; cols: AsstCol[]; note: string; warnings: string[]; done?: boolean }
+/** D-75: งานที่เลือกจากปุ่ม — ล็อกสคริปต์สัมภาษณ์ฝั่ง server */
+interface AsstTask { kind: "add" | "edit"; tab: string; key?: string; label: string }
 
 const OVERLAY_KEY = "train-overlay-v1";
 // 🔴 D-72a: label = ชื่อแท็บในชีตเป๊ะ — เจ้าของเห็นชื่อไหนในหน้านี้ ก็เปิดแท็บนั้นในชีตได้เลย
@@ -136,7 +138,9 @@ export default function TrainStudio() {
   const [addForm, setAddForm] = useState<Record<string, string> | null>(null);
   // D-74: ค้นหาแถว (id + ข้อความ) · ฟอร์มแก้แถว (ช่องใน editableCols + บริบทอ่านอย่างเดียว)
   const [mgmtQuery, setMgmtQuery] = useState("");
-  const [editRow, setEditRow] = useState<{ key: string; cols: SourceCol[]; base: Record<string, string> } | null>(null);
+  const [editRow, setEditRow] = useState<{ key: string; cols: SourceCol[]; base: Record<string, string>; origin?: "ui" | "ai" } | null>(null);
+  // D-75: ฟอร์มเพิ่มแถวถูกเติมโดยผู้ช่วย → บันทึกด้วย origin "ai" (TRAIN_LOG แยก ai-draft)
+  const [addOrigin, setAddOrigin] = useState<"ui" | "ai">("ui");
   const [editBusy, setEditBusy] = useState(false);
   const [addLint, setAddLint] = useState<LintFinding[]>([]);
   // D-59: ผู้ช่วยเทรน
@@ -145,7 +149,9 @@ export default function TrainStudio() {
   const [asstInput, setAsstInput] = useState("");
   const [asstBusy, setAsstBusy] = useState(false);
   const [proposals, setProposals] = useState<AsstProposal[]>([]);
-  const [liveKeys, setLiveKeys] = useState<Record<string, Set<string>>>({});
+  // D-75: งานปัจจุบัน (ชิปบนหัวแชท) · ตัวเลือกแถวโหมดแก้
+  const [asstTask, setAsstTask] = useState<AsstTask | null>(null);
+  const [asstPick, setAsstPick] = useState<{ tab: string; query: string; rows: MgmtRow[] } | null>(null);
   const [skipKeys, setSkipKeys] = useState<Set<string>>(new Set()); // D-60: แถวที่จัดการ/ข้าม (ไม่วนเสนอซ้ำ)
   const chatRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -338,15 +344,15 @@ export default function TrainStudio() {
     if (mgmtData.keyCol && mgmtData.suggestedKey) init[mgmtData.keyCol] = mgmtData.suggestedKey;
     // 🔴 D-74: id เติมให้อัตโนมัติ = เลขถัดจาก id สูงสุดของแท็บ (K020 → K021) · แก้ทับได้
     if (mgmtData.idCol && mgmtData.suggestedId) init[mgmtData.idCol] = mgmtData.suggestedId;
-    setAddForm(init); setAddLint([]);
+    setAddForm(init); setAddLint([]); setAddOrigin("ui");
   }
   async function submitAdd() {
     if (!addForm) return;
     setMgmtBusy(true); setAddLint([]);
     try {
-      const r = await fetch("/train/api/write", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: "add-row", tab: mgmtTab, cols: addForm }) });
+      const r = await fetch("/train/api/write", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: "add-row", tab: mgmtTab, cols: addForm, origin: addOrigin }) });
       const d = (await r.json()) as { status?: string; lint?: LintFinding[]; message?: string; error?: string };
-      if (r.ok && d.status === "ok") { flash("✅ เพิ่มแถว (draft) แล้ว — ทดสอบในห้องซ้อมก่อนเผยแพร่"); setAddForm(null); loadRows(mgmtTab); return; }
+      if (r.ok && d.status === "ok") { flash("✅ เพิ่มแถว (draft) แล้ว — ทดสอบในห้องซ้อมก่อนเผยแพร่"); setAddForm(null); setAddOrigin("ui"); loadRows(mgmtTab); return; }
       if (d.status === "lint") { setAddLint(d.lint ?? []); return; }
       const msg: Record<string, string> = {
         dup: d.message ?? "key นี้มีอยู่แล้ว — เปลี่ยน key ใหม่", no_status_col: "แท็บนี้ไม่มีคอลัมน์ 'สถานะ' — เพิ่มไม่ได้",
@@ -380,12 +386,18 @@ export default function TrainStudio() {
     if (!editRow) return;
     const changed = editRow.cols.filter((c) => c.value !== editRow.base[c.name]);
     if (changed.length === 0) { flash("ไม่มีช่องไหนเปลี่ยน — ยังไม่ต้องบันทึก"); return; }
+    // 🔴 D-75 (ย้ายจาก confirmProp เดิม · คุ้มครองทั้งแก้มือและจากผู้ช่วย): {ตัวแปร} หาย/ตัวเลขเปลี่ยน → ถามก่อนเขียน
+    const safetyWarns = changed.flatMap((c) => {
+      const sfy = rewriteSafety(editRow.base[c.name] ?? "", c.value);
+      return [...(sfy.droppedVars.length ? [`${c.name}: {ตัวแปร} หาย ${sfy.droppedVars.join(" ")}`] : []), ...(sfy.changedNumbers ? [`${c.name}: ตัวเลขเปลี่ยน`] : [])];
+    });
+    if (safetyWarns.length > 0 && !window.confirm(`⚠️ การแก้นี้อาจเปลี่ยนข้อเท็จจริง:\n${safetyWarns.join("\n")}\nยืนยันบันทึกต่อ?`)) return;
     setEditBusy(true);
     try {
       for (const c of changed) {
         const r = await fetch("/train/api/write", {
           method: "POST", headers: HDRS,
-          body: JSON.stringify({ mode: "commit", tab: mgmtTab, key: editRow.key, column: c.name, newValue: c.value, expectedOld: editRow.base[c.name] }),
+          body: JSON.stringify({ mode: "commit", tab: mgmtTab, key: editRow.key, column: c.name, newValue: c.value, expectedOld: editRow.base[c.name], origin: editRow.origin ?? "ui" }),
         });
         const d = (await r.json()) as { status?: string; lint?: LintFinding[]; current?: string; error?: string };
         if (r.status === 409) { flash(`🔶 ช่อง "${c.name}" ถูกแก้ในชีตระหว่างนั้น — ปิดแล้วเปิดใหม่`); setEditBusy(false); return; }
@@ -413,29 +425,42 @@ export default function TrainStudio() {
 
   // ---- D-59: ผู้ช่วยเทรน (แชท AI → proposal → ยืนยันผ่านเส้นทาง D-57) ----
   const HDRS = { "content-type": "application/json" };
-  async function sendAsst() {
-    const text = asstInput.trim();
+  async function sendAsst(textOverride?: string, taskOverride?: AsstTask | null) {
+    const text = (textOverride ?? asstInput).trim();
     if (!text || asstBusy) return;
+    const task = taskOverride !== undefined ? taskOverride : asstTask;
     if (text.includes("เกลา")) flash("⚠️ โหมดเกลาเสียง: แก้แถว live มีผลลูกค้าจริง ~1 นาที — เกลาทีละไม่กี่แถวแล้วดูผลจริงก่อนไล่ทั้งแท็บ");
     const next: { role: "user" | "assistant"; text: string }[] = [...asstMsgs, { role: "user", text }];
     setAsstMsgs(next); setAsstInput(""); setAsstBusy(true); setProposals([]);
     try {
-      const r = await fetch("/train/api/assistant", { method: "POST", headers: HDRS, body: JSON.stringify({ messages: next, excludeKeys: [...skipKeys] }) });
+      // D-75: task จากปุ่ม → server ล็อกสคริปต์สัมภาษณ์ของแท็บ + (โหมดแก้) ยัดค่าปัจจุบันของแถว
+      const r = await fetch("/train/api/assistant", { method: "POST", headers: HDRS, body: JSON.stringify({ messages: next, excludeKeys: [...skipKeys], task: task ? { kind: task.kind, tab: task.tab, key: task.key } : undefined }) });
       if (r.status === 401 || r.status === 404) { setAuthed(false); return; }
-      const d = (await r.json()) as { reply?: string; proposals?: { action: "add-row" | "edit-row"; tab: string; key: string; cols: Record<string, string>; note: string }[]; error?: string };
+      const d = (await r.json()) as { reply?: string; proposals?: { action: "add-row" | "edit-row"; tab: string; key: string; cols: Record<string, string>; note: string; warnings?: string[] }[]; error?: string };
       setAsstMsgs((m) => [...m, { role: "assistant", text: d.reply ?? d.error ?? "(ไม่มีคำตอบ)" }]);
-      const props: AsstProposal[] = (d.proposals ?? []).map((p, i) => ({ id: Date.now() + i, action: p.action, tab: p.tab, key: p.key, note: p.note, cols: Object.entries(p.cols ?? {}).map(([name, value]) => ({ name, value: String(value) })) }));
+      const props: AsstProposal[] = (d.proposals ?? []).map((p, i) => ({ id: Date.now() + i, action: p.action, tab: p.tab, key: p.key, note: p.note, warnings: p.warnings ?? [], cols: Object.entries(p.cols ?? {}).map(([name, value]) => ({ name, value: String(value) })) }));
       setProposals(props);
-      for (const tab of [...new Set(props.filter((p) => p.action === "edit-row").map((p) => p.tab))]) {
-        const rr = await fetch("/train/api/rows", { method: "POST", headers: HDRS, body: JSON.stringify({ tab }) });
-        if (rr.ok) { const rd = (await rr.json()) as { rows: { key: string; active: boolean }[] }; setLiveKeys((lk) => ({ ...lk, [tab]: new Set(rd.rows.filter((x) => x.active).map((x) => x.key)) })); }
-      }
     } catch (e) { setAsstMsgs((m) => [...m, { role: "assistant", text: `⚠️ ${String(e)}` }]); }
     finally { setAsstBusy(false); }
   }
-  function editProp(id: number, name: string, value: string) {
-    setProposals((ps) => ps.map((p) => (p.id === id ? { ...p, cols: p.cols.map((c) => (c.name === name ? { ...c, value } : c)) } : p)));
+
+  // ---- D-75: ปุ่มเลือกงาน — ผู้ช่วยเริ่มสัมภาษณ์เอง ----
+  function startAddTask(tab: string) {
+    const task: AsstTask = { kind: "add", tab, label: `เพิ่ม ${tab}` };
+    setAsstTask(task); setAsstPick(null);
+    void sendAsst(`เริ่มเลยค่ะ — อยากเพิ่มแถวใหม่ในแท็บ ${tab}`, task);
   }
+  async function startEditPick(tab: string) {
+    setAsstPick({ tab, query: "", rows: [] });
+    const r = await fetch("/train/api/rows", { method: "POST", headers: HDRS, body: JSON.stringify({ tab }) });
+    if (r.ok) { const d = (await r.json()) as MgmtData; setAsstPick((cur) => (cur && cur.tab === tab ? { ...cur, rows: d.rows } : cur)); }
+  }
+  function chooseEditRow(tab: string, row: MgmtRow) {
+    const task: AsstTask = { kind: "edit", tab, key: row.key, label: `แก้ ${row.id ? `${row.id} · ` : ""}${row.key.slice(0, 24)}` };
+    setAsstTask(task); setAsstPick(null);
+    void sendAsst(`ขอแก้แถวนี้ค่ะ: ${row.id ? `${row.id} · ` : ""}${row.key}`, task);
+  }
+  function clearAsstTask() { setAsstTask(null); setAsstPick(null); }
   function asstErr(d: { status?: string; lint?: LintFinding[]; message?: string; error?: string }) {
     const lint = (d.lint ?? []).filter((f) => f.level === "block").map((f) => f.message).join(" · ");
     const msg = lint || d.message || (d.status === "dup" ? "key นี้มีอยู่แล้ว" : d.error || "เขียนไม่ได้");
@@ -443,41 +468,43 @@ export default function TrainStudio() {
   }
   const markHandled = (p: AsstProposal) => setSkipKeys((s) => new Set(s).add(`${p.tab}::${p.key}`));
   function skipProp(p: AsstProposal) { markHandled(p); setProposals((ps) => ps.filter((x) => x.id !== p.id)); flash("ข้ามแถวนี้ (ไม่เสนอซ้ำในรอบนี้)"); }
-  async function confirmProp(p: AsstProposal) {
-    const cols = Object.fromEntries(p.cols.map((c) => [c.name, c.value]));
+
+  /**
+   * 🔴 D-75: ปลายทางของใบ = ฟอร์มเดิมที่ถูกเติมค่า (ประตูเขียนบานเดียว — เจ้าของเห็นทุกช่อง แก้ได้ แล้วบันทึกเอง
+   * ผ่าน lint/dup/conflict/TRAIN_LOG เส้นเดิม D-72b/D-74) · ไม่มีปุ่มเขียนตรงบนการ์ดอีกแล้ว (ตัด confirmProp ทิ้ง)
+   */
+  async function fillFormFromProposal(p: AsstProposal) {
+    const rr = await fetch("/train/api/rows", { method: "POST", headers: HDRS, body: JSON.stringify({ tab: p.tab }) });
+    if (!rr.ok) { flash("⚠️ โหลดแท็บไม่ได้ — ลองใหม่อีกครั้ง"); return; }
+    const data = (await rr.json()) as MgmtData;
+    setMgmtTab(p.tab); setMgmtData(data); setMgmtQuery(""); setAddLint([]);
     if (p.action === "add-row") {
-      const r = await fetch("/train/api/write", { method: "POST", headers: HDRS, body: JSON.stringify({ mode: "add-row", tab: p.tab, cols, origin: "ai" }) });
-      const d = await r.json();
-      if (r.ok && d.status === "ok") { setProposals((ps) => ps.map((x) => (x.id === p.id ? { ...x, done: true } : x))); markHandled(p); flash("✅ เพิ่ม draft แล้ว — ทดสอบก่อนเผยแพร่"); return; }
-      asstErr(d);
+      const init: Record<string, string> = {};
+      for (const h of data.header) if (h && h !== data.statusCol) init[h] = "";
+      for (const c of p.cols) if (c.name in init) init[c.name] = c.value; // ชื่อ col ไม่ตรงชีต = ไม่เติม (ด่านตรวจเตือนแล้ว)
+      if (data.keyCol && p.key && !init[data.keyCol]) init[data.keyCol] = p.key;
+      // 🔴 id = ระบบเติมเสมอ (nextSequentialId D-74) — ใบของผู้ช่วยไม่มีสิทธิ์ตั้ง id
+      if (data.idCol) init[data.idCol] = data.suggestedId ?? "";
+      setEditRow(null); setAddForm(init); setAddOrigin("ai");
     } else {
-      // D-60: ดึงค่าเก่า → เตือนถ้า rewrite ทำ {ตัวแปร} หาย/ตัวเลขเปลี่ยน (โหมดเกลาเสียงห้ามเปลี่ยนข้อเท็จจริง)
-      const diffs: { col: string; old: string; next: string }[] = [];
-      for (const c of p.cols) {
-        const dr = await fetch("/train/api/write", { method: "POST", headers: HDRS, body: JSON.stringify({ mode: "diff", tab: p.tab, key: p.key, column: c.name }) });
-        const dd = await dr.json();
-        if (!dr.ok) { asstErr(dd); return; }
-        diffs.push({ col: c.name, old: dd.old ?? "", next: c.value });
-      }
-      const warns = diffs.flatMap((d) => { const s = rewriteSafety(d.old, d.next); return [...(s.droppedVars.length ? [`${d.col}: {ตัวแปร} หาย ${s.droppedVars.join(" ")}`] : []), ...(s.changedNumbers ? [`${d.col}: ตัวเลขเปลี่ยน`] : [])]; });
-      if (warns.length > 0 && !window.confirm(`⚠️ รีไรต์นี้อาจเปลี่ยนข้อเท็จจริง:\n${warns.join("\n")}\nยืนยันเขียนต่อ?`)) return;
-      for (const d of diffs) {
-        const cr = await fetch("/train/api/write", { method: "POST", headers: HDRS, body: JSON.stringify({ mode: "commit", tab: p.tab, key: p.key, column: d.col, newValue: d.next, expectedOld: d.old, origin: "ai" }) });
-        const cd = await cr.json();
-        if (!cr.ok) { asstErr(cd); return; }
-      }
-      setProposals((ps) => ps.map((x) => (x.id === p.id ? { ...x, done: true } : x))); markHandled(p); flash("✅ แก้แถวแล้ว + จด TRAIN_LOG");
+      // edit-row: ฐาน = ค่าสดจากชีต (diff ต่อคอลัมน์ · ได้ expectedOld กันชนกัน) → ทับด้วยค่าที่ใบเสนอ
+      const cols = await Promise.all(data.editableCols.map(async (name) => {
+        try {
+          const dr = await fetch("/train/api/write", { method: "POST", headers: HDRS, body: JSON.stringify({ mode: "diff", tab: p.tab, key: p.key, column: name }) });
+          const dd = (await dr.json()) as { old?: string };
+          return { name, value: dr.ok ? (dd.old ?? "") : "" };
+        } catch { return { name, value: "" }; }
+      }));
+      const base: Record<string, string> = {};
+      for (const c of cols) base[c.name] = c.value;
+      const proposed = new Map(p.cols.map((c) => [c.name, c.value]));
+      setAddForm(null);
+      setEditRow({ key: p.key, base, origin: "ai", cols: cols.map((c) => ({ name: c.name, value: proposed.get(c.name) ?? c.value })) });
     }
-  }
-  async function testProposal(tab: string, key: string) {
-    const rr = await fetch("/train/api/rows", { method: "POST", headers: HDRS, body: JSON.stringify({ tab }) });
-    if (!rr.ok) return;
-    const rd = (await rr.json()) as { statusCol: string | null };
-    if (!rd.statusCol) { flash("แท็บนี้ไม่มีคอลัมน์สถานะ — ทดสอบไม่ได้"); return; }
-    setOverlay((prev) => [...prev.filter((o) => !(o.tab === tab && o.key === key && o.column === rd.statusCol)), { tab, key, column: rd.statusCol!, value: "live" }]);
-    if (tab === "Knowledge") setInput(key);
-    setAsstOpen(false);
-    flash("▶ draft พร้อมทดสอบ (ห้องซ้อมเห็น live · prod ยังกรอง draft)");
+    setProposals((ps) => ps.map((x) => (x.id === p.id ? { ...x, done: true } : x)));
+    markHandled(p);
+    setAsstOpen(false); setMgmtOpen(true);
+    flash(p.action === "add-row" ? "📝 เติมฟอร์มเพิ่มแถวแล้ว — ตรวจทุกช่องแล้วกดบันทึก (draft เสมอ)" : "📝 เติมฟอร์มแก้ไขแล้ว — ตรวจ diff แล้วกด 💾 บันทึก");
   }
 
   if (authed === null) return <main style={S.page} />;
@@ -611,42 +638,80 @@ export default function TrainStudio() {
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 46, padding: isMobile ? 0 : 16 }} onClick={() => setAsstOpen(false)}>
           <div style={{ background: "#fff", borderRadius: isMobile ? 0 : 14, width: isMobile ? "100%" : 640, maxWidth: "100%", height: isMobile ? "100dvh" : "88dvh", display: "flex", flexDirection: "column", overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ padding: "12px 14px", background: "#06735c", color: "#fff", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <b>🤖 ผู้ช่วยเทรน <span style={{ fontWeight: 400, fontSize: 12 }}>(ช่วยร่าง/แก้คลังความรู้ · เจ้าของยืนยันเอง)</span></b>
+              <b>🤖 ผู้ช่วยเทรน <span style={{ fontWeight: 400, fontSize: 12 }}>(สัมภาษณ์ → เติมฟอร์มให้ · เจ้าของบันทึกเอง)</span>
+                {asstTask && (
+                  <span style={{ marginLeft: 8, background: "#fff4d6", color: "#8a6d00", padding: "2px 10px", borderRadius: 10, fontSize: 12, fontWeight: 600 }}>
+                    งาน: {asstTask.label} <button style={{ background: "none", border: "none", cursor: "pointer", color: "#8a6d00", fontSize: 12 }} onClick={clearAsstTask} title="ล้างงาน">✕</button>
+                  </span>
+                )}
+              </b>
               <button style={{ ...S.toolBtn, background: "transparent", color: "#fff", border: "1px solid rgba(255,255,255,.5)" }} onClick={() => setAsstOpen(false)}>✕ ปิด</button>
             </div>
             <div style={{ flex: 1, overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
-              {asstMsgs.length === 0 && <div style={S.sysB}>บอกได้เลยค่ะ เช่น &quot;เพิ่ม FAQ ว่าส่งต่างจังหวัดกี่วัน&quot; หรือ &quot;แก้คำตอบเรื่องการเก็บรักษา&quot; · เรื่องสุขภาพผู้ช่วยจะเสนอเป็นประตูส่งต่อแอดมินให้ค่ะ</div>}
-              {asstMsgs.map((m, i) => <div key={i} style={m.role === "user" ? S.userB : { ...S.botB, cursor: "default" }}>{m.text}</div>)}
-              {proposals.map((p) => {
-                const isLiveEdit = p.action === "edit-row" && liveKeys[p.tab]?.has(p.key);
-                return (
-                  <div key={p.id} style={{ border: `1px solid ${p.done ? "#9dd6b3" : "#cfe9d8"}`, borderRadius: 10, padding: 12, background: p.done ? "#eef7f0" : "#f7fdf9" }}>
-                    <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}>
-                      <span style={{ ...S.chip, background: p.action === "add-row" ? "#e7f6ec" : "#fff4d6" }}>{p.action === "add-row" ? "＋ แถวใหม่ (draft)" : "✎ แก้แถวเดิม"}</span>
-                      <span style={S.chip}>{p.tab}</span><span style={S.chip}>{p.key}</span>
-                    </div>
-                    {isLiveEdit && <div style={{ ...S.lintWarn, marginBottom: 6 }}>🔴 แก้แถว live — ผลถึงลูกค้าจริง ~1 นาทีหลังยืนยัน (การแก้ไม่พลิกกลับเป็น draft)</div>}
-                    {p.cols.map((c) => (
-                      <div key={c.name} style={{ marginBottom: 6 }}>
-                        <div style={{ fontSize: 12, fontWeight: 600 }}>{c.name}</div>
-                        <textarea style={{ ...S.ta, minHeight: 40 }} value={c.value} disabled={p.done} onChange={(e) => editProp(p.id, c.name, e.target.value)} />
-                      </div>
-                    ))}
-                    {p.note && <div style={{ fontSize: 11, color: "#777", margin: "4px 0" }}>💡 {p.note}</div>}
-                    {!p.done ? (
-                      <div style={{ display: "flex", gap: 6 }}>
-                        <button style={{ ...S.btn, padding: "8px 12px" }} onClick={() => confirmProp(p)}>{p.action === "add-row" ? "ยืนยันเพิ่ม (draft)" : "ยืนยันแก้"}</button>
-                        <button style={{ ...S.toolBtn, padding: "8px 12px" }} onClick={() => skipProp(p)}>ข้าม</button>
-                      </div>
-                    ) : (
-                      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                        <span style={{ color: "#1e7e42", fontSize: 13 }}>✅ เขียนแล้ว</span>
-                        {p.action === "add-row" && <button style={{ ...S.toolBtn, padding: "6px 10px" }} onClick={() => testProposal(p.tab, p.key)}>▶ ทดสอบในห้องซ้อม</button>}
-                      </div>
-                    )}
+              {asstMsgs.length === 0 && !asstPick && (
+                <div style={S.sysB}>
+                  <div style={{ marginBottom: 8 }}>จะทำอะไรดีคะ? เลือกได้เลย — เดี๋ยวถามทีละข้อ แล้วเขียนทุกช่องให้ค่ะ</div>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    <button style={{ ...S.btn, padding: "8px 12px", fontSize: 13 }} onClick={() => startAddTask("Knowledge")}>➕ เพิ่ม Knowledge</button>
+                    <button style={{ ...S.btn, padding: "8px 12px", fontSize: 13 }} onClick={() => startAddTask("Steps")}>➕ เพิ่ม Steps</button>
+                    <button style={{ ...S.btn, padding: "8px 12px", fontSize: 13 }} onClick={() => startAddTask("Vars")}>➕ เพิ่ม Vars</button>
+                    <button style={{ ...S.toolBtn, padding: "8px 12px", fontSize: 13 }} onClick={() => startEditPick("Knowledge")}>✎ แก้ไขแถวเดิม</button>
                   </div>
-                );
-              })}
+                  <div style={{ fontSize: 11, color: "#888", marginTop: 8 }}>หรือพิมพ์อิสระด้านล่างก็ได้ · ผลลัพธ์ = ฟอร์มที่เติมค่าไว้แล้ว เจ้าของตรวจ/แก้ แล้วกดบันทึกเอง (draft เสมอ)</div>
+                </div>
+              )}
+              {asstPick && (
+                <div style={{ border: "1px solid #cfe9d8", borderRadius: 10, padding: 10, background: "#f7fdf9" }}>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6, flexWrap: "wrap" }}>
+                    <b style={{ fontSize: 13, color: "#06735c" }}>✎ เลือกแถวที่จะแก้</b>
+                    {MGMT_TABS.map((t) => (
+                      <button key={t.tab} style={{ ...S.toolBtn, padding: "4px 8px", fontSize: 12, ...(asstPick.tab === t.tab ? { background: "#d5f0e0", fontWeight: 700 } : {}) }} onClick={() => startEditPick(t.tab)}>{t.label}</button>
+                    ))}
+                    <span style={{ flex: 1 }} />
+                    <button style={{ ...S.toolBtn, padding: "4px 8px", fontSize: 12 }} onClick={() => setAsstPick(null)}>✕</button>
+                  </div>
+                  <input style={{ ...S.input, width: "100%", marginBottom: 6 }} placeholder="ค้นหา… (id เช่น K017 หรือข้อความ)" value={asstPick.query} onChange={(e) => setAsstPick({ ...asstPick, query: e.target.value })} />
+                  <div style={{ maxHeight: 220, overflowY: "auto" }}>
+                    {asstPick.rows
+                      .filter((r) => !asstPick.query.trim() || `${r.id} ${r.key} ${r.preview}`.toLowerCase().includes(asstPick.query.trim().toLowerCase()))
+                      .slice(0, 30)
+                      .map((r) => (
+                        <button key={r.key} style={{ display: "block", width: "100%", textAlign: "left", background: "#fff", border: "1px solid #eee", borderRadius: 8, padding: "6px 8px", marginBottom: 4, cursor: "pointer", fontSize: 13 }} onClick={() => chooseEditRow(asstPick.tab, r)}>
+                          {r.id && <span style={{ color: "#06735c", fontFamily: "monospace", marginRight: 6 }}>{r.id}</span>}
+                          {r.key.slice(0, 60)}
+                          <span style={{ color: "#999", fontSize: 11 }}> · {r.preview.slice(0, 40)}</span>
+                        </button>
+                      ))}
+                    {asstPick.rows.length === 0 && <div style={{ color: "#888", fontSize: 12 }}>กำลังโหลด…</div>}
+                  </div>
+                </div>
+              )}
+              {asstMsgs.map((m, i) => <div key={i} style={m.role === "user" ? S.userB : { ...S.botB, cursor: "default" }}>{m.text}</div>)}
+              {proposals.map((p) => (
+                <div key={p.id} style={{ border: `1px solid ${p.done ? "#9dd6b3" : "#cfe9d8"}`, borderRadius: 10, padding: 12, background: p.done ? "#eef7f0" : "#f7fdf9" }}>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}>
+                    <span style={{ ...S.chip, background: p.action === "add-row" ? "#e7f6ec" : "#fff4d6" }}>{p.action === "add-row" ? "＋ แถวใหม่ (id: ระบบเติมให้)" : "✎ แก้แถวเดิม"}</span>
+                    <span style={S.chip}>{p.tab}</span><span style={S.chip}>{p.key}</span>
+                  </div>
+                  {/* 🔴 D-75: คำเตือนจากด่านตรวจ deterministic (reviewProposal) — เห็นตั้งแต่ตอนคุย ไม่รอ lint ตอนบันทึก */}
+                  {p.warnings.map((w, i) => <div key={i} style={{ ...S.lintWarn, marginBottom: 4 }}>⚠︎ {w}</div>)}
+                  {p.cols.map((c) => (
+                    <div key={c.name} style={{ marginBottom: 6 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600 }}>{c.name}</div>
+                      <div style={{ fontSize: 13, background: "#fff", border: "1px solid #eee", borderRadius: 8, padding: "6px 8px", whiteSpace: "pre-wrap" }}>{c.value}</div>
+                    </div>
+                  ))}
+                  {p.note && <div style={{ fontSize: 11, color: "#777", margin: "4px 0" }}>💡 {p.note}</div>}
+                  {!p.done ? (
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button style={{ ...S.btn, padding: "8px 12px" }} onClick={() => fillFormFromProposal(p)}>📝 {p.action === "add-row" ? "เติมฟอร์มเพิ่มแถว" : "เติมฟอร์มแก้ไข"}</button>
+                      <button style={{ ...S.toolBtn, padding: "8px 12px" }} onClick={() => skipProp(p)}>ข้าม</button>
+                    </div>
+                  ) : (
+                    <span style={{ color: "#1e7e42", fontSize: 13 }}>✅ เติมฟอร์มแล้ว — ตรวจ/แก้ในหน้า 📚 แล้วกดบันทึก</span>
+                  )}
+                </div>
+              ))}
               {asstBusy && (
                 <div style={{ ...S.botB, cursor: "default", alignSelf: "flex-start", display: "flex", gap: 4, alignItems: "center", padding: "10px 12px" }} aria-label="ผู้ช่วยกำลังพิมพ์">
                   {[0, 1, 2].map((n) => <span key={n} style={{ width: 7, height: 7, borderRadius: "50%", background: "#9aa", display: "inline-block", animation: "tb-blink 1.2s infinite", animationDelay: `${n * 0.2}s` }} />)}
@@ -655,7 +720,7 @@ export default function TrainStudio() {
             </div>
             <div style={S.inputRow}>
               <input style={S.input} placeholder="พิมพ์บอกผู้ช่วย…" value={asstInput} onChange={(e) => setAsstInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && sendAsst()} disabled={asstBusy} />
-              <button style={S.btn} onClick={sendAsst} disabled={asstBusy}>ส่ง</button>
+              <button style={S.btn} onClick={() => sendAsst()} disabled={asstBusy}>ส่ง</button>
             </div>
           </div>
         </div>

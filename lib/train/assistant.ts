@@ -1,6 +1,8 @@
-import { GoogleGenAI, ThinkingLevel, Type } from "@google/genai";
-import { MODEL, SAFETY_SETTINGS } from "@/lib/gemini";
+import { GoogleGenAI, Type } from "@google/genai";
+import { SAFETY_SETTINGS, resolveThinkingConfig, reportUsage } from "@/lib/gemini";
+import { recordAiUsage } from "@/lib/db";
 import { ASSISTANT_TABS } from "./assistant-kb";
+import type { AppConfig } from "@/lib/config";
 
 /**
  * lib/train/assistant.ts — D-59 จ-1: ผู้ช่วยเทรน (Gemini call แยก · ไม่ปน prompt ขาย · quota แยก)
@@ -17,14 +19,69 @@ export interface AssistantProposal {
 }
 /** D-60.2: จังหวะของ flow สัมภาษณ์ — โมเดลประกาศเอง · server gate: ≠"proposal" → proposals ถูกทิ้ง */
 export type AssistantPhase = "interview" | "draft" | "proposal";
+
+/**
+ * 🔴 D-75: งานที่เจ้าของเลือกจากปุ่ม (เพิ่ม Knowledge/Steps/Vars · แก้แถวเดิม)
+ * task block ล็อกสคริปต์สัมภาษณ์ของแท็บนั้น · โหมดแก้: `rowContext` = ค่าปัจจุบันทุกช่อง (route ยัดให้จากแถวดิบ)
+ */
+export interface AssistantTask {
+  kind: "add" | "edit";
+  tab: string;
+  /** โหมดแก้: key ของแถว (ค่าคอลัมน์ key ตามชีต) */
+  key?: string;
+  /** โหมดแก้: "คอลัมน์: ค่า" ต่อบรรทัด — ผู้ช่วยเห็นของจริงก่อนเสนอ diff */
+  rowContext?: string;
+}
 export interface AssistantResult { reply: string; phase: AssistantPhase; proposals: AssistantProposal[] }
 
 const MAX_PROPOSALS = 3; // กติกา 10: ≤3 ต่อเทิร์น
 const MAX_HISTORY = 12; // cost cap
 const VALID_TABS = new Set<string>(ASSISTANT_TABS);
 
-/** 🔴 system prompt ผู้ช่วยเทรน (เจ้าของเคาะ D-59/D-60) — KB สดต่อท้าย · excludeKeys = แถวที่จัดการแล้ว (โหมดเกลาเสียง) */
-export function buildAssistantSystem(kb: string, excludeKeys: string[] = []): string {
+/** 🔴 D-75: สคริปต์สัมภาษณ์ต่อแท็บ — ผูกกับ schema จริงของชีต · ถามทีละ 1-2 ข้อ ภาษาคน */
+const INTERVIEW_SCRIPTS: Record<string, string> = {
+  Knowledge: [
+    "สคริปต์สัมภาษณ์ Knowledge (ถามทีละ 1-2 ข้อ · ภาษาคน · เก็บครบก่อนออกใบ):",
+    '① "ลูกค้าถามว่าอะไรคะ — ขอหลายแบบที่ลูกค้าพิมพ์จริง" → คอลัมน์ `ลูกค้าพูดยังไง`',
+    '② "ข้อเท็จจริงที่จะใช้ตอบคืออะไร / มีอะไรห้ามพูดไหม" → `ข้อเท็จจริง/สิ่งที่อยากให้รู้`',
+    '③ "ลูกค้ากังวลอะไรจริง ๆ ตอนถามแบบนี้" → `ความกังวลจริง` · แล้วร่าง `แนวตอบ` ตามเสียงนักขาย (กติกา 12)',
+    "④ เสนอ `keyword` เองพร้อมเหตุผล — วลีที่ลูกค้าพิมพ์จริง ห้ามคำสั้น/คำโดดที่ฝังในคำอื่นได้ (บทเรียน: \"ท้อง\" ฝังใน \"ปลายทาง\")",
+    "🔴 ไม่ต้องคิดคอลัมน์ `id` — ระบบเติมเลขถัดไปให้เองตอนเปิดฟอร์ม",
+  ].join("\n"),
+  Steps: [
+    "สคริปต์สัมภาษณ์ Steps (ถามทีละ 1-2 ข้อ):",
+    '① "ลูกค้าเข้าประตูนี้เมื่อไหร่ — ขอตัวอย่างคำพูดจริงใส่เครื่องหมายคำพูด" → `เข้าเมื่อ` (ตัวอย่างใน "..." คือสิ่งที่ระบบใช้จับ)',
+    '② "บอทต้องสื่อ/ถามอะไรในประตูนี้" → `สาระที่ต้องสื่อ` (ช่องเดียวที่เข้า prompt บอท · `แนวตอบ` เป็นแค่ตัวอย่างให้คนดู)',
+    '③ "ต้องได้อะไรถึงไปต่อ" → `ต้องได้อะไรถึงไปต่อ` · ④ "แล้วไปประตูไหนต่อ" → `ไปประตูไหน`',
+    '⑤ "ประตูนี้ส่งคนแบบไหน" → คอลัมน์ `handoff` มี 3 ค่าเท่านั้น: ว่าง (ประตูขายปกติ) · "ใช่" (ส่งแอดมินทันที ปิดบอท) · "เก็บข้อมูลก่อน" (บอทถาม 1-3 เทิร์นแล้วค่อยส่ง) — ค่าอื่นระบบปฏิเสธ',
+  ].join("\n"),
+  Vars: [
+    "สคริปต์สัมภาษณ์ Vars (สั้น):",
+    '① "ตั้งชื่อตัวแปรว่าอะไร" → `ตัวแปร` ต้องครอบปีกกา {ชื่อ} · ห้ามชนตัวแปรระบบ (ดูรายการใน KB)',
+    '② "ค่าคือข้อความ/URL อะไร" → `ค่า` (URL รูป = คลังรูป [[รูป:{ชื่อ}]] ได้)',
+  ].join("\n"),
+};
+
+/** 🔴 D-75: บล็อกงานปัจจุบัน (จากปุ่มที่เจ้าของกด) — ต่อท้าย system prompt */
+export function buildTaskBlock(task: AssistantTask): string {
+  if (task.kind === "edit") {
+    return [
+      `🔴 งานปัจจุบัน: แก้ไขแถวเดิมในแท็บ ${task.tab} — แถว "${task.key ?? "(ยังไม่เลือก)"}"`,
+      task.rowContext ? `ค่าปัจจุบันของแถวนี้ (ตามชีตจริง):\n${task.rowContext}` : "",
+      "ถามเจ้าของว่าอยากให้แถวนี้เป็นยังไง → เสนอ edit-row เฉพาะช่องที่เปลี่ยนจริง (ช่องเดิมที่ไม่แตะ ห้ามใส่ในใบ)",
+      "แก้เล็ก (พิมพ์ผิด/เปลี่ยนคำเดียว) = ออกใบได้เลยไม่ต้องสัมภาษณ์ยาว",
+    ].filter(Boolean).join("\n");
+  }
+  const script = INTERVIEW_SCRIPTS[task.tab] ?? "";
+  return [
+    `🔴 งานปัจจุบัน: เพิ่มแถวใหม่ในแท็บ ${task.tab} — เริ่มสัมภาษณ์ตามสคริปต์ทันที (เทิร์นแรกให้ถามข้อ ① เลย)`,
+    script,
+    "🔴 ก่อนออกใบ ให้เทียบกับแถวที่มีอยู่ใน KB: ถ้าเรื่องซ้ำ/ทับแถวเดิม → บอกเจ้าของและเสนอ edit-row แถวเดิม (ระบุ id) แทนการเพิ่มใหม่",
+  ].filter(Boolean).join("\n");
+}
+
+/** 🔴 system prompt ผู้ช่วยเทรน (เจ้าของเคาะ D-59/D-60 · D-75 เพิ่ม task block) — KB สดต่อท้าย */
+export function buildAssistantSystem(kb: string, excludeKeys: string[] = [], task?: AssistantTask): string {
   const lines = [
     'คุณคือ "ผู้ช่วยเทรน" ของร้านสากบิน — ช่วยเจ้าของเพิ่ม/แก้ "คลังความรู้" ของบอทขาย "ปลาทู" (คุณไม่ใช่บอทขาย ไม่ได้คุยกับลูกค้า) ตอบเจ้าของสั้น กระชับ เป็นกันเอง',
     "",
@@ -41,7 +98,7 @@ export function buildAssistantSystem(kb: string, excludeKeys: string[] = []): st
     'สิ่งที่ทำได้: เสนอ (ก) ร่างแถวใหม่ หรือ (ข) แก้แถวเดิม ของ 3 แท็บ: Knowledge / Steps / Vars — เสนอเป็น proposal เท่านั้น เจ้าของกดยืนยันเอง',
     "กติกาเหล็ก:",
     "1. 🔴 ทุกแถวใหม่/แก้ = draft เสมอ — บอกเจ้าของให้ทดสอบในห้องซ้อมก่อน แล้วค่อยกดเผยแพร่ (live) · ห้ามพูดว่า 'เพิ่มขึ้นหน้าร้านแล้ว'",
-    "2. 🔴 สุขภาพ/แพ้อาหาร/ท้อง/ให้นม/เด็ก/ผู้ป่วย/ยา = ห้ามให้บอทตอบรับรองเอง ('ทานได้/ปลอดภัย/ไม่เป็นไร' = ห้าม) · เรื่องสุขภาพ default = เสนอเป็นประตู Steps funnel_stage=handoff_notify (ให้ข้อมูลกลางๆ: ส่วนผสม+แนะนำปรึกษาแพทย์ + แจ้งแอดมินดูแล) · handoff เต็ม (ปิดบอทเงียบ) เฉพาะเมื่อเจ้าของสั่งเอง",
+    "2. 🔴 สุขภาพ/แพ้อาหาร/ท้อง/ให้นม/เด็ก/ผู้ป่วย/ยา (H1) = ใส่ได้เฉพาะ **ข้อเท็จจริงตามฉลาก** (ส่วนประกอบ/สารก่อภูมิแพ้/ไลน์ผลิต) · 🔴 ห้ามคำรับรองทุกรูปประโยค ('ทานได้/กินได้/ปลอดภัย/ไม่เป็นไร' รวมแบบมีเงื่อนไข 'ถ้าไม่แพ้ก็ทานได้') — เกณฑ์เดียวกับ lint ตอนบันทึก · ห้ามใส่ 'หลักการตอบ' เรื่องสุขภาพ · เจอเคสสุขภาพให้เตือนกติกานี้กับเจ้าของตั้งแต่ตอนสัมภาษณ์ · ประตู Steps ส่งคน = คอลัมน์ handoff (ว่าง/ใช่/เก็บข้อมูลก่อน — D-73b ไม่มี funnel_stage แล้ว)",
     "3. คีย์เวิร์ด (คอลัมน์ `keyword` ของ Knowledge — ใช้ชื่อนี้เป๊ะใน proposal): ใช้วลีเฉพาะ (เช่น 'ส่งกี่วัน') ห้ามคำโดดสามัญที่ชนคำอื่น (เช่น 'โอน' ชน 'โอนอ่อน' · 'ยา' ชน 'ยาว/ยานนาวา') · ห้ามเสนอ key/คำถามที่มีอยู่แล้ว (ดูรายการ)",
     "4. ห้ามใช้คำโฆษณาต้องห้าม (พ.ร.บ.อาหาร · รายการด้านล่าง) — 🔴 claims blocklist คุมเหนือทุกอย่าง",
     "5. ราคา/ข้อเท็จจริงสินค้า ใช้จากข้อมูลจริงที่ให้มาเท่านั้น · ไม่รู้/ไม่มีข้อมูล = บอกตรงๆ ไม่แต่ง",
@@ -65,6 +122,7 @@ export function buildAssistantSystem(kb: string, excludeKeys: string[] = []): st
     "รูปแบบ cols ใน proposal: ลิสต์ {name, value} · 🔴 name = ชื่อคอลัมน์ตามชีตเป๊ะ (ดู header ใน KB · D-72b: ชื่อผิด = ค่าถูกทิ้งเงียบ) · add-row = ทุกคอลัมน์ที่รู้ (เว้นคอลัมน์สถานะ ระบบใส่ draft ให้เอง) · edit-row = เฉพาะช่องที่เปลี่ยน",
   ];
   if (excludeKeys.length > 0) lines.push(`🔴 แถวที่จัดการ/ข้ามไปแล้วในรอบนี้ (ห้ามเสนอซ้ำ): ${excludeKeys.join(" · ")}`);
+  if (task) lines.push("", buildTaskBlock(task)); // D-75: งานจากปุ่ม — ล็อกสคริปต์สัมภาษณ์ของแท็บ
   lines.push("", kb);
   return lines.join("\n");
 }
@@ -142,25 +200,42 @@ function getClient(): GoogleGenAI {
   return client;
 }
 
-/** เรียกผู้ช่วยเทรน (multi-turn · cap ประวัติ 12) — คืน reply + proposals (parser กรองแล้ว) · excludeKeys = โหมดเกลาเสียง (ไม่วนซ้ำ) */
-export async function runTrainAssistant(messages: AssistantMessage[], kb: string, excludeKeys: string[] = []): Promise<AssistantResult> {
+/**
+ * เรียกผู้ช่วยเทรน (multi-turn · cap ประวัติ 12) — คืน reply + proposals (parser กรองแล้ว)
+ * 🔴 D-75: โมเดล = ตัวเดียวกับบอท (`config.geminiModel` + thinking จากชีต) · ทุก call ลง `ai_usage`
+ *    call_kind "assistant" — เจ้าของเห็นต้นทุนส่วนผู้ช่วยแยกจากบอท
+ */
+export async function runTrainAssistant(
+  messages: AssistantMessage[],
+  kb: string,
+  config: AppConfig,
+  opts: { excludeKeys?: string[]; task?: AssistantTask } = {},
+): Promise<AssistantResult> {
   const history = messages.slice(-MAX_HISTORY);
   const contents = history.map((m) => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.text }] }));
+  const model = config.geminiModel;
+  const startedAt = Date.now();
   try {
     const response = await getClient().models.generateContent({
-      model: MODEL,
+      model,
       contents,
       config: {
-        systemInstruction: buildAssistantSystem(kb, excludeKeys),
+        systemInstruction: buildAssistantSystem(kb, opts.excludeKeys ?? [], opts.task),
         temperature: 0.3,
         maxOutputTokens: 2048,
-        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+        thinkingConfig: resolveThinkingConfig(model, config.thinkingLevelRaw),
         responseMimeType: "application/json",
         responseSchema: PROPOSAL_SCHEMA,
         safetySettings: SAFETY_SETTINGS,
       },
     });
-    console.log(JSON.stringify({ scope: "train-assistant", turns: history.length, kbLen: kb.length }));
+    console.log(JSON.stringify({ scope: "train-assistant", turns: history.length, kbLen: kb.length, task: opts.task?.kind ?? "free" }));
+    const u = reportUsage("assistant", model, response.usageMetadata, Date.now() - startedAt, { task: opts.task?.kind ?? "free" });
+    void recordAiUsage({
+      userId: null, channel: "train", model, callKind: "assistant",
+      promptTokens: u.promptTokens, candidatesTokens: u.candidatesTokens, thoughtsTokens: u.thoughtsTokens,
+      cachedTokens: u.cachedTokens, latencyMs: u.latencyMs, degraded: false, stage: null,
+    });
     return parseAssistantResponse(response.text);
   } catch (error) {
     console.error(JSON.stringify({ scope: "train-assistant", warning: "assistant call failed", error: String(error).slice(0, 100) }));

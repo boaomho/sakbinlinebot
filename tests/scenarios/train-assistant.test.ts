@@ -95,8 +95,9 @@ const RUN_REAL = process.env.HARNESS_REAL_GEMINI === "1" && Boolean(process.env.
 describe.skipIf(!RUN_REAL)("D-60.2 · real Gemini — เทิร์นแรกงานใหม่ = interview (ไม่มี proposal)", () => {
   it("สั่ง 'เพิ่ม Step H5 handoff_notify เรื่องสุขภาพ' (ไม่มีตัวอย่าง/คำตอบ) → proposals ว่าง + ถามกลับ", async () => {
     const { runTrainAssistant } = await import("@/lib/train/assistant");
+    const { getConfig } = await import("@/lib/config");
     const kb = await buildAssistantKB();
-    const out = await runTrainAssistant([{ role: "user", text: "เพิ่ม Step H5 เป็น handoff_notify เวลาลูกค้ามีคำถามหรือแจ้งเกี่ยวกับสุขภาพ" }], kb);
+    const out = await runTrainAssistant([{ role: "user", text: "เพิ่มประตู Steps ใหม่เวลาลูกค้ามีคำถามหรือแจ้งเกี่ยวกับสุขภาพ" }], kb, await getConfig());
     expect(out.proposals, "เทิร์นแรกงานใหม่ห้ามออกใบ").toHaveLength(0);
     expect(out.reply.length, "ต้องถามกลับ ไม่ใช่ตอบเปล่า").toBeGreaterThan(20);
   }, 45_000);

@@ -16,7 +16,7 @@ export interface OrderDataFromAI {
   items?: AiOrderItem[];
 }
 
-/** @deprecated D-69: ใช้ `config.geminiModel` (ตั้งจากชีตได้) — คงไว้ให้ผู้ช่วยเทรนที่ยังไม่ผูกกับ AppConfig */
+/** @deprecated D-69: ใช้ `config.geminiModel` (ตั้งจากชีตได้) — D-75: ผู้ช่วยเทรนย้ายไป config แล้ว · เหลือเฉพาะจุดที่ยังไม่มี config จริง */
 export const MODEL = DEFAULT_GEMINI_MODEL;
 
 /**
@@ -163,7 +163,8 @@ function channelOfUserId(userId: string | undefined): string | null {
   return "line";
 }
 
-function reportUsage(
+export function reportUsage( // D-75: export ให้ผู้ช่วยเทรนใช้ตัวเดียวกัน (แหล่งเดียว ห้ามลอก)
+
   kind: AiCallKind,
   model: string,
   usage: { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number; cachedContentTokenCount?: number } | undefined,

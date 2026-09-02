@@ -870,7 +870,7 @@ export async function deleteTrainSession(sessionId: string): Promise<void> {
 // ---- D-69 · บันทึกการเรียก Gemini (ต้นทุน/ความเร็ว) ----
 
 /** ประเภทการเรียก — 🔴 'regen' = assurance guard ยิงซ้ำ (จ่ายสองเท่าในเทิร์นเดียว) */
-export type AiCallKind = "main" | "regen" | "extraction";
+export type AiCallKind = "main" | "regen" | "extraction" | "assistant"; // D-75: ผู้ช่วยเทรน — เห็นต้นทุนแยก
 
 export interface AiUsageRow {
   userId: string | null;
