@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { sheetsCalls } from "../harness/state";
 import { seedBotLib, v3StepRows, v3KnowRows, V3_STEP_HEADER_WITH_FUNNEL, TAB } from "../harness/botlib-fixture";
-import { appendRow, setRowStatus, listTabRows, suggestNextKey } from "@/lib/train/write";
+import { appendRow, setRowStatus, listTabRows, suggestNextKey, nextSequentialId } from "@/lib/train/write";
 import { columnLetter } from "@/lib/sheets/columns";
 import { lintPattern } from "@/lib/train/lint";
 import { loadBotLibrary } from "@/lib/sheets/loader";
@@ -236,5 +236,93 @@ describe("T2-ค · draft: prod ทิ้ง · sandbox เห็น (overlay �
   it("🔴 sandbox: overlay สถานะ→live บนแถวดิบ → matcher เดียวกันเสิร์ฟแถวนั้น", () => {
     const flipped = applyOverlayToTab(TAB.knowledge, raw, [{ tab: TAB.knowledge, key: Q, column: "สถานะ", value: "live" }]);
     expect(buildFaqInjection(know(flipped), Q).verbatim?.answer).toContain(A);
+  });
+});
+
+// ═══════════ D-74 · Studio UX: id ต้องหาเจอ · id ใหม่ไม่ต้องคิดเอง ═══════════
+
+/** แถวดิบ Knowledge แบบมีคอลัมน์ id (K001…) — ตรงกับชีตจริง (fixture v3KnowRows ไม่มี id) */
+function knowWithId(rows: { id: string; say: string; keyword?: string; fact?: string; status?: string }[]): string[][] {
+  return [
+    ["id", "ลูกค้าพูดยังไง", "keyword", "ความกังวลจริง", "ข้อเท็จจริง/สิ่งที่อยากให้รู้", "แนวตอบ", "สถานะ"],
+    ...rows.map((r) => [r.id, r.say, r.keyword ?? "", "", r.fact ?? "", "", r.status ?? "live"]),
+  ];
+}
+
+describe("D-74 · nextSequentialId (pure) — เสนอ id ถัดไป", () => {
+  it("K020 สูงสุด → K021 · คงจำนวนหลัก", () => {
+    expect(nextSequentialId(["K001", "K017", "K020"])).toBe("K021");
+  });
+  it("เลขไม่เรียง/ข้ามเลข → อิงตัวสูงสุด ไม่ใช่จำนวนแถว", () => {
+    expect(nextSequentialId(["K001", "K009", "K003"])).toBe("K010");
+  });
+  it("prefix ปนกัน → ใช้ prefix ที่พบบ่อยสุด (แถวแปลกปลอมไม่ลากเลขผิดกลุ่ม)", () => {
+    expect(nextSequentialId(["K001", "K002", "K003", "X99"])).toBe("K004");
+  });
+  it("ไม่มีตัวไหนเข้า pattern (S1/S2Q/H_CLAIM แบบ Steps) → null (คนพิมพ์เอง)", () => {
+    expect(nextSequentialId(["H_CLAIM", "H_BULK"])).toBeNull();
+    expect(nextSequentialId([])).toBeNull();
+  });
+  it("🔴 id ที่มีเลขนำหน้าเป็น 0 (K007) → K008 ไม่ใช่ K8", () => {
+    expect(nextSequentialId(["K007"])).toBe("K008");
+  });
+});
+
+describe("D-74 · listTabRows โชว์ id + เสนอ id ถัดไป", () => {
+  it("🔴 ทุกแถวมี id ตามชีต + idCol + suggestedId = ถัดจากสูงสุด", async () => {
+    seedBotLib();
+    sheetsCalls.botLibReturn[TAB.knowledge] = knowWithId([
+      { id: "K005", say: "ส่งกี่วัน", fact: "1-2 วันค่ะ" },
+      { id: "K017", say: "ของเสีย/ของไม่ถึง", fact: "รับเคลม" },
+    ]);
+    const out = await listTabRows("Knowledge");
+    expect(out.idCol).toBe("id");
+    expect(out.rows.map((r) => r.id), "id ต้องมาถึง UI (เดิมหาย → หา K017 ไม่เจอ)").toEqual(["K005", "K017"]);
+    expect(out.suggestedId, "เสนอ id ถัดไปให้เอง").toBe("K018");
+  });
+
+  it("แท็บที่ไม่มีคอลัมน์ id (Vars) → idCol/suggestedId = null · id ต่อแถว = \"\" (ไม่พัง)", async () => {
+    seedBotLib();
+    const out = await listTabRows("Vars");
+    expect(out.idCol).toBeNull();
+    expect(out.suggestedId).toBeNull();
+    expect(out.rows.every((r) => r.id === "")).toBe(true);
+  });
+});
+
+describe("D-74 · id/key ซ้ำ → ปฏิเสธพร้อมบอกว่าซ้ำกับแถวไหน", () => {
+  it("🔴 id ซ้ำ → dup + ข้อความระบุแถวที่ชน (id · key · เลขแถวในชีต)", async () => {
+    seedBotLib();
+    sheetsCalls.botLibReturn[TAB.knowledge] = knowWithId([
+      { id: "K005", say: "ส่งกี่วัน", fact: "1-2 วันค่ะ" },
+      { id: "K017", say: "ของเสีย/ของไม่ถึง", fact: "รับเคลม" },
+    ]);
+    sheetsCalls.appends.length = 0;
+    const res = await appendRow("Knowledge", { id: "K017", "ลูกค้าพูดยังไง": "คำถามใหม่", keyword: "ใหม่" });
+    expect(res.status).toBe("dup");
+    if (res.status === "dup") {
+      expect(res.message).toContain("K017");
+      expect(res.message, "บอกว่าชนกับแถวไหน").toContain("ของเสีย/ของไม่ถึง");
+      expect(res.message, "บอกเลขแถวในชีตให้ไปดูได้").toContain("แถว 3");
+    }
+    expect(sheetsCalls.appends.filter((a) => a.range.startsWith("Knowledge")), "ซ้ำ = ไม่เขียน").toHaveLength(0);
+  });
+
+  it("key ซ้ำ (Steps · id คือ step_id เอง) → dup + ระบุแถว (เตือนแทนการเดา pattern)", async () => {
+    seedBotLib({ stepRows: v3StepRows([{ step_id: "H_CLAIM", intake: true, name: "เคลม" }]) });
+    const res = await appendRow("Steps", { step_id: "H_CLAIM", ชื่อประตู: "เคลมซ้ำ", สถานะ: "" });
+    expect(res.status).toBe("dup");
+    if (res.status === "dup") expect(res.message).toContain("H_CLAIM");
+  });
+
+  it("id ไม่ซ้ำ → เขียนได้ปกติ (แถวใหม่ยังบังคับ draft)", async () => {
+    seedBotLib();
+    sheetsCalls.botLibReturn[TAB.knowledge] = knowWithId([{ id: "K005", say: "ส่งกี่วัน", fact: "1-2 วันค่ะ" }]);
+    sheetsCalls.appends.length = 0;
+    const res = await appendRow("Knowledge", { id: "K006", "ลูกค้าพูดยังไง": "ส่งเสาร์ไหม", keyword: "เสาร์" });
+    expect(res.status).toBe("ok");
+    const added = sheetsCalls.appends.find((a) => a.range.startsWith("Knowledge"));
+    expect(added?.values[0][0], "id ลงคอลัมน์แรกตาม header ดิบ").toBe("K006");
+    expect(added?.values[0][6], "สถานะบังคับ draft").toBe("draft");
   });
 });

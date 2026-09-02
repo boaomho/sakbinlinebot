@@ -32,7 +32,7 @@ lib/
     turn.ts         runTrainTurn/runTrainCron/runTrainReset/runTrainPreview — orchestration ใน sandbox
     preview.ts      เฟส ข: buildReplySources (provenance) · renderPreview · buildTrainVarCtx · collectDroppedBubbles · T2-ค: triggerTextForTab (H1) · 🔴 D-72b: คอลัมน์ดิบตามชีต (EDITABLE_COLS: Steps สาระที่ต้องสื่อ+แนวตอบ("ไม่เข้า prompt") · Knowledge 3 คอลัมน์+keyword · Vars ค่า) · patternFromColumns ใช้ composeKnowledgeAnswer แหล่งเดียวกับ normalize
     lint.ts         เฟส ข/T2-ค: lintPattern (unknown-var/**var-collision/var-empty (D-67 · warn)**/claims/price/bubbles/health-h1 · reuse guard production) · lintHealthH1 (trigger-aware · 🔴 D-72b เกณฑ์ v3: แถวสุขภาพ+คำรับรอง=block · ไม่มี=warn · ตัวจับ=findAssuranceHits import จาก guards/assurance ตรง ๆ ห้ามลอก)
-    write.ts        เฟส ค/T2-ค: diffCell/listTabRows/suggestNextKey (อ่าน) · writeCell/appendRow/setRowStatus — 🔴 **D-72b เปิดเขียนแล้ว** (ถอด assertWritable ของ D-68): พิกัดทั้งหมดจาก `loadRawSheets()` = แถวดิบตามชีตเป๊ะ (`locateInRaw` · สถานะดิบใช้ `isLiveStatus` "ว่าง=draft") · guard ครบ (conflict/lint/funnel/dup/draft-forced/hard guard ห้าม Orders)
+    write.ts        เฟส ค/T2-ค: diffCell/listTabRows(+id/idCol/suggestedId · D-74)/suggestNextKey/nextSequentialId (อ่าน) · writeCell/appendRow/setRowStatus — 🔴 **D-72b เปิดเขียนแล้ว** (ถอด assertWritable ของ D-68): พิกัดทั้งหมดจาก `loadRawSheets()` = แถวดิบตามชีตเป๊ะ (`locateInRaw` · สถานะดิบใช้ `isLiveStatus` "ว่าง=draft") · guard ครบ (conflict/lint/funnel/dup/draft-forced/hard guard ห้าม Orders)
     auth.ts         TRAIN_PASSWORD + cookie HMAC · guardTrainRequest (All-or-nothing → 404)
 app/api/
   line-webhook/route.ts   webhook (POST บาง — Next ห้าม route.ts export อื่น)

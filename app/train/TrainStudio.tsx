@@ -42,8 +42,8 @@ interface PreviewResult {
   error?: string;
 }
 interface Editor { turnIdx: number; srcIdx: number }
-interface MgmtRow { key: string; status: string; active: boolean; preview: string }
-interface MgmtData { header: string[]; keyCol: string | null; statusCol: string | null; hasStatusCol: boolean; editableCols: string[]; rows: MgmtRow[]; suggestedKey: string | null }
+interface MgmtRow { key: string; id: string; status: string; active: boolean; preview: string }
+interface MgmtData { header: string[]; keyCol: string | null; idCol: string | null; statusCol: string | null; hasStatusCol: boolean; editableCols: string[]; rows: MgmtRow[]; suggestedKey: string | null; suggestedId: string | null }
 interface AsstCol { name: string; value: string }
 interface AsstProposal { id: number; action: "add-row" | "edit-row"; tab: string; key: string; cols: AsstCol[]; note: string; done?: boolean }
 
@@ -134,6 +134,10 @@ export default function TrainStudio() {
   const [mgmtData, setMgmtData] = useState<MgmtData | null>(null);
   const [mgmtBusy, setMgmtBusy] = useState(false);
   const [addForm, setAddForm] = useState<Record<string, string> | null>(null);
+  // D-74: ค้นหาแถว (id + ข้อความ) · ฟอร์มแก้แถว (ช่องใน editableCols + บริบทอ่านอย่างเดียว)
+  const [mgmtQuery, setMgmtQuery] = useState("");
+  const [editRow, setEditRow] = useState<{ key: string; cols: SourceCol[]; base: Record<string, string> } | null>(null);
+  const [editBusy, setEditBusy] = useState(false);
   const [addLint, setAddLint] = useState<LintFinding[]>([]);
   // D-59: ผู้ช่วยเทรน
   const [asstOpen, setAsstOpen] = useState(false);
@@ -309,14 +313,14 @@ export default function TrainStudio() {
 
   // ---- T2-ค: จัดการแถวคลังความรู้ (list · เพิ่มแถว draft · live↔draft · ทดสอบ draft ในห้องซ้อม) ----
   const loadRows = useCallback(async (tab: string) => {
-    setMgmtBusy(true); setAddForm(null); setAddLint([]);
+    setMgmtBusy(true); setAddForm(null); setAddLint([]); setEditRow(null);
     try {
       const r = await fetch("/train/api/rows", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ tab }) });
       if (r.ok) setMgmtData((await r.json()) as MgmtData); else setMgmtData(null);
     } finally { setMgmtBusy(false); }
   }, []);
   function openMgmt() { setMgmtOpen(true); loadRows(mgmtTab); }
-  function switchMgmtTab(tab: string) { setMgmtTab(tab); loadRows(tab); }
+  function switchMgmtTab(tab: string) { setMgmtTab(tab); setMgmtQuery(""); setEditRow(null); loadRows(tab); }
 
   async function toggleRowStatus(key: string, toStatus: "live" | "draft") {
     const verb = toStatus === "live" ? "เผยแพร่ (live)" : "ปิดชั่วคราว (draft)";
@@ -332,6 +336,8 @@ export default function TrainStudio() {
     const init: Record<string, string> = {};
     for (const h of mgmtData.header) if (h && h !== mgmtData.statusCol) init[h] = "";
     if (mgmtData.keyCol && mgmtData.suggestedKey) init[mgmtData.keyCol] = mgmtData.suggestedKey;
+    // 🔴 D-74: id เติมให้อัตโนมัติ = เลขถัดจาก id สูงสุดของแท็บ (K020 → K021) · แก้ทับได้
+    if (mgmtData.idCol && mgmtData.suggestedId) init[mgmtData.idCol] = mgmtData.suggestedId;
     setAddForm(init); setAddLint([]);
   }
   async function submitAdd() {
@@ -343,11 +349,53 @@ export default function TrainStudio() {
       if (r.ok && d.status === "ok") { flash("✅ เพิ่มแถว (draft) แล้ว — ทดสอบในห้องซ้อมก่อนเผยแพร่"); setAddForm(null); loadRows(mgmtTab); return; }
       if (d.status === "lint") { setAddLint(d.lint ?? []); return; }
       const msg: Record<string, string> = {
-        dup: "key นี้มีอยู่แล้ว — เปลี่ยน key ใหม่", no_status_col: "แท็บนี้ไม่มีคอลัมน์ 'สถานะ' — เพิ่มไม่ได้",
+        dup: d.message ?? "key นี้มีอยู่แล้ว — เปลี่ยน key ใหม่", no_status_col: "แท็บนี้ไม่มีคอลัมน์ 'สถานะ' — เพิ่มไม่ได้",
         key_invalid: d.message ?? "key ไม่ถูกต้อง", funnel: d.message ?? "funnel_stage ไม่ถูกต้อง", not_found: "โหลดแท็บไม่ได้",
       };
       flash(`⚠️ ${msg[d.status ?? ""] ?? d.error ?? "เพิ่มแถวไม่ได้"}`);
     } finally { setMgmtBusy(false); }
+  }
+
+  // ---- 🔴 D-74 ข้อ 4: ฟอร์มแก้เนื้อหาแถว — เขียนผ่านเส้นทางเดิมของ D-72b (diff → commit · lint/TRAIN_LOG ครบ) ----
+  async function openEditRow(key: string) {
+    if (!mgmtData) return;
+    setEditBusy(true);
+    try {
+      const row = mgmtData.rows.find((r) => r.key === key);
+      // ค่าสดต่อคอลัมน์ที่แก้ได้ (เส้นเดียวกับ editor บอลลูน) — ได้ expectedOld ไปกันชนกันด้วย
+      const cols = await Promise.all(mgmtData.editableCols.map(async (name) => {
+        try {
+          const r = await fetch("/train/api/write", { method: "POST", headers: HDRS, body: JSON.stringify({ mode: "diff", tab: mgmtTab, key, column: name }) });
+          const d = (await r.json()) as { old?: string };
+          return { name, value: r.ok ? (d.old ?? "") : "" };
+        } catch { return { name, value: "" }; }
+      }));
+      const base: Record<string, string> = {};
+      for (const c of cols) base[c.name] = c.value;
+      setEditRow({ key, cols, base });
+      void row;
+    } finally { setEditBusy(false); }
+  }
+  async function saveEditRow() {
+    if (!editRow) return;
+    const changed = editRow.cols.filter((c) => c.value !== editRow.base[c.name]);
+    if (changed.length === 0) { flash("ไม่มีช่องไหนเปลี่ยน — ยังไม่ต้องบันทึก"); return; }
+    setEditBusy(true);
+    try {
+      for (const c of changed) {
+        const r = await fetch("/train/api/write", {
+          method: "POST", headers: HDRS,
+          body: JSON.stringify({ mode: "commit", tab: mgmtTab, key: editRow.key, column: c.name, newValue: c.value, expectedOld: editRow.base[c.name] }),
+        });
+        const d = (await r.json()) as { status?: string; lint?: LintFinding[]; current?: string; error?: string };
+        if (r.status === 409) { flash(`🔶 ช่อง "${c.name}" ถูกแก้ในชีตระหว่างนั้น — ปิดแล้วเปิดใหม่`); setEditBusy(false); return; }
+        if (d.status === "lint") { flash(`🔴 ${d.lint?.find((f) => f.level === "block")?.message ?? "lint ไม่ผ่าน"}`); setEditBusy(false); return; }
+        if (!r.ok) { flash(`⚠️ ${d.error ?? "เขียนไม่ได้"}`); setEditBusy(false); return; }
+      }
+      flash(`✅ บันทึก ${changed.length} ช่องแล้ว + จด TRAIN_LOG`);
+      setEditRow(null);
+      loadRows(mgmtTab);
+    } finally { setEditBusy(false); }
   }
 
   function testDraftInSandbox(key: string) {
@@ -627,6 +675,15 @@ export default function TrainStudio() {
               <span style={{ flex: 1 }} />
               <button style={{ ...S.btn, padding: "8px 12px", fontSize: 13 }} onClick={openAddForm} disabled={mgmtBusy || !mgmtData}>＋ เพิ่มแถว</button>
             </div>
+            {/* 🔴 D-74: ค้นหาแถว — กรองได้ทั้ง id (K017) และข้อความในแถว */}
+            <div style={{ padding: "8px 12px", borderBottom: "1px solid #eee" }}>
+              <input
+                style={{ ...S.input, width: "100%" }}
+                placeholder="ค้นหา… (id เช่น K017 หรือข้อความในแถว)"
+                value={mgmtQuery}
+                onChange={(e) => setMgmtQuery(e.target.value)}
+              />
+            </div>
             <div style={{ flex: 1, overflowY: "auto", padding: 12, fontSize: 13 }}>
               {mgmtBusy && <div style={{ color: "#888" }}>กำลังโหลด…</div>}
 
@@ -640,7 +697,8 @@ export default function TrainStudio() {
                   {mgmtData.header.filter((h) => h && h !== mgmtData.statusCol).map((h) => (
                     <div key={h} style={{ marginBottom: 8 }}>
                       <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 2 }}>
-                        {h}{h === mgmtData.keyCol && <span style={{ color: "#06735c" }}> (key)</span>}<NotInPromptTag tab={mgmtTab} col={h} />
+                        {h}{h === mgmtData.keyCol && <span style={{ color: "#06735c" }}> (key)</span>}
+                        {h === mgmtData.idCol && <span style={{ color: "#06735c", fontWeight: 400 }}> (เติมให้อัตโนมัติ — แก้ทับได้)</span>}<NotInPromptTag tab={mgmtTab} col={h} />
                         {mgmtTab === "Steps" && h === "funnel_stage" && <span style={{ color: "#a10000", fontWeight: 400 }}> · ต้องเป็นสเตจที่ถูก (บอทใช้เป็นตาข่าย handoff)</span>}
                       </div>
                       <textarea style={{ ...S.ta, minHeight: mgmtData.editableCols.includes(h) ? 70 : 38 }} value={addForm[h] ?? ""} onChange={(e) => setAddForm({ ...addForm, [h]: e.target.value })} />
@@ -653,21 +711,62 @@ export default function TrainStudio() {
 
               {mgmtData && !mgmtData.statusCol && <div style={S.lintWarn}>⚠︎ แท็บนี้ไม่มีคอลัมน์สถานะ (status/สถานะ) — เพิ่มแถว/สลับสถานะไม่ได้ (กันแถวใหม่ขึ้นหน้าร้านทันที)</div>}
               {mgmtData && mgmtData.rows.length === 0 && !mgmtBusy && <div style={{ color: "#888" }}>ยังไม่มีแถว</div>}
-              {mgmtData?.rows.map((row) => (
-                <div key={row.key} style={{ display: "flex", gap: 8, alignItems: "center", padding: "8px 0", borderBottom: "1px solid #f0f0f0" }}>
-                  <span style={{ fontSize: 11, padding: "1px 7px", borderRadius: 10, background: row.active ? "#e7f6ec" : "#fbe6e6", color: row.active ? "#1e7e42" : "#b00", whiteSpace: "nowrap" }}>{row.active ? "🟢 live" : "🔴 draft"}</span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.key}</div>
-                    <div style={{ fontSize: 11, color: "#888", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.preview}</div>
+              {(() => {
+                if (!mgmtData) return null;
+                const q = mgmtQuery.trim().toLowerCase();
+                const shown = q
+                  ? mgmtData.rows.filter((r) => `${r.id} ${r.key} ${r.preview}`.toLowerCase().includes(q))
+                  : mgmtData.rows;
+                if (q && shown.length === 0) return <div style={{ color: "#888" }}>ไม่เจอแถวที่ตรงกับ &quot;{mgmtQuery}&quot;</div>;
+                return shown.map((row) => (
+                  <div key={row.key}>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "8px 0", borderBottom: editRow?.key === row.key ? "none" : "1px solid #f0f0f0" }}>
+                      <span style={{ fontSize: 11, padding: "1px 7px", borderRadius: 10, background: row.active ? "#e7f6ec" : "#fbe6e6", color: row.active ? "#1e7e42" : "#b00", whiteSpace: "nowrap" }}>{row.active ? "🟢 live" : "🔴 draft"}</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {/* 🔴 D-74: id นำหน้า — เจ้าของหาแถว (K017) เจอโดยไม่ต้องเดา */}
+                          {row.id && <span style={{ color: "#06735c", fontFamily: "monospace", marginRight: 6 }}>{row.id}</span>}
+                          {row.key}
+                        </div>
+                        <div style={{ fontSize: 11, color: "#888", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.preview}</div>
+                      </div>
+                      <button style={{ ...S.toolBtn, padding: "6px 8px", fontSize: 12, background: "#e7f6ec", borderColor: "#9dd6b3" }} onClick={() => (editRow?.key === row.key ? setEditRow(null) : openEditRow(row.key))} disabled={editBusy}>
+                        {editRow?.key === row.key ? "ปิด" : "✎ แก้ไข"}
+                      </button>
+                      {!row.active && <button style={{ ...S.toolBtn, padding: "6px 8px", fontSize: 12 }} onClick={() => testDraftInSandbox(row.key)} title="ทดสอบ draft นี้ในห้องซ้อม">▶ ทดสอบ</button>}
+                      {mgmtData.hasStatusCol && (
+                        <button style={{ ...S.toolBtn, padding: "6px 8px", fontSize: 12 }} onClick={() => toggleRowStatus(row.key, row.active ? "draft" : "live")}>
+                          {row.active ? "ปิด (draft)" : "เผยแพร่ (live)"}
+                        </button>
+                      )}
+                    </div>
+                    {editRow?.key === row.key && (
+                      <div style={{ border: "1px solid #cfe9d8", borderTop: "none", borderRadius: "0 0 10px 10px", padding: 12, marginBottom: 10, background: "#f7fdf9" }}>
+                        <div style={{ fontSize: 11, color: "#888", marginBottom: 8 }}>
+                          แก้แล้วกดบันทึก — เขียนกลับชีตจริงทีละช่อง (ผ่าน lint + จด TRAIN_LOG) · ช่องที่ไม่เปลี่ยนจะไม่ถูกเขียน
+                        </div>
+                        {editRow.cols.map((c) => (
+                          <div key={c.name} style={{ marginBottom: 8 }}>
+                            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 2 }}>{c.name}<NotInPromptTag tab={mgmtTab} col={c.name} /></div>
+                            <textarea
+                              style={{ ...S.ta, minHeight: 70 }}
+                              value={c.value}
+                              onChange={(e) => setEditRow({ ...editRow, cols: editRow.cols.map((x) => (x.name === c.name ? { ...x, value: e.target.value } : x)) })}
+                            />
+                          </div>
+                        ))}
+                        <div style={{ fontSize: 11, color: "#999", marginTop: 6, marginBottom: 4 }}>บริบท (อ่านอย่างเดียว — แก้ในชีตโดยตรง)</div>
+                        <div style={{ fontSize: 12, color: "#666", background: "#fff", border: "1px solid #eee", borderRadius: 8, padding: "6px 8px" }}>
+                          {mgmtData.idCol && row.id && <div><b>{mgmtData.idCol}:</b> {row.id}</div>}
+                          <div><b>{mgmtData.keyCol}:</b> {row.key}</div>
+                          <div><b>{mgmtData.statusCol ?? "สถานะ"}:</b> {row.status}</div>
+                        </div>
+                        <button style={{ ...S.btn, padding: "10px 14px", marginTop: 10 }} onClick={saveEditRow} disabled={editBusy}>{editBusy ? "กำลังบันทึก…" : "💾 บันทึกลงชีต"}</button>
+                      </div>
+                    )}
                   </div>
-                  {!row.active && <button style={{ ...S.toolBtn, padding: "6px 8px", fontSize: 12 }} onClick={() => testDraftInSandbox(row.key)} title="ทดสอบ draft นี้ในห้องซ้อม">▶ ทดสอบ</button>}
-                  {mgmtData.hasStatusCol && (
-                    <button style={{ ...S.toolBtn, padding: "6px 8px", fontSize: 12 }} onClick={() => toggleRowStatus(row.key, row.active ? "draft" : "live")}>
-                      {row.active ? "ปิด (draft)" : "เผยแพร่ (live)"}
-                    </button>
-                  )}
-                </div>
-              ))}
+                ));
+              })()}
             </div>
           </div>
         </div>

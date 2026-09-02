@@ -125,16 +125,27 @@ export async function writeCell(tab: string, key: string, column: string, newVal
 
 // ---- T2-ค: จัดการแถว (list / add-row / status live↔draft) — reuse guard/lint/TRAIN_LOG เดิม ----
 
-export interface TabRow { key: string; status: string; active: boolean; preview: string }
+export interface TabRow {
+  key: string;
+  /** 🔴 D-74: id ของแถวตามชีต (K017/S1/...) — "" ถ้าแท็บไม่มีคอลัมน์ id · ใช้โชว์+ค้นหา ไม่ใช่ตัวหาแถวตอนเขียน */
+  id: string;
+  status: string;
+  active: boolean;
+  preview: string;
+}
 export interface TabRowsResult {
   header: string[];
   keyCol: string | null;
+  /** 🔴 D-74: ชื่อคอลัมน์ id ในชีต (Knowledge = "id") · null = แท็บนี้ไม่มี (key คือ id อยู่แล้ว เช่น Steps/Vars) */
+  idCol: string | null;
   /** ชื่อคอลัมน์สถานะจริงในชีต ("status" | "สถานะ") · null = แท็บนี้ไม่มี → เพิ่ม/สลับสถานะไม่ได้ */
   statusCol: string | null;
   hasStatusCol: boolean;
   editableCols: string[];
   rows: TabRow[];
   suggestedKey: string | null;
+  /** 🔴 D-74: id ถัดไปที่เสนอให้ (K020 → K021) — ฟอร์มเพิ่มแถวเติมให้เอง · null = คิดเองไม่ได้ */
+  suggestedId: string | null;
 }
 
 /** อ่านทุกแถวของแท็บ (read-only · fresh · 🔴 D-72b: แถวดิบตามชีต) — ป้อน list view + ฟอร์มเพิ่มแถว (header-driven) */
@@ -145,9 +156,10 @@ export async function listTabRows(tab: string): Promise<TabRowsResult> {
   const keyCol = tabKeyColumn(tab);
   const editableCols = EDITABLE_COLS[tab] ?? [];
   const rows = raw ? ((raw as Record<string, string[][]>)[tab] ?? []) : [];
-  if (rows.length < 1 || !keyCol) return { header: [], keyCol, statusCol: null, hasStatusCol: false, editableCols, rows: [], suggestedKey: null };
+  if (rows.length < 1 || !keyCol) return { header: [], keyCol, idCol: null, statusCol: null, hasStatusCol: false, editableCols, rows: [], suggestedKey: null, suggestedId: null };
   const header = rows[0].map(cleanHeader);
   const keyIdx = header.indexOf(keyCol);
+  const idIdx = header.indexOf("id"); // D-74: Knowledge มีคอลัมน์ id (K001…) · Steps/Vars ไม่มี (key = id อยู่แล้ว)
   const statusIdx = statusColumnIndex(header); // status/สถานะ (single source · ตรงกับ loader prod)
   const prevIdxs = editableCols.map((c) => header.indexOf(cleanHeader(c))).filter((i) => i >= 0);
   const out: TabRow[] = [];
@@ -158,9 +170,40 @@ export async function listTabRows(tab: string): Promise<TabRowsResult> {
     // preview = ช่องแก้ได้ช่องแรกที่ไม่ว่าง (Knowledge ช่องแรกคือ ความกังวลจริง ซึ่งมักว่าง)
     const preview = prevIdxs.map((pi) => rows[i][pi] ?? "").find((v) => v.trim() !== "") ?? "";
     // 🔴 semantics v3 บนแถวดิบ: ว่าง = draft (isLiveStatus จาก normalize-bundle — invariant D-61.B)
-    out.push({ key, status: statusRaw || "(ว่าง=draft)", active: isLiveStatus(statusRaw), preview: preview.slice(0, 80) });
+    const id = idIdx >= 0 ? cleanCell(rows[i][idIdx] ?? "") : "";
+    out.push({ key, id, status: statusRaw || "(ว่าง=draft)", active: isLiveStatus(statusRaw), preview: preview.slice(0, 80) });
   }
-  return { header, keyCol, statusCol: statusIdx >= 0 ? header[statusIdx] : null, hasStatusCol: statusIdx >= 0, editableCols, rows: out, suggestedKey: suggestNextKey(tab, out.map((r) => r.key)) };
+  return {
+    header, keyCol,
+    idCol: idIdx >= 0 ? header[idIdx] : null,
+    statusCol: statusIdx >= 0 ? header[statusIdx] : null,
+    hasStatusCol: statusIdx >= 0, editableCols, rows: out,
+    suggestedKey: suggestNextKey(tab, out.map((r) => r.key)),
+    // 🔴 D-74: เสนอ id ถัดไปจากคอลัมน์ id (K020 → K021) — เจ้าของไม่ต้องไล่หาเลขสูงสุดเอง
+    suggestedId: idIdx >= 0 ? nextSequentialId(out.map((r) => r.id)) : null,
+  };
+}
+
+/**
+ * 🔴 D-74: id ถัดไปจากชุด id ที่มีอยู่ — prefix ตัวอักษร + เลขท้าย (K020 → K021 · คงจำนวนหลักเดิม)
+ * ใช้ prefix ที่พบบ่อยสุด (กันแถวแปลกปลอมลากเลขผิดกลุ่ม) · ไม่มีตัวไหนเข้า pattern = null (คนพิมพ์เอง)
+ */
+export function nextSequentialId(ids: string[]): string | null {
+  const byPrefix = new Map<string, { max: number; pad: number; count: number }>();
+  for (const raw of ids) {
+    const m = /^([A-Za-z_-]+)(\d+)$/.exec(raw.trim());
+    if (!m) continue;
+    const [, prefix, digits] = m;
+    const cur = byPrefix.get(prefix) ?? { max: 0, pad: digits.length, count: 0 };
+    byPrefix.set(prefix, {
+      max: Math.max(cur.max, parseInt(digits, 10)),
+      pad: Math.max(cur.pad, digits.length),
+      count: cur.count + 1,
+    });
+  }
+  if (byPrefix.size === 0) return null;
+  const [prefix, info] = [...byPrefix.entries()].sort((a, b) => b[1].count - a[1].count)[0];
+  return `${prefix}${String(info.max + 1).padStart(info.pad, "0")}`;
 }
 
 /** เสนอ key ถัดไป (เฉพาะแท็บที่ key เป็น id มีเลขต่อท้าย: step_id/objection_id) · FAQ/Vars = คนพิมพ์เอง → null */
@@ -185,7 +228,7 @@ function validateNewKey(tab: string, key: string): string | null {
 export type AppendResult =
   | { status: "ok" }
   | { status: "lint"; lint: ReturnType<typeof lintPattern> }
-  | { status: "dup" }
+  | { status: "dup"; message: string }
   | { status: "no_status_col" }
   | { status: "key_invalid"; message: string }
   | { status: "funnel"; message: string }
@@ -215,7 +258,21 @@ export async function appendRow(tab: string, cols: Record<string, string>, origi
   const key = cleanCell(cols[keyCol] ?? "");
   const keyErr = validateNewKey(tab, key);
   if (keyErr) return { status: "key_invalid", message: keyErr };
-  if (rows.some((r, i) => i > 0 && cleanCell(r[keyIdx] ?? "") === key)) return { status: "dup" };
+  // 🔴 D-74: ซ้ำแล้วต้องบอกว่าซ้ำกับแถวไหน (เดิมบอกแค่ "ซ้ำ" → เจ้าของต้องไปไล่หาเอง)
+  const idIdx = header.indexOf("id");
+  const rowLabel = (i: number) => {
+    const rid = idIdx >= 0 ? cleanCell(rows[i][idIdx] ?? "") : "";
+    const rkey = cleanCell(rows[i][keyIdx] ?? "");
+    return rid ? `${rid} · ${rkey}` : rkey;
+  };
+  const dupKeyAt = rows.findIndex((r, i) => i > 0 && cleanCell(r[keyIdx] ?? "") === key);
+  if (dupKeyAt > 0) return { status: "dup", message: `"${key}" ซ้ำกับแถวที่มีอยู่แล้ว: ${rowLabel(dupKeyAt)} (แถว ${dupKeyAt + 1} ในชีต)` };
+  // id ซ้ำ (Knowledge) — คนละคอลัมน์กับ key จึงต้องเช็คแยก
+  const newId = idIdx >= 0 ? cleanCell(cols["id"] ?? "") : "";
+  if (newId) {
+    const dupIdAt = rows.findIndex((r, i) => i > 0 && cleanCell(r[idIdx] ?? "") === newId);
+    if (dupIdAt > 0) return { status: "dup", message: `id "${newId}" ซ้ำกับแถวที่มีอยู่แล้ว: ${rowLabel(dupIdAt)} (แถว ${dupIdAt + 1} ในชีต)` };
+  }
 
   // funnel_stage (Step · ตาข่าย handoff H1) — ต้องเป็น enum ที่ถูก (กลไก optional D-68 · ชีตจริงไม่มีคอลัมน์นี้แล้ว)
   const funnelIdx = header.indexOf("funnel_stage");
