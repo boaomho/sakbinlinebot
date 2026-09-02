@@ -177,7 +177,7 @@ scripts/sheet-lint.mjs  D-45 · lint keyword ชีตจริง (คำโด
 - **KI-04** harness state.ts ห้าม import อะไรที่ import googleapis (circular → เทสค้าง)
 - ~~**KI-05**~~ ✅ **ปิดแล้ว D-64** — ลบ loop แจกเลขออกจาก cron ทั้งก้อน (เลขมาจาก Apps Script บนชีต) · ไม่มี race ให้กันอีก
 - ~~**KI-08**~~ ✅ **ปิดแล้ว D-72b** — ปุ่มเขียนใน `/train` เปิดแล้ว: ชั้น 1 (ชื่อแท็บ) หายที่ D-72a · ชั้น 2 (พิกัดจาก bundle) หายที่ D-72b — ทุกจุดเขียนหาพิกัดจาก `loadRawSheets()` (แถวดิบตามชีต) · ⚠️ รอพิสูจน์ด้วยมือบนชีตจริง 1 รอบ
-- 🔴 **KI-09 (D-68)** funnel 4 ค่าที่ v3 ผลิตไม่ได้: `handoff_after_intake`(D-34/35 intake ตายเงียบ) · `awaiting_payment`/`awaiting_address`(moot โดยดีไซน์ · v3 เหลือ S4 ประตูเดียว) · `post_sale` — adapter อ่านคอลัมน์ `funnel_stage` ได้แล้วถ้าชีตใส่มา (ชีตจริงยังไม่ใส่ = prod เหมือนเดิม) · เปิด intake กลับ = **D-70**
+- 🟡 **KI-09 (D-68 · แก้บางส่วน D-73)** `handoff_after_intake` **เปิดกลับแล้ว (D-73)** — ทำงานเมื่อเจ้าของเพิ่มแถว `funnel_stage=handoff_after_intake` ในชีต (H_CLAIM/H_BULK · handoff จาก intake แนบ "📋 ข้อมูลที่เก็บได้" ให้แอดมิน) · ที่ยังผลิตไม่ได้: `awaiting_payment`/`awaiting_address`(moot โดยดีไซน์ · v3 เหลือ S4 ประตูเดียว) · `post_sale`
 - prompt ยังใหญ่ (~9,707 tokens · เป้า <5000 ยังไม่ถึง) — ลด systemInstruction = รอบ 2a (DECISIONS.md)
 - **KI-06** 🟡 D-15 resolver ครอบแค่ 3 ตัวแปรเงิน ({สรุปรายการ}/{ยอดรวม}/{การชำระเงิน}) · ตัวแปรอื่นในชีต ({ชื่อสินค้า}/{เลข อย.}/{ชื่อบัญชี}…) ยังให้ AI เติมชั่วคราว → resolver เต็ม = commit ถัดไป (D-16, DECISIONS.md)
 - **KI-07** 🟡 D-15 2-pass = เทิร์นที่ items เปลี่ยนยิง Gemini 2 ครั้ง (คนละ request ไม่ชน timeout 8s) · เพิ่มค่า model ต่อเทิร์นสั่ง · G/H (จังหวัด/รหัส) เขียนว่างเสมอ (ตั้งใจ ดู DECISIONS D-15)

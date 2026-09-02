@@ -167,7 +167,13 @@ const NOTIFY_DOOR = "H1";
 async function handoff(
   userId: string,
   switches: FeatureSwitches,
-  opts: { reason: string; userMessage?: string; attachImage?: { url: string; note?: string } },
+  opts: {
+    reason: string;
+    userMessage?: string;
+    attachImage?: { url: string; note?: string };
+    /** D-73: บทสนทนาช่วง intake (บรรทัดละเทิร์น) — แอดมินเปิดเคสแล้วเห็นข้อมูลที่บอทเก็บมา ไม่ต้องไล่ถามใหม่ */
+    collected?: string[];
+  },
   transport: ChannelTransport,
 ): Promise<void> {
   // ปิดบอท (จุดเดียวในระบบที่เรียก setHumanMode(userId, true))
@@ -186,6 +192,8 @@ async function handoff(
       `🔔 ส่งต่อแอดมิน — ${opts.reason}`,
       `ลูกค้า: ${channelLabel(userId)} ${name}`,
       opts.userMessage ? `ข้อความล่าสุด: ${opts.userMessage}` : null,
+      // D-73: สรุปที่เก็บได้จาก intake — เทิร์นรูปโชว์เป็น "[ลูกค้าส่งรูปมา]" (placeholder จาก history) = รูปรออยู่ในแชท
+      opts.collected?.length ? `📋 ข้อมูลที่เก็บได้:\n${opts.collected.join("\n")}` : null,
       opts.attachImage?.note || null,
       "———",
       footer,
@@ -221,6 +229,9 @@ async function runHandoffFlow(
   if (switches.memory) {
     await addMessage(userId, "user", userMessage);
     await addMessage(userId, "assistant", finalReply);
+    // 🔴 D-73: keyword handoff (P1/P4) ชนะทุกอย่างรวมถึงกลาง intake → reset ตัวนับเหมือน handoff จาก intake (หลัก D-35)
+    //    ไม่ reset = "เปิดบอท" มือเร็วกว่าเกณฑ์ stale แล้ว counter นับต่อผิด (เคสใหม่โดน handoff เร็วเกิน)
+    await updateCustomerAfterTurn(userId, { intakeTurns: 0 });
   }
 
   const sent = await transport.reply(finalReply, config.quotaSaver);
@@ -1147,7 +1158,15 @@ export async function processMessage(
         : stageIsHandoff && !geminiOutput.handoff
           ? "อยู่ประตูส่งต่อ (funnel_stage=handoff · โค้ดการันตี)"
           : geminiOutput.handoffReason || "AI ประเมินว่าควรส่งต่อ";
-    await handoff(userId, switches, { reason, userMessage }, transport);
+    // 🔴 D-73: handoff จาก intake → แนบบทสนทนาช่วงเก็บข้อมูลให้แอดมิน (เปิดเคสแล้วเห็นครบ ไม่ไล่ถามใหม่)
+    //    history เพิ่ง save เทิร์นนี้ไปแล้วข้างบน → ดึง newIntakeTurns เทิร์นล่าสุด (user+bot) · ชนเพดานได้เท่าไหร่ส่งเท่านั้น
+    //    เทิร์นรูปอยู่ใน history เป็น "[ลูกค้าส่งรูปมา]" อยู่แล้ว — แอดมินรู้ว่ามีรูปรอในแชท
+    let collected: string[] | undefined;
+    if (stageIsIntake && switches.memory) {
+      const intakeHistory = await getRecentHistory(userId, Math.min(newIntakeTurns, intakeCap) * 2);
+      collected = intakeHistory.map((h) => `${h.role === "user" ? "ลูกค้า" : "บอท"}: ${h.text.slice(0, 300)}`);
+    }
+    await handoff(userId, switches, { reason, userMessage, collected }, transport);
   } else if (switches.memory && prevIntakeTurns > 0 && !stageIsIntake) {
     // 🔴 push-on-exit (D-34): เคยอยู่ intake แล้วย้ายประตูออก (ไม่ handoff) → แจ้งแอดมินรับรู้เรื่องค้าง
     //    ≠ handoff: ไม่ปิดบอท ไม่มี footer (บอทคุยขายต่อ) · reuse pushRawText · edge เดียว (intake_turns reset แล้ว = ไม่ push ซ้ำ)
