@@ -904,3 +904,70 @@ export async function recordAiUsage(row: AiUsageRow): Promise<void> {
     console.warn(JSON.stringify({ scope: "ai-usage", warning: "บันทึกไม่สำเร็จ (ไม่กระทบการตอบลูกค้า)", error: String(error).slice(0, 120) }));
   }
 }
+
+// ---- D-70: อ่าน ai_usage สำหรับหน้าต้นทุน (read-only · จำนวน query คงที่ · ไม่ N+1) ----
+
+export interface AiUsageDailyRow {
+  /** วันแบบเวลาไทย "YYYY-MM-DD" — 🔴 ai_usage.at เก็บ UTC → shift +7 ก่อนตัดวัน (ไม่งั้นยอด "วันนี้" เพี้ยน 7 ชม.) */
+  day: string;
+  callKind: string;
+  model: string;
+  calls: number;
+  promptTokens: number;
+  candidatesTokens: number;
+  thoughtsTokens: number;
+  cachedTokens: number;
+}
+
+/**
+ * รวม ai_usage ต่อ (วันไทย × call_kind × model) ตั้งแต่ start — **1 query**
+ * แยกตาม model เพราะราคาต่างกัน (ผู้เรียกคำนวณเงินจากตารางราคาแหล่งเดียวใน gemini.ts)
+ */
+export async function aiUsageDaily(start: Date): Promise<AiUsageDailyRow[]> {
+  await ensureSchema();
+  const sql = getSql();
+  const rows = await sql`
+    SELECT to_char(at + interval '7 hours', 'YYYY-MM-DD') AS day,
+           call_kind, model,
+           count(*)                     AS calls,
+           sum(prompt_tokens)           AS prompt_tokens,
+           sum(candidates_tokens)       AS candidates_tokens,
+           sum(thoughts_tokens)         AS thoughts_tokens,
+           sum(cached_tokens)           AS cached_tokens
+    FROM ai_usage
+    WHERE at >= ${start}
+    GROUP BY 1, 2, 3
+    ORDER BY 1
+  `;
+  return (rows as Array<Record<string, unknown>>).map((r) => ({
+    day: r.day as string,
+    callKind: (r.call_kind as string | null) ?? "",
+    model: (r.model as string | null) ?? "",
+    calls: Number(r.calls ?? 0),
+    promptTokens: Number(r.prompt_tokens ?? 0),
+    candidatesTokens: Number(r.candidates_tokens ?? 0),
+    thoughtsTokens: Number(r.thoughts_tokens ?? 0),
+    cachedTokens: Number(r.cached_tokens ?? 0),
+  }));
+}
+
+/**
+ * ลูกค้าที่บอทคุยต่อวันไทย (distinct user_id) — **1 query** แยกจาก aiUsageDaily
+ * เพราะ distinct ข้าม model/call_kind รวมกันไม่ได้ (บวกกันแล้วนับซ้ำ)
+ * 🔴 ไม่นับ channel 'train' (ห้องซ้อม/ผู้ช่วยเทรน) และ user_id ว่าง
+ */
+export async function aiUsageDailyCustomers(start: Date): Promise<{ day: string; customers: number }[]> {
+  await ensureSchema();
+  const sql = getSql();
+  const rows = await sql`
+    SELECT to_char(at + interval '7 hours', 'YYYY-MM-DD') AS day,
+           count(DISTINCT user_id) AS customers
+    FROM ai_usage
+    WHERE at >= ${start}
+      AND user_id IS NOT NULL
+      AND (channel IS NULL OR channel <> 'train')
+    GROUP BY 1
+    ORDER BY 1
+  `;
+  return (rows as Array<Record<string, unknown>>).map((r) => ({ day: r.day as string, customers: Number(r.customers ?? 0) }));
+}

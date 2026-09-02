@@ -143,6 +143,15 @@ export interface AiCallUsage {
   costThb: number | null;
 }
 
+/**
+ * 🔴 D-70: ค่าใช้จ่ายเป็นบาท (ประมาณ) — **แหล่งเดียวกับ log** (หน้าต้นทุนคำนวณซ้ำจาก token ใน ai_usage)
+ * null = **ไม่รู้ราคาโมเดลนี้** — ผู้เรียกต้องนับแยก ห้ามตีเป็น 0 ห้ามถัวเฉลี่ย
+ */
+export function estimateCostThb(model: string, promptTokens: number, outputTokens: number, cachedTokens: number): number | null {
+  const usd = estimateCost(model, promptTokens, outputTokens, cachedTokens);
+  return usd === null ? null : usd * USD_TO_THB;
+}
+
 /** ประเมินค่าใช้จ่ายต่อการเรียก 1 ครั้ง — null = ไม่รู้ราคาโมเดลนี้ (ไม่เดา) */
 function estimateCost(model: string, promptTokens: number, outputTokens: number, cachedTokens: number): number | null {
   const price = PRICE_PER_1M_USD[(model ?? "").trim().toLowerCase()];

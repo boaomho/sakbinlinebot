@@ -33,6 +33,22 @@ interface Ord {
 }
 interface OrdData { orders: Ord[]; counts: Record<OrderStatus, number>; total: number }
 /** D-61.C: การ์ดสุขภาพชีต v3 */
+/** D-70: ป้ายภาษาคนของ call_kind (ตรงกับ AiCallKind ใน lib/db.ts) */
+const KIND_LABEL: Record<string, string> = {
+  main: "เทิร์นหลัก",
+  regen: "เขียนใหม่",
+  extraction: "สกัดข้อมูล",
+  assistant: "ผู้ช่วยเทรน",
+};
+interface KindBreakdown { callKind: string; calls: number; costThb: number; unknownCalls: number }
+interface DayCost { day: string; costThb: number; unknownCalls: number; customers: number }
+/** D-70: สรุปต้นทุนบอทจาก ai_usage (เงินทุกตัว = ประมาณ) */
+interface CostData {
+  day: string; customers: number; mainCalls: number; regenCalls: number; regenPct: number | null;
+  promptTokens: number; outputTokens: number; costThb: number; unknownCalls: number;
+  byKind: KindBreakdown[]; costPerCustomer: number | null; costPerOrder: number | null; orders: number;
+  series: DayCost[]; seriesDays: number; note: string; error?: string;
+}
 interface SchemaTab { tab: string; ok: boolean; missing: string[]; rows: number; live: number; draft: number }
 interface SchemaData { v3Configured: boolean; tabs: SchemaTab[]; placeholders: string[]; ready?: boolean; error?: string }
 
@@ -83,7 +99,11 @@ export default function DashboardView() {
   const [statusF, setStatusF] = useState<CustomerStatus | "all">("all");
   const [channelF, setChannelF] = useState<Channel | "all">("all");
   const [detail, setDetail] = useState<Detail | null>(null);
-  const [tab, setTab] = useState<"customers" | "orders">("customers");
+  const [tab, setTab] = useState<"customers" | "orders" | "cost">("customers");
+  // D-70: หน้าต้นทุนบอท (read-only)
+  const [costData, setCostData] = useState<CostData | null>(null);
+  const [costDays, setCostDays] = useState<7 | 30>(7);
+  const [costDay, setCostDay] = useState<string>("");
   const [schema, setSchema] = useState<SchemaData | null>(null); // D-61.C
   const [ordData, setOrdData] = useState<OrdData | null>(null);
   const [ordStatusF, setOrdStatusF] = useState<OrderStatus | "all">("all");
@@ -121,6 +141,18 @@ export default function DashboardView() {
   }, [includeTrain]);
 
   useEffect(() => { if (tab === "orders") loadOrders(); }, [tab, loadOrders]);
+
+  // D-70: โหลดหน้าต้นทุน (เปลี่ยนช่วงกราฟ/วันที่เลือก = โหลดใหม่)
+  const loadCost = useCallback(async () => {
+    setBusy(true);
+    try {
+      const r = await fetch("/train/api/dashboard/cost", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ seriesDays: costDays, day: costDay || undefined }) });
+      if (r.status === 401 || r.status === 404) { setAuthed(false); return; }
+      if (r.ok) setCostData((await r.json()) as CostData);
+    } finally { setBusy(false); }
+  }, [costDays, costDay]);
+
+  useEffect(() => { if (tab === "cost") loadCost(); }, [tab, loadCost]);
 
   async function login() {
     const r = await fetch("/train/api/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password }) });
@@ -200,9 +232,10 @@ export default function DashboardView() {
         <div style={S.controls}>
           <button style={{ ...S.btn, ...(tab === "customers" ? S.btnOn : {}) }} onClick={() => setTab("customers")}>👥 ลูกค้า</button>
           <button style={{ ...S.btn, ...(tab === "orders" ? S.btnOn : {}) }} onClick={() => setTab("orders")}>🧾 ออเดอร์</button>
+          <button style={{ ...S.btn, ...(tab === "cost" ? S.btnOn : {}) }} onClick={() => setTab("cost")}>💸 ต้นทุนบอท</button>
           <span style={{ flex: 1 }} />
           {busy && <span style={{ fontSize: 12, color: C.sub }}>กำลังโหลด…</span>}
-          <button style={S.btn} onClick={() => (tab === "orders" ? loadOrders() : load())}>↻ รีเฟรช</button>
+          <button style={S.btn} onClick={() => (tab === "orders" ? loadOrders() : tab === "cost" ? loadCost() : load())}>↻ รีเฟรช</button>
         </div>
 
         {tab === "customers" && (
@@ -319,6 +352,107 @@ export default function DashboardView() {
               </div>
             );
           })()}
+        </>
+        )}
+
+        {tab === "cost" && (
+        <>
+          {/* 🔴 D-70: เงินทุกตัวเป็น "ประมาณ" — คำนวณซ้ำจาก token ด้วยตารางราคาในโค้ด (D-69) */}
+          <div style={{ ...S.card, marginBottom: 12, background: "#fffbe6", borderColor: "#e0b400" }}>
+            <div style={{ fontSize: 12 }}>
+              💸 ตัวเลขเงินทั้งหน้านี้เป็น <b>ประมาณ</b> — ตัวเลขจริงดู cost log ของ Google ·
+              คิดจาก token ที่บันทึกไว้ × ตารางราคาในโค้ด (อัตราแลก 35 บาท/USD)
+            </div>
+          </div>
+
+          <div style={S.controls}>
+            <span style={{ fontSize: 13, color: C.sub }}>วันที่</span>
+            <input
+              type="date"
+              value={costDay || (costData?.day ?? "")}
+              onChange={(e) => setCostDay(e.target.value)}
+              style={{ ...S.btn, padding: "6px 10px" }}
+            />
+            {costDay && <button style={S.btn} onClick={() => setCostDay("")}>วันนี้</button>}
+            <span style={{ flex: 1 }} />
+            {([7, 30] as const).map((d) => (
+              <button key={d} style={{ ...S.btn, ...(costDays === d ? S.btnOn : {}) }} onClick={() => setCostDays(d)}>กราฟ {d} วัน</button>
+            ))}
+          </div>
+
+          <div style={S.cards}>
+            <div style={S.card}>
+              <div style={S.cardLabel}>👥 ลูกค้าที่บอทคุย</div>
+              <div style={S.cardBig}>{costData ? costData.customers : "–"}</div>
+              <div style={S.cardSub}>ไม่นับห้องซ้อม/ผู้ช่วยเทรน</div>
+            </div>
+            <div style={S.card}>
+              <div style={S.cardLabel}>💬 เทิร์นทั้งหมด</div>
+              <div style={S.cardBig}>{costData ? costData.mainCalls : "–"}</div>
+              <div style={S.cardSub}>
+                {costData ? `regen ${costData.regenCalls} ครั้ง${costData.regenPct === null ? "" : ` (${costData.regenPct.toFixed(0)}% ของเทิร์น)`}` : ""}
+              </div>
+            </div>
+            <div style={S.card}>
+              <div style={S.cardLabel}>💸 ค่าใช้จ่าย (ประมาณ)</div>
+              <div style={S.cardBig}>{costData ? `${costData.costThb.toFixed(2)} ฿` : "–"}</div>
+              <div style={S.cardSub}>
+                {costData ? `token เข้า ${costData.promptTokens.toLocaleString()} · ออก ${costData.outputTokens.toLocaleString()}` : ""}
+              </div>
+            </div>
+            <div style={S.card}>
+              <div style={S.cardLabel}>🧮 ต่อลูกค้า 1 คน</div>
+              <div style={S.cardBig}>{costData?.costPerCustomer != null ? `${costData.costPerCustomer.toFixed(2)} ฿` : "–"}</div>
+              <div style={S.cardSub}>ประมาณ</div>
+            </div>
+            <div style={{ ...S.card, ...(costData && costData.orders > 0 ? { borderColor: "#9dd6b3", background: "#f2fbf5" } : {}) }}>
+              <div style={S.cardLabel}>📦 ต่อ 1 ออเดอร์</div>
+              <div style={S.cardBig}>{costData?.costPerOrder != null ? `${costData.costPerOrder.toFixed(2)} ฿` : "–"}</div>
+              <div style={S.cardSub}>{costData ? `ออเดอร์วันนั้น ${costData.orders} รายการ` : ""}</div>
+            </div>
+          </div>
+
+          {/* 🔴 แถวที่ไม่รู้ราคาโมเดล — นับแยก ห้ามนับเป็น 0 ห้ามถัวเฉลี่ย */}
+          {costData && costData.unknownCalls > 0 && (
+            <div style={{ ...S.card, marginBottom: 12, borderColor: C.prod, background: C.prodBg }}>
+              <div style={{ fontSize: 13 }}>
+                ⚠️ <b>ไม่ทราบราคา {costData.unknownCalls} แถว</b> — โมเดลที่เรียกไม่มีในตารางราคา (ไม่ถูกรวมในยอดด้านบน · ไม่ได้นับเป็น 0)
+              </div>
+            </div>
+          )}
+
+          <div style={{ ...S.card, marginBottom: 12 }}>
+            <div style={{ fontWeight: 700, marginBottom: 8, fontSize: 14 }}>แยกตามชนิดการเรียก (วัน {costData?.day ?? "-"})</div>
+            {(costData?.byKind ?? []).map((k) => (
+              <div key={k.callKind} style={{ display: "flex", gap: 8, alignItems: "center", padding: "6px 0", borderBottom: `1px solid ${C.border}`, fontSize: 13 }}>
+                <span style={{ ...S.chip, minWidth: 92, textAlign: "center" }}>{KIND_LABEL[k.callKind] ?? k.callKind}</span>
+                <span style={{ flex: 1, color: C.sub }}>{k.calls.toLocaleString()} ครั้ง{k.unknownCalls > 0 ? ` · ไม่ทราบราคา ${k.unknownCalls}` : ""}</span>
+                <b>{k.costThb.toFixed(2)} ฿</b>
+              </div>
+            ))}
+            {costData && costData.byKind.length === 0 && <div style={{ color: C.sub, fontSize: 13 }}>ยังไม่มีการเรียกในวันนี้</div>}
+          </div>
+
+          <div style={S.card}>
+            <div style={{ fontWeight: 700, marginBottom: 10, fontSize: 14 }}>ค่าใช้จ่ายต่อวัน ({costData?.seriesDays ?? costDays} วัน · ประมาณ)</div>
+            {(() => {
+              const series = costData?.series ?? [];
+              const max = Math.max(0.0001, ...series.map((d) => d.costThb));
+              return (
+                <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 130 }}>
+                  {series.map((d) => (
+                    <div key={d.day} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}
+                      title={`${d.day} · ${d.costThb.toFixed(2)} ฿ · ลูกค้า ${d.customers}${d.unknownCalls > 0 ? ` · ไม่ทราบราคา ${d.unknownCalls}` : ""}`}>
+                      <div style={{ fontSize: 9, color: C.sub }}>{d.costThb > 0 ? d.costThb.toFixed(0) : ""}</div>
+                      <div style={{ width: "100%", height: `${Math.round((d.costThb / max) * 90)}px`, minHeight: d.costThb > 0 ? 2 : 0, background: d.day === costData?.day ? "#06735c" : "#9dd6b3", borderRadius: "3px 3px 0 0" }} />
+                      <div style={{ fontSize: 9, color: C.sub, whiteSpace: "nowrap" }}>{d.day.slice(5)}</div>
+                    </div>
+                  ))}
+                  {series.length === 0 && <div style={{ color: C.sub, fontSize: 13 }}>ยังไม่มีข้อมูล</div>}
+                </div>
+              );
+            })()}
+          </div>
         </>
         )}
       </div>
