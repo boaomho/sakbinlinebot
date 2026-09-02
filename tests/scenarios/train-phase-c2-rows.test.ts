@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { sheetsCalls } from "../harness/state";
-import { seedBotLib, v3StepRows, v3KnowRows, V3_STEP_HEADER, TAB } from "../harness/botlib-fixture";
+import { seedBotLib, v3StepRows, v3KnowRows, V3_STEP_HEADER_WITH_FUNNEL, TAB } from "../harness/botlib-fixture";
 import { appendRow, setRowStatus, listTabRows, suggestNextKey } from "@/lib/train/write";
 import { columnLetter } from "@/lib/sheets/columns";
 import { lintPattern } from "@/lib/train/lint";
@@ -131,7 +131,7 @@ describe("T2-ค · appendRow (บังคับ draft + guards)", () => {
     expect(good.status).toBe("ok");
     const added = sheetsCalls.appends.find((a) => a.range.startsWith("Steps"));
     expect(added, "append ลงแท็บ Steps จริง").toBeTruthy();
-    expect(added!.values[0][V3_STEP_HEADER.indexOf("สถานะ")], "บังคับ draft").toBe("draft");
+    expect(added!.values[0][V3_STEP_HEADER_WITH_FUNNEL.indexOf("สถานะ")], "บังคับ draft (fixture 10 คอลัมน์เพราะเทสนี้ใช้ funnel)").toBe("draft");
   });
 });
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { sendText } from "../harness/replay";
 import { scriptGemini, turn, adminPushes, lineCalls, harnessOverrides, geminiState } from "../harness/state";
 import { sendImage } from "../harness/replay";
@@ -14,17 +14,17 @@ const U = "Uharnesstestcustomer0000000000014";
 const FOOTER = "บอทปิดการทำงานกับลูกค้ารายนี้แล้ว";
 
 /**
- * 🔴 D-68: seed "ชีตดิบ v3" ผ่านเส้นทางเดียวกับ prod (loader → adapter)
- * funnel_stage = คอลัมน์ optional ที่ D-68 เปิดให้ adapter อ่าน — จำเป็นสำหรับ handoff_after_intake
- * ซึ่ง FIXED_FUNNEL (S1/S2/S2Q/S3/S4) ผลิตไม่ได้ (ดู DECISIONS D-68 ข้อ 1)
+ * 🔴 D-73b: seed "ชีตดิบ" 9 คอลัมน์ตามชีตจริง — ไม่มีคอลัมน์ funnel_stage แล้ว
+ * ประตู intake ระบุด้วยป้ายคอลัมน์ handoff = "เก็บข้อมูลก่อน" (ตรงกับแถว H_CLAIM/H_BULK ที่เจ้าของเพิ่มจริง)
+ * funnel ของประตูขายมาจาก FIXED_FUNNEL (S1=lead · S2=qualified · S4=won) — ใช้ id จริงของชีต
  */
 function stepSheet(): string[][] {
   return v3StepRows([
-    { step_id: "S1", funnel: "lead", essence: "ทักทาย" },
-    { step_id: "S2_DIRECT", funnel: "qualified", entry: 'บอกจำนวน เช่น "สั่ง"', essence: "สรุปยอด" },
-    { step_id: "S4B", funnel: "won", essence: "ปิดจบ" },
-    { step_id: "H_CLAIM", funnel: "handoff_after_intake", name: "เคลม-คุยก่อน", entry: 'ของเสีย เช่น "ของเสีย"', essence: "ขอรูปสินค้า+กล่อง และสิ่งที่เกิดขึ้น 🔴 ห้ามรับปากผลลัพธ์ทุกชนิด (คืนเงิน/ส่งของใหม่/เปลี่ยนของ)" },
-    { step_id: "H1", funnel: "handoff", name: "เคลมด่วน", entry: "แพ้อาหาร" },
+    { step_id: "S1", essence: "ทักทาย" },
+    { step_id: "S2", entry: 'บอกจำนวน เช่น "สั่ง"', essence: "สรุปยอด" },
+    { step_id: "S4", essence: "ปิดจบ" },
+    { step_id: "H_CLAIM", intake: true, name: "เคลม-คุยก่อน", entry: 'ของเสีย เช่น "ของเสีย"', essence: "ขอรูปสินค้า+กล่อง และสิ่งที่เกิดขึ้น 🔴 ห้ามรับปากผลลัพธ์ทุกชนิด (คืนเงิน/ส่งของใหม่/เปลี่ยนของ)" },
+    { step_id: "H9", handoff: true, name: "เคลมด่วน", entry: "แพ้อาหาร" },
   ]);
 }
 function cfg(extra: [string, string][] = []): Map<string, string> {
@@ -83,7 +83,7 @@ describe("handoff_after_intake — คุยก่อนค่อยส่งค
   it("🔴 pivot: เคลมแล้ว 'ขอสั่งเพิ่ม' → ย้ายประตูขาย · push-on-exit (ไม่ footer) · บอทขายต่อ · intake_turns=0", async () => {
     scriptGemini([
       turn({ reply: "ขอรายละเอียดค่ะ", stage: "H_CLAIM", handoff: false }),
-      turn({ reply: "ได้เลยค่ะ รับ 3 ถ้วยนะคะ", stage: "S2_DIRECT", handoff: false, orderData: { items: [{ qty: 3 }] } }),
+      turn({ reply: "ได้เลยค่ะ รับ 3 ถ้วยนะคะ", stage: "S2", handoff: false, orderData: { items: [{ qty: 3 }] } }),
     ]);
     await sendText(U, "สินค้ามีปัญหา");
     await sendText(U, "เอาเป็นว่าขอสั่งเพิ่ม 3 ถ้วย");
@@ -100,7 +100,7 @@ describe("handoff_after_intake — คุยก่อนค่อยส่งค
   it("🔴 pivot + ปิดออเดอร์เทิร์นเดียว → 📦 กับ push-on-exit ไม่ตีกัน (คนละข้อความ)", async () => {
     scriptGemini([
       turn({ reply: "ขอรายละเอียดค่ะ", stage: "H_CLAIM", handoff: false }),
-      turn({ reply: "รับ 1 ถ้วย เก็บปลายทางค่ะ", stage: "S4B", handoff: false, paymentMethod: "COD", orderData: { items: [{ qty: 1 }], ...FULL_ADDRESS } }),
+      turn({ reply: "รับ 1 ถ้วย เก็บปลายทางค่ะ", stage: "S4", handoff: false, paymentMethod: "COD", orderData: { items: [{ qty: 1 }], ...FULL_ADDRESS } }),
     ]);
     await sendText(U, "สินค้ามีปัญหา");
     await sendText(U, "ขอสั่ง 1 ถ้วย เก็บปลายทาง สมชาย ใจดี 123/45 ชลบุรี 20000 0811122334");
@@ -129,8 +129,8 @@ describe("handoff_after_intake — คุยก่อนค่อยส่งค
     expect((await readCustomer(U))?.intake_turns, "เงียบนาน → เริ่มนับใหม่ (1 ไม่ใช่ 2)").toBe(1);
   });
 
-  it("funnel_stage=handoff (H1) → ยัง handoff เทิร์นแรก (D-33 ไม่ regression)", async () => {
-    scriptGemini([turn({ reply: "...", stage: "H1", handoff: false })]);
+  it("ป้าย handoff=\"ใช่\" (H9) → ยัง handoff เทิร์นแรก (D-33 · semantics เดิมเป๊ะ)", async () => {
+    scriptGemini([turn({ reply: "...", stage: "H9", handoff: false })]);
     await sendText(U, "กินแล้วแพ้กุ้งไหมคะ");
     expect(JSON.stringify(adminPushes()), "handoff ทันที ไม่ต้องรอ intake").toContain(FOOTER);
   });
@@ -183,7 +183,7 @@ describe("D-73 · สรุปข้อมูลที่เก็บได้ �
   });
 
   it("handoff ปกติ (ไม่ใช่ intake) → ไม่มีหัว 📋 (ข้อความแอดมินเดิมไม่เปลี่ยน)", async () => {
-    scriptGemini([turn({ reply: "...", stage: "H1", handoff: false })]);
+    scriptGemini([turn({ reply: "...", stage: "H9", handoff: false })]);
     await sendText(U, "กินแล้วแพ้กุ้งไหมคะ");
     const handoffMsg = adminTexts().find((t) => t.includes(FOOTER));
     expect(handoffMsg).toBeTruthy();
@@ -207,8 +207,8 @@ describe("D-73 · rollback: แถว intake เป็น draft = พฤติ�
     // toggle แถวเป็น draft = ปุ่ม rollback ของเจ้าของ (ไม่ต้อง deploy)
     seedBotLib({
       stepRows: v3StepRows([
-        { step_id: "S1", funnel: "lead", essence: "ทักทาย" },
-        { step_id: "H_CLAIM", funnel: "handoff_after_intake", name: "เคลม-คุยก่อน", entry: 'ของเสีย เช่น "ของเสีย"', essence: "ทวนปัญหา", status: "draft" },
+        { step_id: "S1", essence: "ทักทาย" },
+        { step_id: "H_CLAIM", intake: true, name: "เคลม-คุยก่อน", entry: 'ของเสีย เช่น "ของเสีย"', essence: "ทวนปัญหา", status: "draft" },
       ]),
     });
     scriptGemini([turn({ reply: "ขอส่งต่อแอดมินนะคะ", stage: "H_CLAIM", handoff: true, handoffReason: "เคลม" })]);
@@ -230,5 +230,53 @@ describe("D-73 · คำสั่ง 'ห้ามรับปาก' (คอล
     expect(geminiState.lastInput?.stepText ?? "", "เทิร์น 1: เนื้อเต็มจาก entry-match").toContain("ห้ามรับปากผลลัพธ์");
     await sendText(U, "เมื่อวานเพิ่งได้ของค่ะ"); // ไม่มีคำ entry — ต้องอยู่ด้วย stayStage (D-34)
     expect(geminiState.lastInput?.stepText ?? "", "🔴 เทิร์น 2: stayStage คงประตูไว้เต็ม — คำสั่งยังอยู่").toContain("ห้ามรับปากผลลัพธ์");
+  });
+});
+
+// ═══════════ D-73b · ป้ายคอลัมน์ handoff 3 ค่า (แทน funnel_stage) ═══════════
+
+describe("D-73b · ค่าป้าย handoff พิมพ์ผิด → error ดัง + ตีเป็น handoff (ทิศปลอดภัย · ห้ามเงียบ)", () => {
+  it("🔴 H=\"เก็บข้อมุลก่อน\" (พิมพ์ผิด) → console.error + ประตูกลายเป็น handoff (ไม่ใช่ประตูขายเงียบ ๆ)", async () => {
+    const errors: string[] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => { errors.push(String(a[0])); });
+    seedBotLib({
+      stepRows: v3StepRows([
+        { step_id: "S1", essence: "ทักทาย" },
+        { step_id: "HX", name: "เคลม", entry: 'ของเสีย เช่น "ของเสีย"', handoffValue: "เก็บข้อมุลก่อน" },
+      ]),
+    });
+    scriptGemini([turn({ reply: "...", stage: "HX", handoff: false })]);
+    await sendText(U, "ของเสียค่ะ");
+    spy.mockRestore();
+    expect(errors.some((e) => e.includes("handoff") && e.includes("เก็บข้อมุลก่อน")), "🔴 error ดัง ระบุค่าที่ผิด").toBe(true);
+    // ทิศปลอดภัย: ตีเป็น handoff (ส่งคนเกิน) — ห้าม fallback เงียบเป็นประตูขาย (อันตรายกลับด้าน)
+    expect(JSON.stringify(adminPushes())).toContain(FOOTER);
+    expect((await readCustomer(U))?.human_mode).toBe(true);
+  });
+});
+
+describe("D-73b · ป้าย 3 ค่า — semantics ต่อค่า", () => {
+  it('H="ใช่" → handoff ทันที · H="เก็บข้อมูลก่อน" → intake · ว่าง → FIXED_FUNNEL (unit บน normalizeBundle)', async () => {
+    const { normalizeBundle } = await import("@/lib/sheets/normalize-bundle");
+    const { funnelStageOf } = await import("@/lib/agent/inject");
+    const steps = normalizeBundle({
+      Steps: v3StepRows([
+        { step_id: "S1", essence: "x" },
+        { step_id: "HY", handoff: true },
+        { step_id: "HZ", intake: true },
+      ]),
+    }).Steps;
+    expect(funnelStageOf(steps, "S1"), "ว่าง = FIXED_FUNNEL เดิม").toBe("lead");
+    expect(funnelStageOf(steps, "HY"), 'H="ใช่" = handoff (semantics เดิมเป๊ะ)').toBe("handoff");
+    expect(funnelStageOf(steps, "HZ"), 'H="เก็บข้อมูลก่อน" = intake (D-73b)').toBe("handoff_after_intake");
+  });
+
+  it("validateBundle: ค่าป้ายพิมพ์ผิด → การ์ด schema ⚠️ (ok=false + ข้อความบอกค่าที่ถูก)", async () => {
+    const { validateBundle } = await import("@/lib/sheets/normalize-bundle");
+    const stats = validateBundle({ Steps: v3StepRows([{ step_id: "HX", handoffValue: "ส่งด่วน" }]) });
+    const st = stats.find((t) => t.tab === "Steps")!;
+    expect(st.ok, "พิมพ์ผิด = การ์ดต้องแดง").toBe(false);
+    expect(st.missing.join(" ")).toContain("ส่งด่วน");
+    expect(st.missing.join(" ")).toContain("เก็บข้อมูลก่อน");
   });
 });

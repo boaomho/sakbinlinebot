@@ -33,13 +33,32 @@ const FIXED_FUNNEL: Record<string, string> = {
   S4: "won",
 };
 const DEFAULT_FUNNEL = "qualified";
+/** funnel ของประตู intake (D-73) — ป้าย "เก็บข้อมูลก่อน" แปลงมาเป็นค่านี้ (ชื่อเดียวกับที่ handler/inject อ่าน) */
+const HANDOFF_AFTER_INTAKE_FUNNEL = "handoff_after_intake";
 
-/** ค่า flag handoff ที่ยอมรับ (คอลัมน์ handoff ใน Steps) */
+/** ค่า flag "ส่งทันที" ที่ยอมรับ (คอลัมน์ handoff ใน Steps) — semantics เดิมของ "ใช่" ห้ามขยับ */
 const HANDOFF_FLAG = new Set(["ใช่", "true", "on", "1", "yes", "✓", "เปิด", "handoff"]);
 
-/** คอลัมน์ `handoff` ของแถวดิบ Steps ติดธงไหม — D-72b: export ให้ Studio (h1FlagsForRow) อ่านกติกาเดียวกับ normalize */
+/** 🔴 D-73b: ค่าป้าย intake ในคอลัมน์ handoff — "เก็บข้อมูลก่อน" = เข้าเส้น handoff_after_intake (D-73) */
+export const INTAKE_MARK = "เก็บข้อมูลก่อน";
+
+/**
+ * 🔴 D-73b: คอลัมน์ `handoff` = ป้าย 3 ค่า (เจ้าของเคาะดีไซน์สุดท้าย — ไม่เพิ่มคอลัมน์ funnel_stage ในชีต)
+ *   ว่าง = ประตูปกติ · "ใช่" = ส่งทันที (เดิมเป๊ะ) · "เก็บข้อมูลก่อน" = intake (D-73)
+ *   ค่าอื่น = "invalid" — **ห้ามเงียบ**: normalizeSteps ตี error ดัง + validateBundle โชว์บนการ์ด schema
+ */
+export type HandoffMark = "none" | "handoff" | "intake" | "invalid";
+export function classifyHandoffMark(raw: string | undefined): HandoffMark {
+  const v = cleanCell(raw);
+  if (!v) return "none";
+  if (HANDOFF_FLAG.has(v.toLowerCase())) return "handoff";
+  if (v === INTAKE_MARK) return "intake";
+  return "invalid";
+}
+
+/** คอลัมน์ `handoff` ของแถวดิบ Steps ติดธง "ส่งทันที" ไหม — D-72b: Studio (h1FlagsForRow) อ่านกติกาเดียวกับ normalize */
 export function isHandoffFlag(raw: string | undefined): boolean {
-  return HANDOFF_FLAG.has(cleanCell(raw).toLowerCase());
+  return classifyHandoffMark(raw) === "handoff";
 }
 
 /** normalize สถานะ v3 → canonical: "live" เท่านั้นที่ live · อื่นทั้งหมดรวม "ว่าง" = draft (B1) */
@@ -91,13 +110,22 @@ function normalizeSteps(rows: string[][]): string[][] {
     const r = rows[i];
     const stepId = cleanCell(g(r, iId));
     if (!stepId) continue; // แถวว่าง/หมายเหตุ
-    const isHandoff = HANDOFF_FLAG.has(cleanCell(g(r, iHandoff)).toLowerCase());
-    // 🔴 D-68: คอลัมน์ `funnel_stage` เป็น optional — "มีก็ใช้ ไม่มีก็ FIXED_FUNNEL เดิม"
-    //    เหตุ: FIXED_FUNNEL รู้จักแค่ S1/S2/S2Q/S3/S4 → funnel อีก 4 ค่าที่โค้ดยังอ่านอยู่
-    //    (handoff_after_intake · awaiting_payment · awaiting_address · post_sale) ผลิตไม่ได้เลย = ฟีเจอร์ตายเงียบ
-    //    ชีตจริง "ยังไม่มี" คอลัมน์นี้ → idx = -1 → พฤติกรรม prod วันนี้เหมือนเดิมเป๊ะ (ดู DECISIONS D-68)
+    // 🔴 D-73b: คอลัมน์ handoff = ป้าย 3 ค่า (ว่าง/ใช่/เก็บข้อมูลก่อน) — แหล่งเดียวของ "ส่งคนยังไง"
+    const mark = classifyHandoffMark(g(r, iHandoff));
+    if (mark === "invalid") {
+      // 🔴 ห้ามเงียบ: พิมพ์ผิดต้องเห็น — error ดัง + ตีเป็น handoff (ทิศปลอดภัย: ส่งคนเกิน ดีกว่าบอทขายในประตูที่ควรส่งคน)
+      //    ก่อน D-73b ค่าแบบนี้ถูกตีความเงียบ ๆ เป็น "ประตูปกติ" (อันตรายกลับด้าน) — ดู DECISIONS D-73b
+      console.error(JSON.stringify({
+        scope: "sheets", tab: "Steps", error: "🔴 คอลัมน์ handoff ค่าไม่รู้จัก — ต้องเป็น ว่าง / ใช่ / เก็บข้อมูลก่อน",
+        stepId, value: cleanCell(g(r, iHandoff)), action: "treat-as-handoff (ทิศปลอดภัย)",
+      }));
+    }
+    // D-68: คอลัมน์ `funnel_stage` เป็น optional — กลไกคงไว้ (มีก็ใช้) · 🔴 D-73b: ชีตจริงไม่ใช้แล้ว (ป้าย handoff แทน)
     const explicitFunnel = cleanCell(g(r, iFunnel)).toLowerCase();
-    let funnel = isHandoff ? "handoff" : explicitFunnel || FIXED_FUNNEL[stepId];
+    let funnel =
+      mark === "handoff" || mark === "invalid" ? "handoff"
+      : mark === "intake" ? HANDOFF_AFTER_INTAKE_FUNNEL
+      : explicitFunnel || FIXED_FUNNEL[stepId];
     if (!funnel) {
       console.warn(JSON.stringify({ scope: "sheets", event: "unknown-step-funnel", stepId, fallback: DEFAULT_FUNNEL }));
       funnel = DEFAULT_FUNNEL; // เคาะ #2: ประตูใหม่นอกลิสต์ → default qualified + ฟ้อง
@@ -210,6 +238,7 @@ export function validateBundle(rawByTab: Record<string, string[][]>): TabStat[] 
     const missing = (REQUIRED_HEADERS[tab] ?? []).filter((h) => idx(h) === -1);
     const statusIdx = idx("สถานะ");
     const keyIdx = idx(tab === "Steps" ? "step_id" : tab === "Knowledge" ? "ลูกค้าพูดยังไง" : tab === "Config" ? "key" : tab === "Vars" ? "ตัวแปร" : tab === "Promo" ? "promo_id" : "sku");
+    const handoffIdx = tab === "Steps" ? idx("handoff") : -1;
     let live = 0;
     let draft = 0;
     let count = 0;
@@ -218,6 +247,10 @@ export function validateBundle(rawByTab: Record<string, string[][]>): TabStat[] 
       if (!key) continue;
       count += 1;
       if (statusIdx >= 0) (normalizeStatus(rows[i][statusIdx]) === "live" ? live++ : draft++);
+      // 🔴 D-73b: ค่าป้าย handoff พิมพ์ผิด → ฟ้องบนการ์ด schema (ผ่าน missing = ช่องที่การ์ดโชว์อยู่แล้ว) · ok=false
+      if (handoffIdx >= 0 && classifyHandoffMark(rows[i][handoffIdx]) === "invalid") {
+        missing.push(`handoff="${cleanCell(rows[i][handoffIdx])}" (${key}) — ต้องเป็น ว่าง/ใช่/เก็บข้อมูลก่อน`);
+      }
     }
     return { tab, ok: missing.length === 0 && count > 0, missing, rows: count, live, draft };
   });

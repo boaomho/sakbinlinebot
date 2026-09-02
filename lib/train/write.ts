@@ -1,6 +1,6 @@
 import { getSheets } from "@/lib/sheets/client";
 import { loadBotLibrary, loadRawSheets, __resetBotLibraryCache, RawSheets } from "@/lib/sheets/loader";
-import { isLiveStatus } from "@/lib/sheets/normalize-bundle";
+import { isLiveStatus, classifyHandoffMark } from "@/lib/sheets/normalize-bundle";
 import { resolveSpreadsheetId } from "@/lib/core/sheet-id";
 import { columnLetter } from "@/lib/sheets/columns";
 import { cleanHeader, cleanCell } from "@/lib/sheets/clean";
@@ -217,13 +217,17 @@ export async function appendRow(tab: string, cols: Record<string, string>, origi
   if (keyErr) return { status: "key_invalid", message: keyErr };
   if (rows.some((r, i) => i > 0 && cleanCell(r[keyIdx] ?? "") === key)) return { status: "dup" };
 
-  // funnel_stage (Step · ตาข่าย handoff H1) — ต้องเป็น enum ที่ถูก
+  // funnel_stage (Step · ตาข่าย handoff H1) — ต้องเป็น enum ที่ถูก (กลไก optional D-68 · ชีตจริงไม่มีคอลัมน์นี้แล้ว)
   const funnelIdx = header.indexOf("funnel_stage");
   if (tab === "Steps" && funnelIdx >= 0) {
     const fv = cleanCell(cols["funnel_stage"] ?? "").toLowerCase();
     if (!(VALID_FUNNEL_STAGES as readonly string[]).includes(fv)) {
       return { status: "funnel", message: `funnel_stage "${cols["funnel_stage"] ?? "(ว่าง)"}" ไม่ถูกต้อง — ต้องเป็นหนึ่งใน: ${VALID_FUNNEL_STAGES.join(", ")}` };
     }
+  }
+  // 🔴 D-73b: คอลัมน์ handoff = ป้าย 3 ค่า — พิมพ์ผิดต้องเห็นตั้งแต่กดบันทึก ไม่ใช่ไปเจอ error ตอนโหลด
+  if (tab === "Steps" && classifyHandoffMark(cols["handoff"]) === "invalid") {
+    return { status: "funnel", message: `handoff "${cols["handoff"]}" ไม่ถูกต้อง — ต้องเป็น: ว่าง (ประตูปกติ) / ใช่ (ส่งทันที) / เก็บข้อมูลก่อน (บอทถาม 1-3 เทิร์นแล้วค่อยส่ง)` };
   }
 
   // lint คำตอบ (รวม H1 trigger-aware block) — ไม่เชื่อ client

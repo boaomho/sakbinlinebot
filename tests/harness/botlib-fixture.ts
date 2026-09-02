@@ -85,10 +85,16 @@ export const TAB = {
   config: "Config",
 } as const;
 
-/** header แท็บ "เส้นทางขาย" (v3) — ตรงกับที่ adaptSteps อ่าน */
+/**
+ * header แท็บ Steps ตามชีตจริง — 🔴 D-73b: **9 คอลัมน์ ไม่มี funnel_stage** (เจ้าของเคาะดีไซน์สุดท้าย:
+ * ใช้คอลัมน์ `handoff` เป็นป้าย 3 ค่า — ว่าง=ปกติ · "ใช่"=ส่งทันที · "เก็บข้อมูลก่อน"=intake)
+ */
 export const V3_STEP_HEADER = [
-  "step_id", "funnel_stage", "ชื่อประตู", "เข้าเมื่อ", "สาระที่ต้องสื่อ", "ต้องได้อะไรถึงไปต่อ", "ไปประตูไหน", "แนวตอบ", "handoff", "สถานะ",
+  "step_id", "ชื่อประตู", "เข้าเมื่อ", "สาระที่ต้องสื่อ", "ต้องได้อะไรถึงไปต่อ", "ไปประตูไหน", "แนวตอบ", "handoff", "สถานะ",
 ];
+
+/** header แบบมีคอลัมน์ funnel_stage (กลไก optional ของ D-68 — โค้ดยังรองรับ · ชีตจริงไม่ใช้แล้ว) */
+export const V3_STEP_HEADER_WITH_FUNNEL = ["step_id", "funnel_stage", ...V3_STEP_HEADER.slice(1)];
 
 /** header แท็บ "ความรู้" (v3) — ตรงกับที่ adaptKnowledge อ่าน */
 export const V3_KNOW_HEADER = ["ลูกค้าพูดยังไง", "keyword", "ความกังวลจริง", "ข้อเท็จจริง/สิ่งที่อยากให้รู้", "แนวตอบ", "สถานะ"];
@@ -103,30 +109,44 @@ export interface V3Step {
   next?: string;
   guide?: string;
   /**
-   * funnel_stage — คอลัมน์ optional (D-68) · เว้นว่าง = adapter ใช้ FIXED_FUNNEL จาก step_id
-   * (S1=lead · S2/S2Q=qualified · S3=quoted · S4=won · id อื่น = qualified + warn)
-   * 🔴 ชีตจริงยังไม่มีคอลัมน์นี้ — ใส่ค่าที่นี่ = จำลอง "ถ้าเจ้าของเปิดใช้" เท่านั้น
+   * funnel_stage — คอลัมน์ optional (D-68 · โค้ดยังรองรับ) · 🔴 D-73b: ชีตจริง**ไม่มี**คอลัมน์นี้แล้ว
+   * ใส่ค่าที่นี่ = fixture สลับไป header 10 คอลัมน์ (จำลอง "ถ้าเจ้าของเปิดใช้") · ไม่ใส่ = 9 คอลัมน์ตามชีตจริง
    */
   funnel?: string;
-  /** ประตูส่งต่อคน — ชนะ funnel_stage เสมอ (adapter ให้ "handoff") */
+  /** ป้ายส่งคน "ใช่" — handoff ทันที (semantics เดิม) */
   handoff?: boolean;
+  /** 🔴 D-73b: ป้าย "เก็บข้อมูลก่อน" — เข้าเส้น intake (handoff_after_intake) */
+  intake?: boolean;
+  /** ค่าดิบของคอลัมน์ handoff ตรง ๆ (ใช้เทสค่าพิมพ์ผิด) — ชนะ handoff/intake */
+  handoffValue?: string;
   status?: string;
 }
 
-/** แถวแท็บ "เส้นทางขาย" (v3) — ใช้แทนการเขียน header เองในไฟล์เทส */
+/** ค่าคอลัมน์ handoff ตามป้าย 3 ค่า (D-73b) */
+function handoffCell(s: V3Step): string {
+  if (s.handoffValue !== undefined) return s.handoffValue;
+  if (s.intake) return "เก็บข้อมูลก่อน";
+  return s.handoff ? "ใช่" : "";
+}
+
+/**
+ * แถวแท็บ Steps — ใช้แทนการเขียน header เองในไฟล์เทส
+ * 🔴 D-73b: default = 9 คอลัมน์ตามชีตจริง · มีตัวไหนใส่ `funnel` → 10 คอลัมน์ (กลไก optional D-68)
+ */
 export function v3StepRows(steps: V3Step[]): string[][] {
+  const withFunnel = steps.some((s) => s.funnel !== undefined);
   return [
-    [...V3_STEP_HEADER],
+    [...(withFunnel ? V3_STEP_HEADER_WITH_FUNNEL : V3_STEP_HEADER)],
     ...steps.map((s) => [
       s.step_id,
-      s.funnel ?? "",
+      ...(withFunnel ? [s.funnel ?? ""] : []),
       s.name ?? s.step_id,
       s.entry ?? "",
       s.essence ?? "",
       s.collect ?? "",
       s.next ?? "",
       s.guide ?? "",
-      s.handoff ? "ใช่" : "",
+      handoffCell(s),
       s.status ?? "live",
     ]),
   ];

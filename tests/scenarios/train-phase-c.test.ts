@@ -27,17 +27,17 @@ beforeAll(() => {
 });
 
 describe("🔴 D-72b · เขียนกลับชีตได้แล้ว — A1 ชี้พิกัด 'ชีตดิบ' เป๊ะ (ถูกแท็บ ถูกแถว ถูกคอลัมน์)", () => {
-  // V3_STEP_HEADER: step_id(A) funnel_stage(B) ชื่อประตู(C) เข้าเมื่อ(D) สาระที่ต้องสื่อ(E)
-  //                 ต้องได้อะไรถึงไปต่อ(F) ไปประตูไหน(G) แนวตอบ(H) handoff(I) สถานะ(J)
+  // 🔴 D-73b: ชีตจริง 9 คอลัมน์ (ไม่มี funnel_stage): step_id(A) ชื่อประตู(B) เข้าเมื่อ(C) สาระที่ต้องสื่อ(D)
+  //    ต้องได้อะไรถึงไปต่อ(E) ไปประตูไหน(F) แนวตอบ(G) handoff(H) สถานะ(I)
   it("writeCell Steps `สาระที่ต้องสื่อ` ของ S2 → batchUpdate ที่ Steps!E3 + TRAIN_LOG 1 แถว", async () => {
     seedBotLib({ stepRows: steps() });
     sheetsCalls.batchUpdates.length = 0;
     sheetsCalls.appends.length = 0;
     const res = await writeCell("Steps", "S2", "สาระที่ต้องสื่อ", "ชวนโอนหรือ COD", "ชวนเลือกช่องทางจ่าย");
     expect(res.status).toBe("ok");
-    if (res.status === "ok") expect(res.range, "S2 = แถว 3 ของชีตดิบ · สาระที่ต้องสื่อ = คอลัมน์ E").toBe("Steps!E3");
+    if (res.status === "ok") expect(res.range, "S2 = แถว 3 ของชีตดิบ · สาระที่ต้องสื่อ = คอลัมน์ D (ชีต 9 คอลัมน์ D-73b)").toBe("Steps!D3");
     expect(sheetsCalls.batchUpdates).toHaveLength(1);
-    expect(sheetsCalls.batchUpdates[0]).toEqual({ range: "Steps!E3", values: [["ชวนโอนหรือ COD"]] });
+    expect(sheetsCalls.batchUpdates[0]).toEqual({ range: "Steps!D3", values: [["ชวนโอนหรือ COD"]] });
     expect(sheetsCalls.appends, "TRAIN_LOG จดการแก้").toHaveLength(1);
     expect(sheetsCalls.appends[0].range).toContain("TRAIN_LOG");
   });
@@ -47,7 +47,7 @@ describe("🔴 D-72b · เขียนกลับชีตได้แล้�
     sheetsCalls.batchUpdates.length = 0;
     const res = await writeCell("Steps", "S1", "แนวตอบ", "สวัสดีจ้า", "สวัสดีค่ะ");
     expect(res.status).toBe("ok");
-    if (res.status === "ok") expect(res.range).toBe("Steps!H2");
+    if (res.status === "ok") expect(res.range, "แนวตอบ = คอลัมน์ G (9 คอลัมน์ D-73b)").toBe("Steps!G2");
   });
 
   // V3_KNOW_HEADER: ลูกค้าพูดยังไง(A) keyword(B) ความกังวลจริง(C) ข้อเท็จจริง/สิ่งที่อยากให้รู้(D) แนวตอบ(E) สถานะ(F)
