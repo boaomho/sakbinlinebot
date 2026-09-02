@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { sendText } from "../harness/replay";
 import { scriptGemini, turn, adminPushes, lineCalls, harnessOverrides, geminiState } from "../harness/state";
 import { sendImage } from "../harness/replay";
-import { FULL_ADDRESS } from "../harness/fixtures";
+import { FULL_ADDRESS, testConfig } from "../harness/fixtures";
 import { seedBotLib, PRICING_CONFIG, v3StepRows } from "../harness/botlib-fixture";
 import { readCustomer, setLastSeenAgo } from "../harness/db";
 
@@ -278,5 +278,104 @@ describe("D-73b · ป้าย 3 ค่า — semantics ต่อค่า", (
     expect(st.ok, "พิมพ์ผิด = การ์ดต้องแดง").toBe(false);
     expect(st.missing.join(" ")).toContain("ส่งด่วน");
     expect(st.missing.join(" ")).toContain("เก็บข้อมูลก่อน");
+  });
+});
+
+// ═══════════ D-73c · 🔔 แจ้งแอดมินตอน "เข้าประตู intake" (ไม่ปิดบอท) ═══════════
+
+const ENTER_MARK = "ยังไม่ต้องเข้ามา";
+
+describe("D-73c · แจ้งตอนเข้าประตู — ยิงครั้งเดียวต่อรอบ · ไม่ปิดบอท", () => {
+  it("🔴 เทิร์นแรกที่เข้า intake → 🔔 1 ครั้ง (ระบุประตู+ชื่อ+ข้อความ) · ไม่มี footer · บอทคุยต่อ", async () => {
+    scriptGemini([turn({ reply: "เสียใจด้วยค่ะ ขอรายละเอียดหน่อยนะคะ", stage: "H_CLAIM", handoff: false })]);
+    await sendText(U, "ของเสียค่ะ ถ้วยแตกมา");
+    const texts = adminTexts();
+    const enter = texts.find((t) => t.includes(ENTER_MARK));
+    expect(enter, "ต้องมีข้อความแจ้งตอนเข้าประตู").toBeTruthy();
+    expect(enter, "ระบุชื่อประตู").toContain("เคลม-คุยก่อน");
+    expect(enter, "ระบุข้อความลูกค้า").toContain("ถ้วยแตกมา");
+    expect(enter, "บอกว่าจะแจ้งอีกครั้งพร้อม 📋").toContain("📋");
+    expect(enter, "🔴 กฎเหล็ก: ห้ามมีคำว่า 'รบกวน'").not.toContain("รบกวน");
+    expect(texts.join(" "), "ไม่ปิดบอท").not.toContain(FOOTER);
+    expect((await readCustomer(U))?.human_mode).toBe(false);
+  });
+
+  it("🔴 เทิร์น 2-3 ของ intake รอบเดิม → ไม่ยิงซ้ำ (dedup มาจากตัวนับ 0→1)", async () => {
+    harnessOverrides.config = { raw: cfg([["เพดานเทิร์นก่อนส่งแอดมิน", "9"]]) };
+    scriptGemini([
+      turn({ reply: "ขอรายละเอียดค่ะ", stage: "H_CLAIM", handoff: false }),
+      turn({ reply: "ขอรูปด้วยค่ะ", stage: "H_CLAIM", handoff: false }),
+      turn({ reply: "รับทราบค่ะ", stage: "H_CLAIM", handoff: false }),
+    ]);
+    await sendText(U, "ของเสียค่ะ");
+    await sendText(U, "เปิดกล่องมาก็แตกแล้ว");
+    await sendText(U, "ซื้อเมื่อวานค่ะ");
+    expect(adminTexts().filter((t) => t.includes(ENTER_MARK)), "ยิงครั้งเดียวตลอดรอบ").toHaveLength(1);
+    expect((await readCustomer(U))?.intake_turns).toBe(3);
+  });
+
+  it("ออกจาก intake แล้วกลับเข้าใหม่ (เคสใหม่) → ยิงใหม่ได้", async () => {
+    scriptGemini([
+      turn({ reply: "ขอรายละเอียดค่ะ", stage: "H_CLAIM", handoff: false }),
+      turn({ reply: "ได้เลยค่ะ รับ 3 ถ้วยนะคะ", stage: "S2", handoff: false, orderData: { items: [{ qty: 3 }] } }),
+      turn({ reply: "เสียใจด้วยค่ะ", stage: "H_CLAIM", handoff: false }),
+    ]);
+    await sendText(U, "ของเสียค่ะ");
+    await sendText(U, "เอาเป็นว่าขอสั่งเพิ่ม 3 ถ้วย"); // pivot ออก → ตัวนับ reset
+    await sendText(U, "อีกกล่องก็ของเสียค่ะ"); // เข้าใหม่ = เคสใหม่
+    expect(adminTexts().filter((t) => t.includes(ENTER_MARK)), "เข้าใหม่ = ยิงใหม่").toHaveLength(2);
+  });
+
+  it("🔴 เพดาน=1 (เข้าแล้ว handoff เทิร์นเดียวกัน) → ไม่ยิงข้อความ 'ยังไม่ต้องเข้ามา' ที่ขัดกับ 🔔 ส่งต่อ", async () => {
+    harnessOverrides.config = { raw: cfg([["เพดานเทิร์นก่อนส่งแอดมิน", "1"]]) };
+    scriptGemini([turn({ reply: "ส่งต่อค่ะ", stage: "H_CLAIM", handoff: false })]);
+    await sendText(U, "ของเสียค่ะ");
+    const texts = adminTexts();
+    expect(texts.some((t) => t.includes(FOOTER)), "handoff ปลายทางยิงตามเดิม").toBe(true);
+    expect(texts.some((t) => t.includes(ENTER_MARK)), "ห้ามยิงข้อความเข้าประตูซ้อนในเทิร์นเดียวกัน").toBe(false);
+  });
+
+  it("🔴 rollback: แถว intake เป็น draft → ไม่มีการแจ้งอะไรเลย (ไม่ใช่แค่ไม่ handoff)", async () => {
+    seedBotLib({
+      stepRows: v3StepRows([
+        { step_id: "S1", essence: "ทักทาย" },
+        { step_id: "H_CLAIM", intake: true, name: "เคลม-คุยก่อน", entry: 'ของเสีย เช่น "ของเสีย"', essence: "ทวนปัญหา", status: "draft" },
+      ]),
+    });
+    scriptGemini([turn({ reply: "ขอรายละเอียดค่ะ", stage: "H_CLAIM", handoff: false })]);
+    await sendText(U, "ของเสียค่ะ");
+    expect(adminTexts().some((t) => t.includes(ENTER_MARK)), "แถว draft = ไม่มีประตู intake = ไม่แจ้ง").toBe(false);
+    expect((await readCustomer(U))?.intake_turns).toBe(0);
+  });
+
+  // หมายเหตุ: "ตั้งข้อความจากชีตได้" พิสูจน์ที่ config-parse.test.ts (ที่นี่ fixture hardcode ค่า config ไว้)
+  it("ข้อความที่ใช้จริง = ค่าจาก config (fixture) — ไม่ได้ hardcode ในโค้ด handler", async () => {
+    scriptGemini([turn({ reply: "ขอรายละเอียดค่ะ", stage: "H_CLAIM", handoff: false })]);
+    await sendText(U, "ของเสียค่ะ");
+    expect(adminTexts().some((t) => t.includes(testConfig().notifyAdminIntakeTemplate)), "หยิบจาก config ไม่ใช่สตริงในโค้ด").toBe(true);
+  });
+
+  it("regression: ประตูขายปกติ / ประตู handoff ทันที → ไม่มีข้อความเข้าประตู intake", async () => {
+    scriptGemini([
+      turn({ reply: "สวัสดีค่ะ", stage: "S1", handoff: false }),
+      turn({ reply: "...", stage: "H9", handoff: false }),
+    ]);
+    await sendText(U, "สวัสดีค่ะ");
+    await sendText(U, "กินแล้วแพ้กุ้งไหมคะ");
+    expect(adminTexts().some((t) => t.includes(ENTER_MARK))).toBe(false);
+  });
+
+  it("🔴 ธงสุขภาพ regression: เข้า intake + คำสุขภาพเทิร์นเดียวกัน → ได้ทั้ง 🔔 สุขภาพ และแจ้งเข้าประตู · ไม่ปิดบอท", async () => {
+    harnessOverrides.config = {
+      raw: cfg(), healthFlagKeywords: ["แพ้"],
+      handoffKeywords: ["ขอแอดมิน", "คุยกับคน", "คุยกับแอดมิน"],
+    };
+    scriptGemini([turn({ reply: "เสียใจด้วยค่ะ ขอรายละเอียดนะคะ", stage: "H_CLAIM", handoff: false })]);
+    await sendText(U, "ของเสียค่ะ แล้วกินแล้วแพ้ด้วย");
+    const texts = adminTexts();
+    expect(texts.some((t) => t.includes(ENTER_MARK)), "แจ้งเข้าประตู").toBe(true);
+    expect(texts.some((t) => t.includes("สุขภาพ")), "🔔 ธงสุขภาพยังยิงเหมือนเดิม").toBe(true);
+    expect(texts.join(" "), "ไม่ปิดบอท").not.toContain(FOOTER);
+    expect((await readCustomer(U))?.human_mode).toBe(false);
   });
 });

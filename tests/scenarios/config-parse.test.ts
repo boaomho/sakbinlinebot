@@ -55,3 +55,24 @@ describe("resolveFeatureSwitches — salesCore เช็ค SHEET_BOTLIB_ID (Ste
     expect(switches.salesCore).toBe(true);
   });
 });
+
+describe("D-73c · ข้อความแจ้งแอดมินตอนเข้าประตูเก็บข้อมูล (intake)", () => {
+  it("ไม่มีคีย์ในชีต → default ในโค้ด · 🔴 ต้องไม่มีคำว่า 'รบกวน' (กฎเหล็ก D-61)", async () => {
+    sheetsCalls.botLibReturn = { Config: [["หมวด", "ค่า", "ค่าที่ตั้ง"], ["ทั่วไป", "ชื่อบอท", "ปลาทู"]] };
+    const cfg = await realGetConfig();
+    expect(cfg.notifyAdminIntakeTemplate).toContain("ยังไม่ต้องเข้ามา");
+    expect(cfg.notifyAdminIntakeTemplate, "จะแจ้งอีกครั้งพร้อมสรุป").toContain("📋");
+    expect(cfg.notifyAdminIntakeTemplate).not.toContain("รบกวน");
+  });
+
+  it("ตั้งคีย์ `ข้อความ_แจ้งแอดมิน_เก็บข้อมูล` ในชีต → ทับ default ได้", async () => {
+    sheetsCalls.botLibReturn = {
+      Config: [
+        ["หมวด", "ค่า", "ค่าที่ตั้ง"],
+        ["แจ้งเตือน", "ข้อความ_แจ้งแอดมิน_เก็บข้อมูล", "บอทเก็บข้อมูลอยู่ค่ะ รอสรุปอีกทีนะคะ"],
+      ],
+    };
+    const cfg = await realGetConfig();
+    expect(cfg.notifyAdminIntakeTemplate).toBe("บอทเก็บข้อมูลอยู่ค่ะ รอสรุปอีกทีนะคะ");
+  });
+});

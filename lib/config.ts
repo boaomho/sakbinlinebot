@@ -65,6 +65,8 @@ export interface AppConfig {
   assuranceBannedPhrases: string[];
   /** D-61.A (v3): ข้อความ_แจ้งแอดมิน_notify — เนื้อ 🔔 แจ้งกลุ่มตอนติดธงสุขภาพ */
   notifyAdminHealthTemplate: string;
+  /** 🔴 D-73c: ข้อความแจ้งแอดมินตอนลูกค้าเข้าประตูเก็บข้อมูล (intake) — แจ้งแล้วบอทคุยต่อ ไม่ปิดบอท · คีย์ `ข้อความ_แจ้งแอดมิน_เก็บข้อมูล` */
+  notifyAdminIntakeTemplate: string;
   /** D-61.B (B5): key ที่ติ๊กคอลัมน์ "เข้า prompt" — header-driven: ชีตไม่มีคอลัมน์นี้ (v2) = null = ดัมพ์ทุกแถวเหมือนเดิม */
   promptVisibleKeys: Set<string> | null;
   /** คืนสิทธิ์บอท_หลังแชทเงียบ (นาที) — ถ้าลูกค้าเงียบเกินเวลานี้ในโหมดแอดมิน บอทคืนมาดูแลเอง */
@@ -304,6 +306,11 @@ export async function getConfig(): Promise<AppConfig> {
     healthFlagKeywords: splitList(raw.get("คำ_ธงสุขภาพ")) ?? [...DEFAULT_HEALTH_FLAG_KEYWORDS],
     assuranceBannedPhrases: splitList(raw.get("คำรับรอง_ต้องห้าม")) ?? [...DEFAULT_ASSURANCE_PHRASES],
     notifyAdminHealthTemplate: strOf("ถามเรื่องสุขภาพ/แพ้อาหาร — บอทให้ข้อมูลตามข้อเท็จจริงแล้ว ยังคุยต่อ (ไม่ได้ปิดบอท) รบกวนช่วยดูให้ด้วยค่ะ", "ข้อความ_แจ้งแอดมิน_notify"),
+    // 🔴 D-73c: default ในโค้ด — ห้ามมีคำว่า "รบกวน" (กฎเหล็ก D-61) · ต้องบอกชัดว่า "ยังไม่ต้องเข้ามา"
+    notifyAdminIntakeTemplate: strOf(
+      "บอทกำลังเก็บข้อมูลให้อยู่ ยังไม่ต้องเข้ามาค่ะ — ถ้าเก็บครบหรือชนเพดานเทิร์น จะแจ้งอีกครั้งพร้อม 📋 สรุปข้อมูลค่ะ",
+      "ข้อความ_แจ้งแอดมิน_เก็บข้อมูล",
+    ),
     promptVisibleKeys, // D-61.B
     adminSilenceReturnMinutes: numOf(45, "คืนสิทธิ์บอท_หลังแชทเงียบ", "คืนสิทธิ์บอท_หลังแชทเงียบ_นาที"),
     botResumeMessage: strOf("ปลาทูมาดูแลต่อเองนะคะ", "ประโยคเปลี่ยนมือ_บอทรับต่อ"),

@@ -1150,6 +1150,27 @@ export async function processMessage(
     await runOrderGate(userId, customer, pending, postQuote?.price ?? null, slipThisTurn, config, nameMap, outReply, allowed, transport);
   }
 
+  /**
+   * 🔴 D-73c: แจ้งแอดมิน "ตอนเข้าประตู intake" (ไม่ปิดบอท) — แพทเทิร์นเดียวกับธงสุขภาพ
+   * เหตุ: ลูกค้าเข้าเคสเคลม/ขายส่งแล้วหายเงียบกลางการเก็บข้อมูล = เคสค้างโดยไม่มีใครรู้
+   *       (🔔 ปลายทางยิงเฉพาะตอน intake จบ/ชนเพดาน)
+   * dedup "ครั้งเดียวต่อการเข้า intake หนึ่งรอบ" มาจากตัวนับเอง: prev 0 → new 1 เท่านั้น
+   *   เทิร์น 2-3 (prev≥1) ไม่ยิง · ออกจาก intake/handoff/เงียบนาน → ตัวนับกลับเป็น 0 → เข้าใหม่ยิงใหม่ (เคสใหม่)
+   * ไม่ยิงเมื่อเทิร์นเดียวกันนี้ handoff อยู่แล้ว (เช่นเพดาน=1) — ไม่งั้นแอดมินได้ 2 ข้อความขัดกันในเทิร์นเดียว
+   */
+  if (switches.handoff && stageIsIntake && prevIntakeTurns === 0 && newIntakeTurns === 1 && !doHandoff) {
+    const adminGroupId = process.env.ADMIN_GROUP_ID;
+    if (adminGroupId) {
+      const name = await transport.getProfileName();
+      const door = (lib ? stepNameOf(lib.Steps, geminiOutput.stage) : null) ?? geminiOutput.stage;
+      console.log(JSON.stringify({ scope: "intake-notify", event: "enter", stage: geminiOutput.stage }));
+      await pushRawText(
+        adminGroupId,
+        `🔔 ${channelLabel(userId)} ${name} เข้าเรื่อง "${door}" — ${config.notifyAdminIntakeTemplate}\nข้อความ: ${userMessage}`,
+      );
+    }
+  }
+
   // handoff เกิดขึ้น (doHandoff คำนวณไว้ข้างบนแล้ว) · else = push-on-exit ถ้าเพิ่งออกจาก intake
   if (doHandoff) {
     const reason =
