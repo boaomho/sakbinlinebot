@@ -1,6 +1,6 @@
 import { resolveAppContext, resolvePageContext, PageContext, AppContext } from "./pages";
 import { MessengerTransport } from "./transport";
-import { verifyMetaSignature, sendMessengerAction, downloadFromUrl } from "./meta";
+import { verifyMetaSignature, sendMessengerAction, downloadFromUrl, BOT_ECHO_MARK } from "./meta";
 import { runInboundText, runInboundImage } from "@/app/api/line-webhook/handler";
 import { resolveFeatureSwitches, FeatureSwitches } from "@/lib/config";
 import { setHumanMode, isChannelEnabled } from "@/lib/db";
@@ -49,25 +49,29 @@ export async function processMetaWebhook(rawBody: string, signature: string | nu
 
 async function handleMetaMessaging(m: MetaMessaging, page: PageContext, switches: FeatureSwitches, app: AppContext): Promise<void> {
   const msg = m.message;
-  const psid = m.sender?.id;
-  if (!msg || !psid) return; // postback/delivery/read = เพิกเฉย (M-2)
-  const userId = metaUserId(page.pageId, psid);
+  if (!msg) return; // postback/delivery/read = เพิกเฉย (M-2)
 
-  // ---- echo (5.4): บอทเราส่ง → ทิ้ง (กันลูป) · แอดมิน/แอปอื่น → human_mode ----
+  // ---- echo (5.4 · D-76): บอทเราส่ง → ทิ้ง (กันลูป) · แอดมินพิมพ์มือ/แอปอื่น → human_mode (เทียบเท่า LINE) ----
   if (msg.is_echo) {
-    const echoAppId = msg.app_id != null ? String(msg.app_id) : null;
-    if (app.appId) {
-      if (echoAppId === app.appId) return; // บอทเราส่งเอง → ทิ้งเสมอ
-      if (switches.handoff) await setHumanMode(userId, true); // แอปอื่น/แอดมินพิมพ์ → human_mode
-      console.log(JSON.stringify({ scope: "meta", event: "echo-human-agent", pageId: page.pageId }));
-      return;
-    }
-    // 🔴 META_APP_ID ไม่ตั้ง → fallback heuristic (เตือนดังๆ ทุกครั้ง — ไม่ทำงานเงียบ)
-    console.warn(JSON.stringify({ scope: "meta", warning: "META_APP_ID ไม่ตั้ง — echo filter ทำงานแบบเดา (heuristic)", hasAppId: echoAppId != null }));
-    if (echoAppId != null) return; // มี app_id = สมมติบอทเรา → ทิ้ง
-    if (switches.handoff) await setHumanMode(userId, true); // ไม่มี app_id = แอดมินพิมพ์ในกล่องเพจ → human_mode
+    // 🔴 D-76 บั๊กที่ทำให้ฟีเจอร์นี้ตายเงียบมาตั้งแต่ M-2:
+    //    echo event ของ Meta กลับด้าน — sender = **เพจ** · recipient = **ลูกค้า (PSID)**
+    //    โค้ดเดิมอ่าน psid จาก sender → ได้ pageId → setHumanMode ลง "fb:<pageId>:<pageId>"
+    //    = ลูกค้าตัวจริงไม่เคยถูกปิดบอทเลย (เทสเดิมผ่านเพราะ fixture ใส่ sender=PSID ซึ่งไม่ใช่ของจริง)
+    const echoPsid = m.recipient?.id;
+    if (!echoPsid) return;
+    const echoUserId = metaUserId(page.pageId, echoPsid);
+    if (isOwnEcho(msg, app)) return; // บอทเราส่งเอง → ทิ้งเสมอ (ไม่ปิดบอทตัวเอง)
+    if (switches.handoff) await setHumanMode(echoUserId, true);
+    console.log(JSON.stringify({
+      scope: "meta", event: "echo-human-agent", pageId: page.pageId,
+      by: msg.app_id != null ? "other-app" : "page-inbox", // แอปอื่น vs แอดมินพิมพ์ในกล่องเพจ
+    }));
     return;
   }
+
+  const psid = m.sender?.id;
+  if (!psid) return;
+  const userId = metaUserId(page.pageId, psid);
 
   // D-53: ช่อง fb:<pageId> ถูกปิด → เงียบ (log)
   if (switches.memory && !(await isChannelEnabled(`fb:${page.pageId}`))) {
@@ -99,6 +103,22 @@ async function handleMetaMessaging(m: MetaMessaging, page: PageContext, switches
   }
 }
 
+/**
+ * 🔴 D-76: echo นี้ "บอทเราส่งเอง" ไหม — 3 ชั้น เรียงจากแน่นอนที่สุด
+ *  1. `metadata === BOT_ECHO_MARK` — ลายเซ็นที่เราแปะเองตอนส่ง (Send API คืนกลับใน echo) = **แน่นอน 100%**
+ *  2. `app_id === META_APP_ID` — แน่นอนเมื่อ ENV ตั้งไว้ (ครอบข้อความที่ส่งก่อน deploy นี้ ซึ่งยังไม่มี metadata)
+ *  3. ไม่มีทั้งคู่ → **ถือว่าไม่ใช่ของเรา** (= แอดมินพิมพ์ → ปิดบอท) · ทิศปลอดภัย: บอทเงียบเกิน
+ *     ดีกว่าพิมพ์ชนแอดมินกลางแชท · log ไว้ให้เห็นว่าตัดสินด้วยชั้นไหน
+ */
+function isOwnEcho(msg: NonNullable<MetaMessaging["message"]>, app: AppContext): boolean {
+  if (msg.metadata === BOT_ECHO_MARK) return true; // ชั้น 1
+  if (app.appId && msg.app_id != null && String(msg.app_id) === app.appId) return true; // ชั้น 2
+  if (!app.appId) {
+    console.warn(JSON.stringify({ scope: "meta", warning: "META_APP_ID ไม่ตั้ง — echo แยกด้วย metadata อย่างเดียว (ข้อความที่ส่งก่อน D-76 จะถูกนับเป็นแอดมิน)", hasAppId: msg.app_id != null }));
+  }
+  return false;
+}
+
 // ---- โครง payload (บางส่วนที่ใช้) ----
 interface MetaEntry {
   id?: string;
@@ -106,9 +126,13 @@ interface MetaEntry {
 }
 interface MetaMessaging {
   sender?: { id?: string };
+  /** 🔴 echo: sender = เพจ · recipient = ลูกค้า (PSID) — กลับด้านจาก event ปกติ */
+  recipient?: { id?: string };
   message?: {
     is_echo?: boolean;
     app_id?: string | number;
+    /** ลายเซ็นที่เราแปะตอนส่ง (BOT_ECHO_MARK) — Send API คืนกลับมาใน echo */
+    metadata?: string;
     text?: string;
     attachments?: { type?: string; payload?: { url?: string } }[];
   };

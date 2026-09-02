@@ -57,6 +57,7 @@ lib/channel/          # M-1/M-2 · adapter หลายช่องทาง
   pages.ts            🔴 จุดเดียวอ่าน META_* · resolveAppContext (verify/echo) · resolvePageContext(pageId→config · env 1 เพจ · อนาคต table channel_pages)
   meta.ts             Send API client (text/image/sender_action · getProfileName · downloadFromUrl) + verifyMetaSignature (HMAC-SHA256)
   meta-webhook.ts     processMetaWebhook (verify sig → parse entry/messaging → กรอง echo → runInboundText/Image เดิม) · metaVerifyChallenge (GET) · metaUserId(fb:<pageId>:<psid>)
+# 🔴 D-76: echo event กลับด้าน (sender=เพจ · recipient=ลูกค้า) → อ่าน psid จาก `recipient` เท่านั้น · `isOwnEcho` 3 ชั้น (metadata `BOT_ECHO_MARK` → app_id → ถือว่าเป็นคน) · แอดมินพิมพ์ = human_mode เส้นเดียวกับ LINE (คืนสิทธิ์ที่ processMessage)
   label.ts            D-52 · channelLabel(id[,pageName]) → [FB]/[ซ้อม]/[LINE] · วางหน้าชื่อลูกค้าในข้อความแอดมินทุกจุด (ห้ามฝั่งลูกค้า)
   pages.ts messengerPageIds()  D-53 · list page_id (env 1 เพจ) — resolve คำสั่ง "ปิดบอท fb"→key fb:<pageId>
 > D-53 สวิตช์บอทราย channel: คำสั่งกลุ่ม "ปิด/เปิดบอท line|fb[:<pageId>]" → Neon `channel_switches`(channel PK,enabled default true) · เช็คต้นทาง handleEvent(LINE)/handleMetaMessaging(fb) → ช่องปิด=เงียบ · `ปิดบอท`เฉยๆ/รายคน/ทั้งหมด เดิม

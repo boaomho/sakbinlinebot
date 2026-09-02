@@ -3,7 +3,8 @@ import crypto from "node:crypto";
 import { scriptGemini, turn, lineCalls } from "../harness/state";
 import { seedBotLib, v3StepRows } from "../harness/botlib-fixture";
 import { ensureCustomer, getCustomer } from "@/lib/db";
-import { verifyMetaSignature } from "@/lib/channel/meta";
+import { setLastSeenAgo } from "../harness/db";
+import { verifyMetaSignature, BOT_ECHO_MARK } from "@/lib/channel/meta";
 import { metaVerifyChallenge, processMetaWebhook, metaUserId } from "@/lib/channel/meta-webhook";
 import { resolvePageContext } from "@/lib/channel/pages";
 import { MessengerTransport } from "@/lib/channel/transport";
@@ -53,7 +54,17 @@ function sign(rawBody: string): string {
   return "sha256=" + crypto.createHmac("sha256", APP_SECRET).update(rawBody, "utf8").digest("hex");
 }
 function textEvent(text: string, extra: Record<string, unknown> = {}): string {
-  return JSON.stringify({ object: "page", entry: [{ id: PAGE_ID, messaging: [{ sender: { id: PSID }, message: { mid: "mid1", text, ...extra } }] }] });
+  return JSON.stringify({ object: "page", entry: [{ id: PAGE_ID, messaging: [{ sender: { id: PSID }, recipient: { id: PAGE_ID }, message: { mid: "mid1", text, ...extra } }] }] });
+}
+/**
+ * 🔴 D-76: echo event ของ Meta **กลับด้าน** — sender = เพจ · recipient = ลูกค้า (PSID)
+ * fixture เดิมใส่ sender=PSID (ไม่ใช่ของจริง) → เทสผ่านทั้งที่โปรดักชันเซ็ต human_mode ผิด id มาตลอด
+ */
+function echoEvent(text: string, extra: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    object: "page",
+    entry: [{ id: PAGE_ID, messaging: [{ sender: { id: PAGE_ID }, recipient: { id: PSID }, message: { mid: "mid-echo", is_echo: true, text, ...extra } }] }],
+  });
 }
 const textSends = (): string[] => graphCalls.filter((c) => (c.body.message as { text?: string })?.text).map((c) => (c.body.message as { text: string }).text);
 
@@ -131,19 +142,79 @@ describe("M-2 · processMetaWebhook (webhook → pipeline → Send API)", () => 
   });
 });
 
-describe("M-2 · echo (5.4)", () => {
-  it("🔴 echo app_id = ของเรา → ทิ้ง (กันลูป · ไม่ human_mode)", async () => {
-    await ensureCustomer(metaUserId(PAGE_ID, PSID));
-    const body = textEvent("บอทเราส่งเอง", { is_echo: true, app_id: APP_ID });
+describe("M-2/D-76 · echo — แอดมินพิมพ์แทรกแล้วบอทหยุด (เทียบเท่า LINE)", () => {
+  it("🔴 D-76 บั๊กหลัก: echo แอดมิน → human_mode ลง id ของ **ลูกค้า** (recipient) ไม่ใช่ id เพจ", async () => {
+    const customer = metaUserId(PAGE_ID, PSID);
+    const phantom = metaUserId(PAGE_ID, PAGE_ID); // id ที่โค้ดเดิม (อ่าน sender) เผลอไปปิดบอทให้
+    await ensureCustomer(customer);
+    const body = echoEvent("แอดมินตอบเองค่ะ"); // กล่องเพจ: ไม่มี app_id ไม่มี metadata
     await processMetaWebhook(body, sign(body));
-    expect(graphCalls.length).toBe(0);
-    expect((await getCustomer(metaUserId(PAGE_ID, PSID)))?.humanMode).toBe(false);
+    expect(graphCalls.length, "echo ห้ามทำให้บอทตอบ").toBe(0);
+    expect((await getCustomer(customer))?.humanMode, "ลูกค้าตัวจริงต้องถูกปิดบอท").toBe(true);
+    expect(await getCustomer(phantom), "ห้ามสร้าง/ปิดบอทให้ id ผี fb:<page>:<page>").toBeNull();
   });
-  it("🔴 echo app_id อื่น (แอดมินพิมพ์) → human_mode · ไม่ตอบ", async () => {
-    await ensureCustomer(metaUserId(PAGE_ID, PSID));
-    const body = textEvent("แอดมินตอบเอง", { is_echo: true, app_id: "555000" });
+
+  it("🔴 echo ของบอทเอง (metadata ลายเซ็น) → ไม่ปิดบอท — แยกได้แน่นอนแม้ไม่มี app_id", async () => {
+    const customer = metaUserId(PAGE_ID, PSID);
+    await ensureCustomer(customer);
+    const body = echoEvent("บอทเราส่งเอง", { metadata: BOT_ECHO_MARK });
     await processMetaWebhook(body, sign(body));
-    expect(graphCalls.length).toBe(0);
-    expect((await getCustomer(metaUserId(PAGE_ID, PSID)))?.humanMode, "เข้า human_mode").toBe(true);
+    expect((await getCustomer(customer))?.humanMode).toBe(false);
+  });
+
+  it("echo ของบอทเอง (app_id ตรง META_APP_ID · ข้อความที่ส่งก่อน D-76 ยังไม่มี metadata) → ไม่ปิดบอท", async () => {
+    const customer = metaUserId(PAGE_ID, PSID);
+    await ensureCustomer(customer);
+    const body = echoEvent("บอทเราส่งก่อน deploy", { app_id: APP_ID });
+    await processMetaWebhook(body, sign(body));
+    expect((await getCustomer(customer))?.humanMode).toBe(false);
+  });
+
+  it("echo จากแอปอื่น (app_id ไม่ตรง) → ปิดบอท (มีคน/ระบบอื่นกำลังตอบ)", async () => {
+    const customer = metaUserId(PAGE_ID, PSID);
+    await ensureCustomer(customer);
+    const body = echoEvent("แอปอื่นตอบ", { app_id: "555000" });
+    await processMetaWebhook(body, sign(body));
+    expect((await getCustomer(customer))?.humanMode).toBe(true);
+  });
+
+  it("🔴 ทุกข้อความที่บอทส่งออกต้องแปะลายเซ็น metadata (ไม่งั้น echo ตัวเองจะปิดบอทตัวเอง)", async () => {
+    seedBotLib({ stepRows: stepSheet() });
+    scriptGemini([turn({ reply: "สวัสดีค่ะ", stage: "S1" })]);
+    const body = textEvent("สวัสดี");
+    await processMetaWebhook(body, sign(body));
+    const sends = graphCalls.filter((c) => c.body.message);
+    expect(sends.length, "ต้องมีการส่งจริง").toBeGreaterThan(0);
+    for (const c of sends) {
+      expect((c.body.message as { metadata?: string }).metadata, "ทุก message ต้องมีลายเซ็น").toBe(BOT_ECHO_MARK);
+    }
+  });
+});
+
+describe("D-76 · กติกาคืนสิทธิ์บอทฝั่ง FB = เส้นเดียวกับ LINE (ไม่มีกติกาใหม่)", () => {
+  it("🔴 แอดมินพิมพ์ (echo) → ลูกค้าทักต่อ = บอทเงียบ · พอเงียบครบเกณฑ์ Config แล้วทักใหม่ = บอทกลับมา", async () => {
+    const customer = metaUserId(PAGE_ID, PSID);
+    seedBotLib({ stepRows: stepSheet() });
+    await ensureCustomer(customer);
+
+    const echo = echoEvent("แอดมินขอดูแลต่อนะคะ");
+    await processMetaWebhook(echo, sign(echo));
+    expect((await getCustomer(customer))?.humanMode).toBe(true);
+
+    // ลูกค้าทักทันที → บอทต้องเงียบ (แอดมินยังคุยอยู่)
+    graphCalls.length = 0;
+    scriptGemini([turn({ reply: "ไม่ควรถูกส่ง", stage: "S1" })]);
+    const soon = textEvent("ยังอยู่ไหมคะ");
+    await processMetaWebhook(soon, sign(soon));
+    expect(textSends(), "อยู่ human_mode = บอทห้ามพิมพ์ชน").toHaveLength(0);
+
+    // เงียบเกิน `คืนสิทธิ์บอท_หลังแชทเงียบ` (45 นาที · ค่าเดียวกับ LINE) → lazy return ตอนลูกค้าทัก
+    await setLastSeenAgo(customer, 60);
+    graphCalls.length = 0;
+    scriptGemini([turn({ reply: "ปลาทูกลับมาดูแลต่อค่ะ", stage: "S1" })]);
+    const later = textEvent("สนใจสินค้าค่ะ");
+    await processMetaWebhook(later, sign(later));
+    expect(textSends().join(" "), "พ้นเกณฑ์ → บอทกลับมาตอบ").toContain("ปลาทูกลับมาดูแลต่อค่ะ");
+    expect((await getCustomer(customer))?.humanMode, "human_mode ถูกปลด").toBe(false);
   });
 });

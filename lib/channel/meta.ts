@@ -36,15 +36,22 @@ async function graphPost(pageId: string, token: string, body: unknown): Promise<
   }
 }
 
+/**
+ * 🔴 D-76: ลายเซ็นของเราบนข้อความที่ส่งออก — Send API คืนค่านี้กลับใน echo event
+ * ใช้แยก "echo ของบอทเอง" ออกจาก "echo ที่แอดมินพิมพ์มือ" แบบ **deterministic 100%**
+ * (ต่างจาก app_id ที่อนุมานจาก "ไม่มี = คนพิมพ์" — พลาดทางไหนก็ปิดบอทตัวเอง)
+ */
+export const BOT_ECHO_MARK = "sakbin-bot";
+
 export function sendMessengerText(pageId: string, token: string, psid: string, text: string): Promise<boolean> {
-  return graphPost(pageId, token, { recipient: { id: psid }, messaging_type: "RESPONSE", message: { text } });
+  return graphPost(pageId, token, { recipient: { id: psid }, messaging_type: "RESPONSE", message: { text, metadata: BOT_ECHO_MARK } });
 }
 
 export function sendMessengerImage(pageId: string, token: string, psid: string, url: string): Promise<boolean> {
   return graphPost(pageId, token, {
     recipient: { id: psid },
     messaging_type: "RESPONSE",
-    message: { attachment: { type: "image", payload: { url, is_reusable: true } } },
+    message: { attachment: { type: "image", payload: { url, is_reusable: true } }, metadata: BOT_ECHO_MARK },
   });
 }
 
