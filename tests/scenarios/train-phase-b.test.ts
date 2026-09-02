@@ -18,7 +18,7 @@ const ESSENCE_IDX = V3_STEP_HEADER.indexOf("สาระที่ต้องส
 function steps(): string[][] {
   return v3StepRows([
     { step_id: "S1", entry: 'ทักทาย เช่น "สวัสดี"', essence: "สาระจากชีตเดิม: ทักทายลูกค้า" },
-    { step_id: "S3", entry: 'ยืนยัน เช่น "ขอยืนยัน"', essence: "ทวนที่อยู่: {ออเดอร์_ที่อยู่}", guide: "ยืนยันนะคะ[[เว้น]]ที่อยู่เดิม {ออเดอร์_ที่อยู่}" },
+    { step_id: "S3", entry: 'ยืนยัน เช่น "ขอยืนยัน"', essence: "ยืนยันนะคะ[[เว้น]]ทวนที่อยู่: {ออเดอร์_ที่อยู่}", guide: "ยืนยันนะคะ[[เว้น]]ที่อยู่เดิม {ออเดอร์_ที่อยู่}" },
   ]);
 }
 
@@ -32,7 +32,7 @@ describe("เฟส ข · applyOverlayToTab (pure) — ทับบนชีต
     const rows = steps();
     const out = applyOverlayToTab(TAB.steps, rows, [{ tab: TAB.steps, key: "S1", column: "สาระที่ต้องสื่อ", value: "สาระใหม่ค่ะ" }]);
     expect(out[1][ESSENCE_IDX]).toBe("สาระใหม่ค่ะ");
-    expect(out[2][ESSENCE_IDX], "แถวอื่นไม่แตะ").toBe("ทวนที่อยู่: {ออเดอร์_ที่อยู่}");
+    expect(out[2][ESSENCE_IDX], "แถวอื่นไม่แตะ").toBe("ยืนยันนะคะ[[เว้น]]ทวนที่อยู่: {ออเดอร์_ที่อยู่}");
     expect(rows[1][ESSENCE_IDX], "ต้นฉบับไม่ถูก mutate").toBe("สาระจากชีตเดิม: ทักทายลูกค้า");
   });
   it("key/column ไม่เจอ → ไม่ทับ (เงียบ)", () => {
@@ -71,7 +71,8 @@ describe("เฟส ข · provenance — เทิร์นนี้มาจ�
     const res = await runTrainTurn("train-prov-0001", "สวัสดีค่ะ");
     expect(res.sources.length).toBeGreaterThan(0);
     expect(res.sources[0]).toMatchObject({ tab: "Steps", key: "S1", keyCol: "step_id" });
-    expect(res.sources[0].columns.map((c) => c.name)).toContain("ตัวอย่างคำตอบ");
+    // 🔴 D-72b: คอลัมน์ที่โชว์/แก้ = ชื่อจริงตามชีต (สาระที่ต้องสื่อ = ช่องที่เข้า prompt จริง)
+    expect(res.sources[0].columns.map((c) => c.name)).toEqual(["สาระที่ต้องสื่อ", "แนวตอบ"]);
   });
 });
 
@@ -100,7 +101,7 @@ describe("เฟส ข · preview + lint สด (reuse guard production)", () =
 
   it("🔴 lint: ตัวแปรไม่รู้จัก + ราคานอกระบบ → block · (draft ทับสด)", async () => {
     seedBotLib({ stepRows: steps() });
-    const pv = await runTrainPreview("train-pv-0002", "Steps", "S1", { "ตัวอย่างคำตอบ": "ราคา 999 บาท {ตัวแปรมั่ว}ค่ะ" });
+    const pv = await runTrainPreview("train-pv-0002", "Steps", "S1", { "สาระที่ต้องสื่อ": "ราคา 999 บาท {ตัวแปรมั่ว}ค่ะ" });
     const kinds = pv.lint.map((f) => f.kind);
     expect(kinds, "ตัวแปรไม่รู้จัก").toContain("unknown-var");
     expect(kinds, "ราคานอกระบบ 999").toContain("price");

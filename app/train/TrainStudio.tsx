@@ -56,6 +56,14 @@ const MGMT_TABS: { tab: string; label: string }[] = [
   { tab: "Vars", label: "Vars" },
 ];
 
+/** 🔴 D-72b: คอลัมน์ที่แก้ได้แต่ "ไม่เข้า prompt" (D-66 §4) — ติดป้ายกันเจ้าของแก้แล้วงงว่าทำไมบอทไม่เปลี่ยน (sync กับ COLS_NOT_IN_PROMPT ใน lib/train/preview.ts) */
+const NOT_IN_PROMPT: Record<string, string[]> = { Steps: ["แนวตอบ"] };
+function notInPrompt(tab: string, col: string): boolean {
+  return (NOT_IN_PROMPT[tab] ?? []).includes(col);
+}
+const NotInPromptTag = ({ tab, col }: { tab: string; col: string }) =>
+  notInPrompt(tab, col) ? <span style={{ background: "#fbe6e6", color: "#b00", padding: "1px 7px", borderRadius: 8, fontSize: 11, fontWeight: 400, marginLeft: 4 }}>ไม่เข้า prompt — บอทไม่เห็นช่องนี้</span> : null;
+
 function sessionIdFromStorage(): string {
   const KEY = "train-session-id";
   let id = typeof localStorage !== "undefined" ? localStorage.getItem(KEY) : null;
@@ -632,7 +640,7 @@ export default function TrainStudio() {
                   {mgmtData.header.filter((h) => h && h !== mgmtData.statusCol).map((h) => (
                     <div key={h} style={{ marginBottom: 8 }}>
                       <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 2 }}>
-                        {h}{h === mgmtData.keyCol && <span style={{ color: "#06735c" }}> (key)</span>}
+                        {h}{h === mgmtData.keyCol && <span style={{ color: "#06735c" }}> (key)</span>}<NotInPromptTag tab={mgmtTab} col={h} />
                         {mgmtTab === "Steps" && h === "funnel_stage" && <span style={{ color: "#a10000", fontWeight: 400 }}> · ต้องเป็นสเตจที่ถูก (บอทใช้เป็นตาข่าย handoff)</span>}
                       </div>
                       <textarea style={{ ...S.ta, minHeight: mgmtData.editableCols.includes(h) ? 70 : 38 }} value={addForm[h] ?? ""} onChange={(e) => setAddForm({ ...addForm, [h]: e.target.value })} />
@@ -697,7 +705,7 @@ export default function TrainStudio() {
           const hasBlock = (preview?.lint ?? []).some((f) => f.level === "block");
           return (
             <div key={c.name} style={{ marginBottom: 8 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 2 }}>{c.name} <span style={{ color: "#999", fontWeight: 400 }}>(ดิบ ก่อน resolve)</span></div>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 2 }}>{c.name} <span style={{ color: "#999", fontWeight: 400 }}>(ดิบ ก่อน resolve)</span><NotInPromptTag tab={editorSrc.tab} col={c.name} /></div>
               <textarea style={{ ...S.ta, ...(isMobile ? { minHeight: 90, fontSize: 16 } : {}) }} value={c.value} onChange={(e) => editCol(c.name, e.target.value)} />
               <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
                 <button style={tb} onClick={() => copyCol(c.value)}>📋 Copy</button>

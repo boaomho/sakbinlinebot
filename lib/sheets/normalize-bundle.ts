@@ -34,12 +34,26 @@ const FIXED_FUNNEL: Record<string, string> = {
 };
 const DEFAULT_FUNNEL = "qualified";
 
-/** ค่า flag handoff ที่ยอมรับ (คอลัมน์ handoff ใน เส้นทางขาย) */
+/** ค่า flag handoff ที่ยอมรับ (คอลัมน์ handoff ใน Steps) */
 const HANDOFF_FLAG = new Set(["ใช่", "true", "on", "1", "yes", "✓", "เปิด", "handoff"]);
+
+/** คอลัมน์ `handoff` ของแถวดิบ Steps ติดธงไหม — D-72b: export ให้ Studio (h1FlagsForRow) อ่านกติกาเดียวกับ normalize */
+export function isHandoffFlag(raw: string | undefined): boolean {
+  return HANDOFF_FLAG.has(cleanCell(raw).toLowerCase());
+}
 
 /** normalize สถานะ v3 → canonical: "live" เท่านั้นที่ live · อื่นทั้งหมดรวม "ว่าง" = draft (B1) */
 function normalizeStatus(raw: string | undefined): "live" | "draft" {
   return cleanCell(raw).toLowerCase() === "live" ? "live" : "draft";
+}
+
+/**
+ * 🔴 D-72b: สถานะดิบตามชีตแถวนี้ live ไหม — **semantics v3 "ว่าง = draft"** (invariant D-61.B)
+ * สำหรับโค้ดที่อ่าน "แถวดิบ" (Studio/write.ts/assistant-kb) — ห้ามใช้ `isActiveStatus` ของ inject.ts
+ * กับแถวดิบ botlib เด็ดขาด (ตัวนั้น "ว่าง = active" — ถูกสำหรับ bundle ที่ normalize แล้วเท่านั้น)
+ */
+export function isLiveStatus(raw: string | undefined): boolean {
+  return normalizeStatus(raw) === "live";
 }
 
 function headerIndex(rows: string[][]): { header: string[]; idx: (name: string) => number } {
@@ -104,7 +118,22 @@ function normalizeSteps(rows: string[][]): string[][] {
   return out;
 }
 
-/** Knowledge: ประกอบ `คำตอบ` จาก 3 คอลัมน์ (ลำดับเคาะ #1: ความกังวลจริง → ข้อเท็จจริง → แนวตอบ) */
+/**
+ * 🔴 ประกอบก้อน `คำตอบ` ของ Knowledge จาก 3 คอลัมน์ (ลำดับเคาะ #1: ความกังวลจริง → ข้อเท็จจริง → แนวตอบ)
+ * D-72b: export เป็นแหล่งเดียว — normalizeKnowledge (เส้นบอท) และ preview.ts (เส้น Studio) เรียกตัวเดียวกัน
+ * ถ้า Studio ประกอบเองคนละสูตร preview/lint จะโกหก (เขียวที่ห้องซ้อม แดงตอนเข้า prompt จริง)
+ */
+export function composeKnowledgeAnswer(concern: string, fact: string, guide: string): string {
+  return [
+    cleanCell(concern) && `ความกังวลจริง: ${cleanCell(concern)}`,
+    cleanCell(fact) && `ข้อเท็จจริง: ${cleanCell(fact)}`,
+    cleanCell(guide) && `แนวตอบ (ปรับตามบริบท): ${cleanCell(guide)}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+/** Knowledge: ประกอบ `คำตอบ` จาก 3 คอลัมน์ — ก้อนจริงมาจาก `composeKnowledgeAnswer` (แหล่งเดียวกับ Studio) */
 function normalizeKnowledge(rows: string[][]): string[][] {
   if (rows.length === 0) return [];
   const { idx } = headerIndex(rows);
@@ -124,13 +153,7 @@ function normalizeKnowledge(rows: string[][]): string[][] {
     const r = rows[i];
     const say = g(r, iSay);
     if (!say) continue;
-    const answer = [
-      g(r, iConcern) && `ความกังวลจริง: ${g(r, iConcern)}`,
-      g(r, iFact) && `ข้อเท็จจริง: ${g(r, iFact)}`,
-      g(r, iGuide) && `แนวตอบ (ปรับตามบริบท): ${g(r, iGuide)}`,
-    ]
-      .filter(Boolean)
-      .join("\n");
+    const answer = composeKnowledgeAnswer(g(r, iConcern), g(r, iFact), g(r, iGuide));
     out.push([say, g(r, iKw), "answer", answer, normalizeStatus(r[iStatus])]);
   }
   return out;

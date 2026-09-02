@@ -1,4 +1,5 @@
 import { KNOWN_RUNTIME_VARS, loadLiveVars, findBannedClaims, parseClaimsList, findBadPrices } from "@/lib/agent/quote";
+import { findAssuranceHits } from "@/lib/guards/assurance";
 import { buildAllowedPriceStrings } from "@/lib/core/pricing";
 import type { AppConfig } from "@/lib/config";
 import type { BotLibrary } from "@/lib/sheets/loader";
@@ -23,7 +24,7 @@ const VAR_TOKEN = /\{[^}]+\}/g;
 
 /**
  * 🔴 H1 (พ.ร.บ.อาหาร · ความเสี่ยงอันดับ 1 · CLAUDE.md): คำที่แตะสุขภาพ/แพ้อาหาร/คนท้อง/ให้นม/เด็ก/ผู้ป่วย/ยา
- *    ในเนื้อ "คำตอบที่บอทจะพูด" = ห้ามให้บอทตอบเอง · ยกเว้นถ้าคำตอบเป็นการส่งต่อแอดมิน (เคสถูก: FAQ แพ้อาหาร→handoff)
+ *    ใน trigger (สิ่งที่ลูกค้าพูด) หรือคำตอบ = แถวนี้เกี่ยวสุขภาพ → เข้าเกณฑ์ H1
  */
 const HEALTH_TERMS = [
   "แพ้อาหาร", "แพ้ยา", "ภูมิแพ้", "แพ้",
@@ -34,33 +35,31 @@ const HEALTH_TERMS = [
   "กินคู่ยา", "คู่ยา", "กินยา", "ทานยา", "ยารักษา",
   "allergy", "allergic", "pregnan", "breastfeed", "diabet",
 ];
-/** คำที่บ่งว่าคำตอบ "ส่งต่อคน" (ไม่ใช่บอทตอบสุขภาพเอง) — เจอคู่กับคำสุขภาพ → เตือนเหลือง ไม่ block */
-const HANDOFF_TERMS = ["ส่งต่อ", "แอดมิน", "ทีมงาน", "เจ้าหน้าที่", "ผู้เชี่ยวชาญ", "ติดต่อกลับ", "admin"];
-/** D-58: วลี "รับรอง" สุขภาพ — ห้ามใช้แม้ในประตู notify (ให้ข้อมูลกลางๆ + ส่งต่อ ไม่ใช่รับประกันว่าปลอดภัย) */
-const H1_ASSURANCE_TERMS = ["ทานได้", "กินได้", "ปลอดภัย", "ไม่เป็นไร", "ไม่อันตราย", "หายห่วง"];
 
 /**
- * 🔴 H1 gate: ถ้า "แถวนี้เกี่ยวสุขภาพ/แพ้อาหาร" (คำสุขภาพอยู่ใน trigger=คำถาม/สิ่งที่ลูกค้าพูด หรือในคำตอบ)
- *    → คำตอบ "ต้องเป็นการส่งต่อแอดมิน" · ไม่งั้น block (เคส "แพ้กุ้งทานได้ไหม" → "ทานได้ค่ะ" = คดี)
- *    trigger สำคัญ: คำตอบอาจดูไม่มีคำสุขภาพ ("ทานได้ค่ะ") แต่ถ้า "คำถาม" เกี่ยวแพ้ = อันตราย
- * opts (D-58): exempt = ประตู Steps funnel=handoff/handoff_notify (คำตอบสุขภาพเป็นดีไซน์ที่เจ้าของคุม → ไม่ block)
- *              notify = ประตู handoff_notify → เพิ่ม warn เหลืองถ้าใช้วลี "รับรอง" สุขภาพ (ควรให้ข้อมูลกลางๆ)
+ * 🔴 H1 gate — D-72b เปลี่ยนเกณฑ์จาก v2 "ต้องมี handoff" → v3 **"ต้องไม่มีคำรับรอง"** (เจ้าของเคาะ ก/A)
+ *    เส้นที่ไม่ขยับคือ "ห้ามคำรับรอง" ไม่ใช่ "ห้ามบอทตอบ" (CLAUDE.md H1) — v3 ให้บอทคุยเรื่องสุขภาพต่อได้
+ *    ด้วยข้อเท็จจริงตามฉลาก · เกณฑ์เดิมจึง block แถวที่ถูกต้องตาม v3 (ข้อเท็จจริงล้วน ไม่มี "แอดมิน")
+ * 🔴 ตัวจับคำรับรอง = `findAssuranceHits` import จาก `lib/guards/assurance.ts` **ตรง ๆ ห้ามลอกกติกามาเขียนใหม่**
+ *    — แหล่งเดียวกับ guard ที่คุม output จริง (ถ้าตรงนี้เขียว = ตอนส่งจริง guard ไม่ตัด · guard เปลี่ยน lint เปลี่ยนตาม)
+ * opts: exempt = ประตู Steps handoff/handoff_notify (คำตอบสุขภาพเป็นดีไซน์ที่เจ้าของคุม → ไม่ตรวจ)
+ *       notify = ประตู handoff_notify → ยัง warn ถ้ามีคำรับรอง (D-58)
+ *       assurancePhrases = list จาก Config `คำรับรอง_ต้องห้าม` (ตัวเดียวกับ guard) · ไม่ส่ง = default ในโค้ด
  */
-export function lintHealthH1(triggerText: string, answerText: string, opts: { exempt?: boolean; notify?: boolean } = {}): LintFinding[] {
+export function lintHealthH1(triggerText: string, answerText: string, opts: { exempt?: boolean; notify?: boolean; assurancePhrases?: string[] } = {}): LintFinding[] {
   const out: LintFinding[] = [];
-  const answerLower = answerText.toLowerCase();
   if (!opts.exempt) {
     const hits = [...new Set(HEALTH_TERMS.filter((t) => `${triggerText} ${answerText}`.toLowerCase().includes(t)))];
     if (hits.length > 0) {
-      const answerIsHandoff = HANDOFF_TERMS.some((t) => answerLower.includes(t));
-      out.push(answerIsHandoff
-        ? { level: "warn", kind: "health-h1", hits, message: `⚠︎ แถวนี้เกี่ยวสุขภาพ/แพ้อาหาร (H1) — คำตอบเป็นการส่งต่อแอดมิน อนุญาตได้ แต่ตรวจให้แน่ใจว่าบอทไม่ได้ให้คำแนะนำสุขภาพเอง (คำที่พบ: ${hits.join(", ")})` }
-        : { level: "block", kind: "health-h1", hits, message: `🔴 แถวนี้เกี่ยวสุขภาพ/แพ้อาหาร (H1) — บอทห้ามตอบเอง เสี่ยง พ.ร.บ.อาหาร/คดี · คำตอบ "ต้องเป็นการส่งต่อแอดมิน" (เช่น "ขอส่งต่อให้แอดมินดูแลเรื่องนี้ให้นะคะ") แล้วจะเขียนได้ (คำที่พบ: ${hits.join(", ")})` });
+      const aHits = findAssuranceHits(answerText, opts.assurancePhrases);
+      out.push(aHits.length > 0
+        ? { level: "block", kind: "health-h1", hits: aHits, message: `🔴 แถวนี้เกี่ยวสุขภาพ/แพ้อาหาร (H1) และคำตอบมี "คำรับรอง" (${aHits.join(", ")}) — ห้ามทุกรูปประโยค (ลูกค้าแพ้แล้วเป็นคดี ไม่ใช่บั๊ก) · ตัดคำรับรองออก เหลือข้อเท็จจริงตามฉลาก หรือส่งต่อแอดมิน แล้วจะเขียนได้` }
+        : { level: "warn", kind: "health-h1", hits, message: `⚠︎ แถวนี้เกี่ยวกับสุขภาพ/แพ้อาหาร (H1) — ใส่ได้เฉพาะข้อเท็จจริงตามฉลาก (ส่วนประกอบ/สารก่อภูมิแพ้/ไลน์ผลิต) ห้ามใส่หลักการตอบ (CLAUDE.md H1) · ไม่แน่ใจ = ให้คำตอบส่งต่อแอดมิน (คำที่พบ: ${hits.join(", ")})` });
     }
   }
-  // D-58: ประตู notify — ไม่ block คำสุขภาพ (เป็นดีไซน์) แต่เตือนเหลืองถ้า "รับรอง" ว่าปลอดภัย/ทานได้
-  if (opts.notify) {
-    const aHits = [...new Set(H1_ASSURANCE_TERMS.filter((t) => answerLower.includes(t)))];
+  // D-58: ประตู notify — exempt จาก block (เป็นดีไซน์) แต่เตือนเหลืองถ้ามีคำรับรอง (ตัวจับเดียวกับ guard)
+  if (opts.exempt && opts.notify) {
+    const aHits = findAssuranceHits(answerText, opts.assurancePhrases);
     if (aHits.length > 0) {
       out.push({ level: "warn", kind: "health-h1", hits: aHits, message: `⚠︎ ประตู notify ไม่ควร "รับรอง" เรื่องสุขภาพ (${aHits.join(", ")}) — ให้ข้อมูลกลางๆ (ส่วนผสม/แนะนำปรึกษาแพทย์) + แจ้งว่าแอดมินจะช่วยดูแล` });
     }
@@ -125,7 +124,8 @@ export function lintPattern(
   }
 
   // 5) 🔴 H1 สุขภาพ/แพ้อาหาร (พ.ร.บ.อาหาร) — trigger-aware · gate: คำตอบต้องเป็น handoff (ยกเว้นประตู handoff/notify · D-58)
-  findings.push(...lintHealthH1(opts.trigger ?? "", pattern, { exempt: opts.h1Exempt, notify: opts.h1Notify }));
+  // 🔴 D-72b: list คำรับรองจาก config ตัวเดียวกับ assurance guard ฝั่ง output (ชีตตั้งทับได้ · แหล่งเดียว)
+  findings.push(...lintHealthH1(opts.trigger ?? "", pattern, { exempt: opts.h1Exempt, notify: opts.h1Notify, assurancePhrases: config.assuranceBannedPhrases }));
 
   // 6) 🔴 D-60เกลา: ประโยคปิดแบบ "รับมั้ยคะ/รับเลยนะคะ" — กฎเหล็กห้าม · ใช้ choice close แทน (warn ไม่ block)
   const closeHits: string[] = [];

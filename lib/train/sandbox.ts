@@ -11,14 +11,12 @@ export interface OverlayEntry {
 }
 
 /**
- * key column ต่อแท็บ — 🔴 **D-72a: ชื่อแท็บเหมือนกันทั้งสองฝั่งแล้ว แต่ "คอลัมน์ key" ยังคนละตัว**
- *   · RAW = แถวดิบจากชีต (overlay ทับที่ชั้น batchGet ก่อน normalize)
- *   · SHAPE = bundle ที่ normalize แล้ว (preview/write อ่าน)
- * ต่างกันเฉพาะ `Knowledge`: ชีตใช้ `ลูกค้าพูดยังไง` · shape ภายในใช้ `คำถาม` (normalizeKnowledge เปลี่ยนชื่อ)
- * 🔴 รวมสองอันเป็น map เดียวไม่ได้ — จะทับกันแล้ว overlay หาแถวไม่เจอ (เงียบ)
- * D-72b ที่แยกเส้นทาง raw/normalize จะทำให้เรื่องนี้ชัดขึ้น (Studio อ่าน raw ตรง ๆ)
+ * key column ต่อแท็บ — 🔴 D-72b: **ชุดเดียว = ชื่อคอลัมน์ตามชีตจริง**
+ * (D-72a เคยต้องแยก RAW/SHAPE เพราะ preview/write อ่าน bundle ที่ normalize แล้ว —
+ *  ตอนนี้เส้น Studio ทั้งหมดอ่าน `loadRawSheets()` จึงเหลือความจริงเดียว)
+ * ใช้ทั้ง overlay (ทับแถวดิบที่ชั้น batchGet) และ preview/write (หาแถวในชีตดิบ)
  */
-const RAW_TAB_KEY_COL: Record<string, string> = {
+const TAB_KEY_COL: Record<string, string> = {
   Steps: "step_id",
   Knowledge: "ลูกค้าพูดยังไง",
   Vars: "ตัวแปร",
@@ -26,14 +24,8 @@ const RAW_TAB_KEY_COL: Record<string, string> = {
   Promo: "promo_id",
   Config: "key",
 };
-const TAB_KEY_COL: Record<string, string> = {
-  Steps: "step_id",
-  Knowledge: "คำถาม",
-  Vars: "ตัวแปร",
-  Follow: "follow_id",
-};
 
-/** key column ของ "shape ภายใน" (preview/write) */
+/** key column ของแถวดิบตามชีต (D-72b: เส้น Studio ทั้งหมดใช้ตัวนี้) */
 export function tabKeyColumn(tab: string): string | null {
   return TAB_KEY_COL[tab] ?? null;
 }
@@ -42,7 +34,7 @@ export function tabKeyColumn(tab: string): string | null {
 export function applyOverlayToTab(tab: string, rows: string[][], overlay: OverlayEntry[]): string[][] {
   const entries = overlay.filter((o) => o.tab === tab);
   if (entries.length === 0 || rows.length === 0) return rows;
-  const keyColName = RAW_TAB_KEY_COL[tab]; // 🔴 overlay ทับ "แถวดิบ" → ใช้ชื่อคอลัมน์ตามชีต
+  const keyColName = TAB_KEY_COL[tab]; // overlay ทับ "แถวดิบ" → ชื่อคอลัมน์ตามชีต (D-72b: ชุดเดียวทั้งระบบ)
   if (!keyColName) return rows;
   const header = rows[0].map(cleanHeader);
   const keyIdx = header.indexOf(keyColName);

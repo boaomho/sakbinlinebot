@@ -2,7 +2,7 @@ import { getSheets } from "./client";
 import { resolveSpreadsheetId } from "@/lib/core/sheet-id";
 import { validateStepFunnelStages, VALID_FUNNEL_STAGES } from "@/lib/agent/inject";
 import { getTrainSandbox } from "@/lib/train/sandbox";
-import { SHEET_TABS, normalizeBundle } from "./normalize-bundle";
+import { SHEET_TABS, SheetTab, normalizeBundle } from "./normalize-bundle";
 
 /**
  * lib/sheets/loader.ts — โหลด BotLibrary ทุกแท็บด้วย batchGet 1 call จาก SHEET_BOTLIB_ID
@@ -32,9 +32,16 @@ export type BotLibTab = (typeof BOTLIB_TABS)[number];
 /** แต่ละแท็บ = แถวดิบ (รวมแถว header) string[][] */
 export type BotLibrary = Record<BotLibTab, string[][]>;
 
+/**
+ * 🔴 D-72b: "แถวดิบตามชีตเป๊ะ" (ชื่อคอลัมน์จริง ลำดับจริง เลขแถวจริง — ก่อน normalize)
+ * เส้นทางของ Studio/ปุ่มเขียนเท่านั้น · เส้นบอทใช้ `BotLibrary` (normalize แล้ว) เหมือนเดิมทุกบรรทัด
+ */
+export type RawSheets = Record<SheetTab, string[][]>;
+
 const CACHE_TTL_MS = 60_000;
 
 interface CacheEntry {
+  raw: RawSheets;
   bundle: BotLibrary;
   fetchedAt: number;
 }
@@ -45,17 +52,17 @@ function emptyBundle(): BotLibrary {
 }
 
 /**
- * โหลดทุกแท็บ BotLibrary — batchGet 1 call · cache 60 วิ
- * คืน null เมื่อ env ขาด/ผิดรูป หรือโหลดครั้งแรกไม่สำเร็จ (ไม่มี cache) → ปิดฟีเจอร์
+ * แกนโหลดจริง (ใช้ร่วม 2 เส้นทาง) — batchGet 1 call · cache 60 วิ · คืนทั้ง raw+bundle
+ * 🔴 D-72b: raw กับ bundle มาจาก batchGet ครั้งเดียวกันเสมอ (cache entry เดียว) — ไม่มีทางเห็นชีตคนละจังหวะ
  */
-export async function loadBotLibrary(): Promise<BotLibrary | null> {
+async function loadBoth(): Promise<CacheEntry | null> {
   // 🔴 T-STUDIO (guarded no-op สำหรับ prod): อยู่ใน sandbox → bypass cache 60วิ ทั้งอ่าน/เขียน
   //    เพื่อ (1) ให้ draft overlay (apply ที่ batchGet proxy) มีผลทันทีทุกเทิร์น
   //    (2) 🔴 กัน bundle ที่มี overlay รั่วเข้า cache ที่ prod ใช้ร่วม · ไม่มี context = พฤติกรรมเดิมทุกบรรทัด
   const inSandbox = Boolean(getTrainSandbox());
   const now = Date.now();
   if (!inSandbox && cache && now - cache.fetchedAt < CACHE_TTL_MS) {
-    return cache.bundle;
+    return cache;
   }
 
   // 🔴 D-72a: ชื่อ ENV กลับมาเป็น SHEET_BOTLIB_ID (ไม่มี v2 ให้แยกแล้ว)
@@ -66,7 +73,7 @@ export async function loadBotLibrary(): Promise<BotLibrary | null> {
     spreadsheetId = resolveSpreadsheetId(process.env[envKey], envKey);
   } catch (error) {
     console.error(JSON.stringify({ scope: "sheets", warning: `${envKey} invalid`, error: String(error) }));
-    return (inSandbox ? null : cache?.bundle) ?? null; // ยังมี cache เก่าก็ใช้ต่อ (prod) · sandbox = null
+    return (inSandbox ? null : cache) ?? null; // ยังมี cache เก่าก็ใช้ต่อ (prod) · sandbox = null
   }
 
   try {
@@ -76,18 +83,36 @@ export async function loadBotLibrary(): Promise<BotLibrary | null> {
     });
     const valueRanges = res.data.valueRanges ?? [];
     // "order of ValueRanges is the same as requested ranges" (ยืนยันจาก types) → map ตาม index
-    const rawByTab: Record<string, string[][]> = {};
+    const raw = {} as RawSheets;
     SHEET_TABS.forEach((tab, i) => {
-      rawByTab[tab] = (valueRanges[i]?.values as string[][] | undefined) ?? [];
+      raw[tab] = (valueRanges[i]?.values as string[][] | undefined) ?? [];
     });
-    const bundle: BotLibrary = normalizeBundle(rawByTab); // normalize สถานะ (ว่าง=draft) + funnel + ประกอบคำตอบ — จุดเดียว
-    if (!inSandbox) cache = { bundle, fetchedAt: now }; // 🔴 sandbox ไม่เขียน cache (กัน draft รั่ว prod)
+    const bundle: BotLibrary = normalizeBundle(raw); // normalize สถานะ (ว่าง=draft) + funnel + ประกอบคำตอบ — จุดเดียว
+    const entry: CacheEntry = { raw, bundle, fetchedAt: now };
+    if (!inSandbox) cache = entry; // 🔴 sandbox ไม่เขียน cache (กัน draft รั่ว prod)
     logStepFunnelStageIssues(bundle.Steps); // Step 6: validate funnel_stage ครั้งเดียวต่อ load (ไม่ spam per-turn)
-    return bundle;
+    return entry;
   } catch (error) {
     console.error(JSON.stringify({ scope: "sheets", warning: "batchGet BotLibrary failed", error: String(error) }));
-    return (inSandbox ? null : cache?.bundle) ?? null; // fallback cache เก่า (prod) · sandbox = null
+    return (inSandbox ? null : cache) ?? null; // fallback cache เก่า (prod) · sandbox = null
   }
+}
+
+/**
+ * เส้นบอท: โหลดทุกแท็บ BotLibrary (normalize แล้ว) — พฤติกรรมเดิมทุกบรรทัด (D-72b แค่ย้ายแกนไป loadBoth)
+ * คืน null เมื่อ env ขาด/ผิดรูป หรือโหลดครั้งแรกไม่สำเร็จ (ไม่มี cache) → ปิดฟีเจอร์
+ */
+export async function loadBotLibrary(): Promise<BotLibrary | null> {
+  return (await loadBoth())?.bundle ?? null;
+}
+
+/**
+ * 🔴 D-72b · เส้น Studio/ปุ่มเขียน: "แถวดิบตามชีตเป๊ะ" จาก batchGet เดียวกับ loadBotLibrary (ไม่เพิ่ม Google call)
+ * ใช้หาพิกัดแถว/คอลัมน์ตอนเขียนกลับชีต + โชว์คอลัมน์จริงให้เจ้าของแก้ — ห้ามเอาไปเข้า prompt (ยังไม่ normalize)
+ * ใน sandbox: raw ผ่าน overlay ที่ batchGet proxy แล้ว (draft ทับมาให้เหมือนเส้นบอท)
+ */
+export async function loadRawSheets(): Promise<RawSheets | null> {
+  return (await loadBoth())?.raw ?? null;
 }
 
 /**

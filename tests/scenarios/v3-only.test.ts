@@ -66,16 +66,19 @@ describe("D-68 · ไม่มี ENV SHEET_SCHEMA → ยังเป็น v3 
   });
 });
 
-describe("D-68 · ปุ่มเขียนใน /train — ปิดตายไว้ (KI D-65 ฉบับแก้)", () => {
+describe("D-72b · ปุ่มเขียนใน /train — เปิดแล้ว (ปิด KI D-65/D-68)", () => {
   afterEach(() => vi.unstubAllEnvs());
 
-  it("🔴 เขียนไม่ได้ + ไม่แตะชีตเลย · error บอกทั้งสาเหตุและทางออก", async () => {
+  it("🔴 appendRow Vars เขียนได้จริง · แถวใหม่บังคับ draft · จด TRAIN_LOG", async () => {
     vi.stubEnv("SHEET_BOTLIB_ID", "1BBBsheetV3newYYYYYYYYYYYYYYYYYYYYYYYYYYY");
     const { appendRow } = await import("@/lib/train/write");
     sheetsCalls.appends.length = 0;
     sheetsCalls.batchUpdates.length = 0;
-    await expect(appendRow("Vars", { ตัวแปร: "{รูปทดสอบ}", ค่า: "https://blob.test/x.jpg" }))
-      .rejects.toThrow(/ยังเขียนชีต v3 ไม่ได้[\s\S]*D-69/);
-    expect([...sheetsCalls.appends, ...sheetsCalls.batchUpdates], "ห้ามแตะชีตแม้แต่ TRAIN_LOG").toHaveLength(0);
+    const res = await appendRow("Vars", { ตัวแปร: "{รูปทดสอบ}", ค่า: "https://blob.test/x.jpg" });
+    expect(res.status).toBe("ok");
+    const added = sheetsCalls.appends.find((a) => a.range.startsWith("Vars"));
+    // Vars header: ตัวแปร | ค่า | หมายเหตุ | สถานะ — สถานะบังคับ draft เสมอ
+    expect(added?.values[0]).toEqual(["{รูปทดสอบ}", "https://blob.test/x.jpg", "", "draft"]);
+    expect(sheetsCalls.appends.some((a) => a.range.startsWith("TRAIN_LOG"))).toBe(true);
   });
 });

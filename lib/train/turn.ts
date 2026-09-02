@@ -3,7 +3,7 @@ import { GET as cronOrdersGET } from "@/app/api/cron/orders/route";
 import type { NextRequest } from "next/server";
 import { getConfig, resolveFeatureSwitches } from "@/lib/config";
 import { getCustomer, resetCustomerMemory, loadTrainSession, saveTrainSession, deleteTrainSession, CustomerState } from "@/lib/db";
-import { loadBotLibrary } from "@/lib/sheets/loader";
+import { loadBotLibrary, loadRawSheets } from "@/lib/sheets/loader";
 import { funnelStageOf, stepNameOf } from "@/lib/agent/inject";
 import { LineTransport } from "@/lib/channel/transport";
 import { getSheets } from "@/lib/sheets/client";
@@ -129,13 +129,15 @@ async function withSession<T>(sessionId: string, fn: (ctx: TrainSandbox) => Prom
 
 /** ประกอบ TrainTurnResult จาก ctx หลังรัน (bubbles/X-ray/sources/dropped) — ใช้ร่วม turn+cron */
 async function buildResult(ctx: TrainSandbox, customer: CustomerState | null, userMessage: string): Promise<TrainTurnResult> {
+  // 🔴 D-72b: sources โชว์คอลัมน์จริงตามชีต (raw) · matcher ยังใช้ bundle (lib) — batchGet เดียวกัน
   const lib = await loadBotLibrary();
+  const raw = await loadRawSheets(); // sandbox bypass cache — เรียกต่อกันกันยิง batchGet ซ้ำขนาน
   return {
     bubbles: ctx.replies,
     adminPushes: ctx.adminPushes,
     orderRows: await rowsAsObjects(ctx),
     xray: await buildXray(ctx, customer),
-    sources: buildReplySources(ctx.logs, lib, userMessage, customer?.stage ?? null),
+    sources: buildReplySources(ctx.logs, lib, raw, userMessage, customer?.stage ?? null),
     droppedBubbles: collectDroppedBubbles(ctx.logs),
   };
 }
@@ -168,9 +170,10 @@ export async function runTrainPreview(
   return runInSandbox(ctx, async () => {
     const config = await getConfig();
     const lib = await loadBotLibrary();
-    if (!lib) throw new Error("โหลด BotLibrary ไม่ได้");
+  const raw = await loadRawSheets(); // sandbox bypass cache — เรียกต่อกันกันยิง batchGet ซ้ำขนาน
+    if (!lib || !raw) throw new Error("โหลด BotLibrary ไม่ได้");
     const customer = await getCustomer(ctx.userId);
-    return renderPreview(lib, config, customer, tab, key, draft, new Date());
+    return renderPreview(lib, raw, config, customer, tab, key, draft, new Date());
   });
 }
 

@@ -1,25 +1,37 @@
 import { resolveAllVars, KNOWN_RUNTIME_VARS, computeQuote, AllVarsContext } from "@/lib/agent/quote";
 import { buildProductNameMap, RuntimeVarContext } from "@/lib/core/pricing";
-import { joinVerbatimParts, buildFaqInjection } from "@/lib/agent/inject";
+import { buildFaqInjection } from "@/lib/agent/inject";
+import { composeKnowledgeAnswer, isHandoffFlag } from "@/lib/sheets/normalize-bundle";
 import { cleanHeader, cleanCell } from "@/lib/sheets/clean";
 import { tabKeyColumn } from "./sandbox";
 import { lintPattern, LintFinding } from "./lint";
 import type { AppConfig } from "@/lib/config";
-import type { BotLibrary } from "@/lib/sheets/loader";
+import type { BotLibrary, RawSheets } from "@/lib/sheets/loader";
 import type { CustomerState } from "@/lib/db";
 
 /**
  * lib/train/preview.ts — เฟส ข: provenance + render preview + dropped bubble
- * 🔴 reuse resolver/matcher/joiner ตัวเดียวกับ production (resolveAllVars/buildFaqInjection/...) — ไม่ duplicate logic
+ * 🔴 reuse resolver/matcher/joiner ตัวเดียวกับ production (resolveAllVars/buildFaqInjection/composeKnowledgeAnswer) — ไม่ duplicate logic
+ * 🔴 D-72b: คอลัมน์ที่โชว์/แก้ = **ชื่อจริงตามชีต** (อ่านจาก RawSheets) · lint/resolve ยังใช้ bundle ที่ normalize แล้ว (มุมมองบอท)
  */
 
 const EMPTY_VARS: RuntimeVarContext = { summary: null, total: null, payment: null, breakdown: null, nextTierOffer: null };
 
-/** คอลัมน์ที่แก้ได้ (=บอลลูน) ต่อแท็บ */
+/**
+ * คอลัมน์ที่แก้ได้ต่อแท็บ — 🔴 D-72b: ชื่อคอลัมน์จริงตามชีต (เจ้าของเคาะ)
+ * · Steps `แนวตอบ` **ไม่เข้า prompt** (D-66 §4) — UI ติดป้ายบอก · ช่องที่เข้า prompt คือ `สาระที่ต้องสื่อ`
+ * · Knowledge `keyword` แก้ได้ (บั๊กที่แพงที่สุดของโปรเจกต์คือ keyword ไม่ match — K018 "ถ้วยแตก")
+ * · `ลูกค้าพูดยังไง` = key ที่ใช้หาแถว → ไม่เปิดให้แก้
+ */
 export const EDITABLE_COLS: Record<string, string[]> = {
-  Steps: ["ตัวอย่างคำตอบ", "ตัวอย่างประโยคปิดท้าย"],
-  Knowledge: ["คำตอบ"],
+  Steps: ["สาระที่ต้องสื่อ", "แนวตอบ"],
+  Knowledge: ["ความกังวลจริง", "ข้อเท็จจริง/สิ่งที่อยากให้รู้", "แนวตอบ", "keyword"],
   Vars: ["ค่า"],
+};
+
+/** คอลัมน์ที่ "ไม่เข้า prompt" (แก้ได้แต่บอทไม่เห็น) — UI ใช้ติดป้ายเตือน (D-66 §4) */
+export const COLS_NOT_IN_PROMPT: Record<string, string[]> = {
+  Steps: ["แนวตอบ"],
 };
 
 export interface ReplySource {
@@ -45,9 +57,9 @@ export interface RenderResult {
   lint: LintFinding[];
 }
 
-// ---- อ่านแถวตาม key (header-driven) ----
-function rowByKey(lib: BotLibrary, tab: string, key: string): Record<string, string> | null {
-  const rows = (lib as Record<string, string[][]>)[tab];
+// ---- อ่านแถวตาม key (header-driven · 🔴 D-72b: จาก "แถวดิบตามชีต" เท่านั้น) ----
+function rowByKey(raw: RawSheets, tab: string, key: string): Record<string, string> | null {
+  const rows = (raw as Record<string, string[][]>)[tab];
   const keyCol = tabKeyColumn(tab);
   if (!rows || rows.length < 2 || !keyCol) return null;
   const header = rows[0].map(cleanHeader);
@@ -62,8 +74,8 @@ function rowByKey(lib: BotLibrary, tab: string, key: string): Record<string, str
   return obj;
 }
 
-function replySource(lib: BotLibrary, tab: string, key: string): ReplySource | null {
-  const row = rowByKey(lib, tab, key);
+function replySource(raw: RawSheets, tab: string, key: string): ReplySource | null {
+  const row = rowByKey(raw, tab, key);
   const keyCol = tabKeyColumn(tab);
   if (!row || !keyCol) return null;
   const cols = EDITABLE_COLS[tab] ?? [];
@@ -94,9 +106,9 @@ export function buildTrainVarCtx(customer: CustomerState | null, lib: BotLibrary
   };
 }
 
-/** คอลัมน์ "สิ่งที่ลูกค้าพูด/ถาม" ต่อแท็บ — ใช้ตรวจ H1: ถ้าแถวนี้ trigger เรื่องสุขภาพ คำตอบต้องเป็น handoff */
+/** คอลัมน์ "สิ่งที่ลูกค้าพูด/ถาม" ต่อแท็บ (🔴 D-72b: ชื่อดิบตามชีต) — ป้อน lintHealthH1: แถว trigger สุขภาพ = ห้ามคำรับรอง */
 const H1_TRIGGER_COLS: Record<string, string[]> = {
-  Knowledge: ["คำถาม", "keywords"],
+  Knowledge: ["ลูกค้าพูดยังไง", "keyword"],
   Steps: [],
   Vars: [],
 };
@@ -106,26 +118,39 @@ export function triggerTextForTab(tab: string, cols: Record<string, string>): st
   return (H1_TRIGGER_COLS[tab] ?? []).map((c) => cols[c] ?? "").filter(Boolean).join(" ");
 }
 
-/** D-58: ประตู Steps funnel=handoff/handoff_notify → ยกเว้น H1 block (คำตอบสุขภาพเป็นดีไซน์) · notify → +warn วลีรับรอง */
+/**
+ * D-58: ประตู Steps ที่เป็น handoff → ยกเว้น H1 (คำตอบสุขภาพเป็นดีไซน์) · notify → +warn วลีรับรอง
+ * 🔴 D-72b: cols เป็นแถวดิบ → ธง handoff อ่านจากคอลัมน์ `handoff` (กติกาเดียวกับ normalizeSteps ผ่าน isHandoffFlag)
+ *    + คอลัมน์ `funnel_stage` (optional D-68) ถ้าเจ้าของเปิดใช้
+ */
 export function h1FlagsForRow(tab: string, cols: Record<string, string>): { h1Exempt: boolean; h1Notify: boolean } {
   if (tab !== "Steps") return { h1Exempt: false, h1Notify: false };
-  const f = (cols["funnel_stage"] ?? "").toLowerCase();
-  return { h1Exempt: f === "handoff" || f === "handoff_notify", h1Notify: f === "handoff_notify" };
+  const f = cleanCell(cols["funnel_stage"] ?? "").toLowerCase();
+  const handoff = isHandoffFlag(cols["handoff"]) || f === "handoff" || f === "handoff_notify";
+  return { h1Exempt: handoff, h1Notify: f === "handoff_notify" };
 }
 
-/** สร้างแพตเทิร์นจากคอลัมน์ (draft ทับแล้ว) ตามแท็บ — reuse โดย write.ts (lint gate) */
+/**
+ * สร้างแพตเทิร์น "ตามที่บอทเห็นจริง" จากคอลัมน์ดิบ (draft ทับแล้ว) — reuse โดย write.ts (lint gate)
+ * 🔴 D-72b: Knowledge ประกอบก้อนเดียวกับที่เข้า prompt ผ่าน `composeKnowledgeAnswer` (แหล่งเดียวกับ normalize)
+ *    Steps ใช้ `สาระที่ต้องสื่อ` (ช่องเดียวที่เข้า prompt — `แนวตอบ` ไม่เข้า D-66 §4 จึงไม่ปนใน pattern)
+ */
 export function patternFromColumns(tab: string, cols: Record<string, string>): string {
-  if (tab === "Steps") return joinVerbatimParts(cols["ตัวอย่างคำตอบ"] ?? "", cols["ตัวอย่างประโยคปิดท้าย"] ?? "");
-  if (tab === "Knowledge") return (cols["คำตอบ"] ?? "").trim();
+  if (tab === "Steps") return (cols["สาระที่ต้องสื่อ"] ?? "").trim();
+  if (tab === "Knowledge") return composeKnowledgeAnswer(cols["ความกังวลจริง"] ?? "", cols["ข้อเท็จจริง/สิ่งที่อยากให้รู้"] ?? "", cols["แนวตอบ"] ?? "");
   if (tab === "Vars") return (cols["ค่า"] ?? "").trim();
   return "";
 }
 
 const VAR_TOKEN = /\{[^}]+\}/g;
 
-/** render แพตเทิร์นดิบ (+draft) → บอลลูน resolve แล้ว + ตารางตัวแปร + lint (สำหรับ editor สด) */
+/**
+ * render แพตเทิร์นดิบ (+draft) → บอลลูน resolve แล้ว + ตารางตัวแปร + lint (สำหรับ editor สด)
+ * 🔴 D-72b: อ่านแถวจาก raw (คอลัมน์จริงตามชีต) · resolve/lint ใช้ lib (bundle มุมมองบอท) — สองเส้นจาก batchGet เดียวกัน
+ */
 export function renderPreview(
   lib: BotLibrary,
+  raw: RawSheets,
   config: AppConfig,
   customer: CustomerState | null,
   tab: string,
@@ -133,7 +158,7 @@ export function renderPreview(
   draft: Record<string, string>,
   now: Date,
 ): RenderResult {
-  const row = rowByKey(lib, tab, key) ?? {};
+  const row = rowByKey(raw, tab, key) ?? {};
   const cols = { ...row, ...draft };
   const rawPattern = patternFromColumns(tab, cols);
   const ctx = buildTrainVarCtx(customer, lib, config, now);
@@ -165,13 +190,16 @@ export function renderPreview(
 }
 
 // ---- provenance: เทิร์นนี้ประกอบจากแถวไหนบ้าง (จาก X-ray verbatim log + re-run production matcher) ----
+// 🔴 D-72b: matcher วิ่งบน lib (bundle มุมมองบอท — ตัวเดียวกับ prod) · คอลัมน์ที่โชว์/แก้มาจาก raw
+//    key เชื่อมสองฝั่งได้เพราะ normalizeKnowledge คงค่า `ลูกค้าพูดยังไง` ไว้เป็น key เดิม
 export function buildReplySources(
   logs: Record<string, unknown>[],
   lib: BotLibrary | null,
+  raw: RawSheets | null,
   userMessage: string,
   fallbackStage: string | null,
 ): ReplySource[] {
-  if (!lib) return [];
+  if (!lib || !raw) return [];
   if (logs.some((l) => l.scope === "degraded")) return []; // ข้อความระบบ (ไม่ได้มาจากชีต)
 
   const vb = logs.filter((l) => l.scope === "verbatim" && typeof l.source === "string").pop();
@@ -183,12 +211,12 @@ export function buildReplySources(
     const faq = buildFaqInjection(lib.Knowledge, userMessage);
     if (faq.verbatim) {
       const key = faqKeyByAnswer(lib.Knowledge, faq.verbatim.answer);
-      if (key) out.push(replySource(lib, "Knowledge", key));
+      if (key) out.push(replySource(raw, "Knowledge", key));
     }
-    out.push(replySource(lib, "Steps", stage)); // กลับบ้าน
+    out.push(replySource(raw, "Steps", stage)); // กลับบ้าน
   } else if (stage) {
     // step / step-complete / undefined → ประตูที่ส่ง
-    out.push(replySource(lib, "Steps", stage));
+    out.push(replySource(raw, "Steps", stage));
   }
   return out.filter((s): s is ReplySource => s !== null);
 }

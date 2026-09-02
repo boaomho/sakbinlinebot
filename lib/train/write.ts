@@ -1,5 +1,6 @@
 import { getSheets } from "@/lib/sheets/client";
-import { loadBotLibrary, __resetBotLibraryCache, BotLibrary } from "@/lib/sheets/loader";
+import { loadBotLibrary, loadRawSheets, __resetBotLibraryCache, RawSheets } from "@/lib/sheets/loader";
+import { isLiveStatus } from "@/lib/sheets/normalize-bundle";
 import { resolveSpreadsheetId } from "@/lib/core/sheet-id";
 import { columnLetter } from "@/lib/sheets/columns";
 import { cleanHeader, cleanCell } from "@/lib/sheets/clean";
@@ -8,12 +9,16 @@ import { getConfig } from "@/lib/config";
 import { lintPattern } from "./lint";
 import { patternFromColumns, triggerTextForTab, h1FlagsForRow, EDITABLE_COLS } from "./preview";
 import { tabKeyColumn } from "./sandbox";
-import { VALID_FUNNEL_STAGES, isActiveStatus, statusColumnIndex } from "@/lib/agent/inject";
+import { VALID_FUNNEL_STAGES, statusColumnIndex } from "@/lib/agent/inject";
 
 /**
  * lib/train/write.ts — เฟส ค: เขียน draft กลับชีต BotLibrary จริง
  * 🔴 รันนอก sandbox (getSheets = client จริง) · เขียนเฉพาะ SHEET_BOTLIB_ID · ห้ามแตะ Orders (hard guard)
  * 🔴 target สดทุกครั้ง: หา row/col จาก key column + ชื่อ header ตอนเขียน (ไม่จำ A1/index)
+ * 🔴 D-72b: พิกัดแถว/คอลัมน์มาจาก `loadRawSheets()` = **แถวดิบตามชีตเป๊ะ** (ชื่อจริง ลำดับจริง เลขแถวจริง)
+ *    — ห้ามหาพิกัดจาก bundle ที่ normalize แล้วเด็ดขาด (header คนละชุด → เขียนผิดช่องเงียบ = เหตุที่ D-68 ต้องปิดปุ่ม)
+ *    lint gate ยังใช้ bundle (มุมมองบอท) — ทั้งคู่มาจาก batchGet เดียวกัน (cache entry เดียว)
+ * 🔴 สถานะบนแถวดิบ = semantics v3 "ว่าง=draft" → ใช้ `isLiveStatus` (ห้ามใช้ isActiveStatus ที่ "ว่าง=active")
  */
 
 // 🔴 D-72a: แท็บ Objections ถูกลบออกจากระบบ (v3 ยุบเข้า Knowledge ตั้งแต่ D-61.B)
@@ -42,22 +47,9 @@ function botlibId(): string {
   return id;
 }
 
-/**
- * 🔴 D-68: ปิดทางเขียนชีตชั่วคราว — เขียนไม่ได้จริงในโหมด v3 ด้วยเหตุ 2 ชั้น (KI D-65 ฉบับแก้)
- *   ชั้น 1 ชื่อแท็บใน EDITABLE_TABS ("Steps"/"Knowledge") = ชื่อ **shape ภายใน** ไม่มีอยู่จริงบนชีต v3
- *          (แท็บจริงชื่อ "เส้นทางขาย"/"ความรู้") → range ที่ประกอบขึ้นชี้แท็บที่ไม่มี
- *   ชั้น 2 `locateInLib` หา row/col index จาก bundle ที่ **adapter แปลงแล้ว** แล้วเอาไปเขียน **ชีตดิบ**
- *          (คนละ header คนละลำดับ) → ต่อให้แก้ชื่อแท็บถูก ก็จะเขียนทับผิดช่องแบบเงียบ
- *          (เช่น "ตัวอย่างคำตอบ" ตกใส่คอลัมน์ "handoff")
- * ชั้น 2 จะหายเองเมื่อ D-69 ถอด adapter (shape ภายใน = shape ชีตดิบ) → ค่อยเปิดเขียนที่นั่น
- * 🔴 จนกว่าจะถึงตอนนั้น: throw ก่อนแตะ Google เสมอ — ยอมให้กดไม่ได้ ดีกว่าเขียนผิดช่องในชีตจริง
- */
-const V3_WRITE_DISABLED =
-  "ยังเขียนชีต v3 ไม่ได้ (ชื่อแท็บและพิกัดคอลัมน์ยังไม่ตรงกับชีตจริง) — แก้ในชีตโดยตรงไปก่อน · จะรองรับใน D-69";
-
-function assertWritable(): void {
-  throw new Error(V3_WRITE_DISABLED);
-}
+// 🔴 D-72b: ถอด `assertWritable()` ที่ D-68 ล็อกไว้ — เหตุทั้ง 2 ชั้นหมดแล้ว
+//   ชั้น 1 (ชื่อแท็บ) หายที่ D-72a (ชีต = โค้ด ชื่อเดียวกัน) · ชั้น 2 (พิกัดจาก bundle ที่ normalize)
+//   หายในคอมมิตนี้ — ทุกจุดเขียนหาพิกัดจาก `loadRawSheets()` แล้ว (เทส train-phase-c ยืนยัน A1 ต่อคอลัมน์)
 
 function assertEditable(tab: string, column: string): void {
   if (!EDITABLE_TABS.includes(tab)) {
@@ -75,9 +67,9 @@ interface Located {
   rowCols: Record<string, string>;
 }
 
-/** หาแถว/คอลัมน์จาก key column + ชื่อ header (pure · header-driven) */
-function locateInLib(lib: BotLibrary, tab: string, key: string, column: string): Located | null {
-  const rows = (lib as Record<string, string[][]>)[tab];
+/** หาแถว/คอลัมน์จาก key column + ชื่อ header (pure · header-driven · 🔴 D-72b: บนแถวดิบตามชีตเท่านั้น) */
+function locateInRaw(raw: RawSheets, tab: string, key: string, column: string): Located | null {
+  const rows = (raw as Record<string, string[][]>)[tab];
   const keyCol = tabKeyColumn(tab);
   if (!rows || rows.length < 2 || !keyCol) return null;
   const header = rows[0].map(cleanHeader);
@@ -91,12 +83,12 @@ function locateInLib(lib: BotLibrary, tab: string, key: string, column: string):
   return { rowIndex, colIndex: colIdx, current: rows[rowIndex][colIdx] ?? "", rowCols };
 }
 
-/** อ่านค่าปัจจุบันสดของเซลล์ (โชว์ diff ก่อนเขียน) */
+/** อ่านค่าปัจจุบันสดของเซลล์ (โชว์ diff ก่อนเขียน) — 🔴 D-72b: อ่านจากแถวดิบ (ค่าตรงกับชีตเป๊ะ) */
 export async function diffCell(tab: string, key: string, column: string): Promise<{ exists: boolean; old: string }> {
   assertEditable(tab, column);
   __resetBotLibraryCache();
-  const lib = await loadBotLibrary();
-  const loc = lib ? locateInLib(lib, tab, key, column) : null;
+  const raw = await loadRawSheets();
+  const loc = raw ? locateInRaw(raw, tab, key, column) : null;
   return { exists: Boolean(loc), old: loc?.current ?? "" };
 }
 
@@ -104,9 +96,11 @@ export async function diffCell(tab: string, key: string, column: string): Promis
 export async function writeCell(tab: string, key: string, column: string, newValue: string, expectedOld: string, origin: "ui" | "ai" = "ui"): Promise<WriteResult> {
   assertEditable(tab, column);
   __resetBotLibraryCache();
-  const lib = await loadBotLibrary();
-  if (!lib) return { status: "not_found" };
-  const loc = locateInLib(lib, tab, key, column);
+  // 🔴 raw = พิกัด/ค่าจริงตามชีต · lib = มุมมองบอท (lint/resolve) — batchGet เดียวกัน (loadBoth cache entry เดียว)
+  const raw = await loadRawSheets();
+  const lib = await loadBotLibrary(); // ตัวที่สอง hit cache entry เดียวกัน (ห้ามยิงขนาน — batchGet ซ้ำ 2 ครั้ง)
+  if (!raw || !lib) return { status: "not_found" };
+  const loc = locateInRaw(raw, tab, key, column);
   if (!loc) return { status: "not_found" };
 
   // 🔴 กันชนกัน: ค่าในชีตจริงตอนนี้ต้องตรงกับที่โชว์ใน diff — ไม่ตรง = มีคนแก้ระหว่างนั้น
@@ -118,9 +112,8 @@ export async function writeCell(tab: string, key: string, column: string, newVal
   const findings = lintPattern(patternFromColumns(tab, merged), { config, lib, payment: "", now: new Date(), trigger: triggerTextForTab(tab, merged), ...h1FlagsForRow(tab, merged), varName: tab === "Vars" ? key : undefined });
   if (findings.some((f) => f.level === "block")) return { status: "lint", lint: findings };
 
-  assertWritable(); // 🔴 D-68: ปิดทางเขียน — throw ก่อนแตะ Google
   const spreadsheetId = botlibId(); // hard guard: BotLibrary เท่านั้น
-  const range = `${tab}!${columnLetter(loc.colIndex)}${loc.rowIndex + 1}`; // A1 สดจาก key+header
+  const range = `${tab}!${columnLetter(loc.colIndex)}${loc.rowIndex + 1}`; // A1 สดจาก key+header ของชีตดิบ (D-72b)
   await getSheets().spreadsheets.values.batchUpdate({
     spreadsheetId,
     requestBody: { valueInputOption: "USER_ENTERED", data: [{ range, values: [[newValue]] }] },
@@ -144,26 +137,28 @@ export interface TabRowsResult {
   suggestedKey: string | null;
 }
 
-/** อ่านทุกแถวของแท็บ (read-only · fresh) — ป้อน list view + ฟอร์มเพิ่มแถว (header-driven) */
+/** อ่านทุกแถวของแท็บ (read-only · fresh · 🔴 D-72b: แถวดิบตามชีต) — ป้อน list view + ฟอร์มเพิ่มแถว (header-driven) */
 export async function listTabRows(tab: string): Promise<TabRowsResult> {
   if (!EDITABLE_TABS.includes(tab)) throw new Error(`แท็บ "${tab}" อ่านไม่ได้ในโหมดจัดการ (เฉพาะ ${EDITABLE_TABS.join(" / ")})`);
   __resetBotLibraryCache();
-  const lib = await loadBotLibrary();
+  const raw = await loadRawSheets();
   const keyCol = tabKeyColumn(tab);
   const editableCols = EDITABLE_COLS[tab] ?? [];
-  const rows = lib ? ((lib as Record<string, string[][]>)[tab] ?? []) : [];
+  const rows = raw ? ((raw as Record<string, string[][]>)[tab] ?? []) : [];
   if (rows.length < 1 || !keyCol) return { header: [], keyCol, statusCol: null, hasStatusCol: false, editableCols, rows: [], suggestedKey: null };
   const header = rows[0].map(cleanHeader);
   const keyIdx = header.indexOf(keyCol);
   const statusIdx = statusColumnIndex(header); // status/สถานะ (single source · ตรงกับ loader prod)
-  const prevIdx = editableCols[0] ? header.indexOf(cleanHeader(editableCols[0])) : -1;
+  const prevIdxs = editableCols.map((c) => header.indexOf(cleanHeader(c))).filter((i) => i >= 0);
   const out: TabRow[] = [];
   for (let i = 1; i < rows.length; i++) {
     const key = cleanCell(rows[i][keyIdx] ?? "");
     if (!key) continue; // แถวว่าง/หมายเหตุ (key ว่าง = junk · ตรงกับ prod ที่กรองทิ้ง)
     const statusRaw = statusIdx >= 0 ? cleanCell(rows[i][statusIdx] ?? "") : "";
-    const preview = prevIdx >= 0 ? (rows[i][prevIdx] ?? "") : "";
-    out.push({ key, status: statusRaw || "(ว่าง=live)", active: isActiveStatus(statusRaw), preview: preview.slice(0, 80) });
+    // preview = ช่องแก้ได้ช่องแรกที่ไม่ว่าง (Knowledge ช่องแรกคือ ความกังวลจริง ซึ่งมักว่าง)
+    const preview = prevIdxs.map((pi) => rows[i][pi] ?? "").find((v) => v.trim() !== "") ?? "";
+    // 🔴 semantics v3 บนแถวดิบ: ว่าง = draft (isLiveStatus จาก normalize-bundle — invariant D-61.B)
+    out.push({ key, status: statusRaw || "(ว่าง=draft)", active: isLiveStatus(statusRaw), preview: preview.slice(0, 80) });
   }
   return { header, keyCol, statusCol: statusIdx >= 0 ? header[statusIdx] : null, hasStatusCol: statusIdx >= 0, editableCols, rows: out, suggestedKey: suggestNextKey(tab, out.map((r) => r.key)) };
 }
@@ -203,16 +198,18 @@ export type AppendResult =
 export async function appendRow(tab: string, cols: Record<string, string>, origin: "ui" | "ai" = "ui"): Promise<AppendResult> {
   if (!EDITABLE_TABS.includes(tab)) throw new Error(`แท็บ "${tab}" เขียนไม่ได้ — เฉพาะ ${EDITABLE_TABS.join(" / ")} (ห้ามแตะ Orders/Products/Promo/Config)`);
   __resetBotLibraryCache();
-  const lib = await loadBotLibrary();
-  if (!lib) return { status: "not_found" };
-  const rows = (lib as Record<string, string[][]>)[tab] ?? [];
+  // 🔴 D-72b: แถวใหม่เรียงตาม header ดิบของชีต · lib (normalize แล้ว) ใช้แค่ lint
+  const raw = await loadRawSheets();
+  const lib = await loadBotLibrary(); // ตัวที่สอง hit cache entry เดียวกัน (ห้ามยิงขนาน — batchGet ซ้ำ 2 ครั้ง)
+  if (!raw || !lib) return { status: "not_found" };
+  const rows = (raw as Record<string, string[][]>)[tab] ?? [];
   const keyCol = tabKeyColumn(tab);
   if (rows.length < 1 || !keyCol) return { status: "not_found" };
   const header = rows[0].map(cleanHeader);
   const keyIdx = header.indexOf(keyCol);
   const statusIdx = statusColumnIndex(header); // status/สถานะ (single source)
   if (keyIdx === -1) return { status: "not_found" };
-  // 🔴 safety #1: ไม่มีคอลัมน์สถานะ (status/สถานะ) = ปฏิเสธ (ช่องว่าง=live → แถวใหม่จะขึ้นหน้าร้านทันที)
+  // 🔴 safety #1: ไม่มีคอลัมน์สถานะ = ปฏิเสธ (แท็บไม่มีสถานะ = สลับ live/draft ไม่ได้เลย · กันโครงชีตเพี้ยนเงียบ)
   if (statusIdx === -1) return { status: "no_status_col" };
 
   const key = cleanCell(cols[keyCol] ?? "");
@@ -242,7 +239,6 @@ export async function appendRow(tab: string, cols: Record<string, string>, origi
     return typeof v === "string" ? v.slice(0, 4000) : "";
   });
 
-  assertWritable(); // 🔴 D-68: ปิดทางเขียน — throw ก่อนแตะ Google
   const spreadsheetId = botlibId(); // hard guard BotLibrary เท่านั้น
   await getSheets().spreadsheets.values.append({
     spreadsheetId, range: `${tab}!A:Z`, valueInputOption: "USER_ENTERED", requestBody: { values: [rowArr] },
@@ -256,9 +252,9 @@ export async function appendRow(tab: string, cols: Record<string, string>, origi
 export async function setRowStatus(tab: string, key: string, toStatus: "live" | "draft"): Promise<WriteResult> {
   if (!EDITABLE_TABS.includes(tab)) throw new Error(`แท็บ "${tab}" เขียนไม่ได้`);
   __resetBotLibraryCache();
-  const lib = await loadBotLibrary();
-  if (!lib) return { status: "not_found" };
-  const rows = (lib as Record<string, string[][]>)[tab] ?? [];
+  const raw = await loadRawSheets(); // 🔴 D-72b: พิกัดจากแถวดิบ
+  if (!raw) return { status: "not_found" };
+  const rows = (raw as Record<string, string[][]>)[tab] ?? [];
   const keyCol = tabKeyColumn(tab);
   if (rows.length < 2 || !keyCol) return { status: "not_found" };
   const header = rows[0].map(cleanHeader);
@@ -269,7 +265,6 @@ export async function setRowStatus(tab: string, key: string, toStatus: "live" | 
   if (rowIndex === -1) return { status: "not_found" };
 
   const current = rows[rowIndex][statusIdx] ?? "";
-  assertWritable(); // 🔴 D-68: ปิดทางเขียน — throw ก่อนแตะ Google
   const spreadsheetId = botlibId();
   const range = `${tab}!${columnLetter(statusIdx)}${rowIndex + 1}`;
   await getSheets().spreadsheets.values.batchUpdate({

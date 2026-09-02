@@ -123,22 +123,20 @@ function lastTrainLog(): string[] | undefined {
 }
 
 describe("D-59 · เขียน origin=ai → TRAIN_LOG ai-draft/ai-edit", () => {
-  it("appendRow origin=ai → บังคับ draft + action=ai-draft", async () => {
-    // 🔴 D-68: เขียนชีต v3 ยังปิดอยู่ → ผ่าน guard ครบแล้ว throw ก่อนแตะ Google (ไม่มี TRAIN_LOG)
-    //    การันตี origin=ai → ai-draft จะกลับมาพิสูจน์ได้เมื่อเปิดเขียนใน D-69
+  it("appendRow origin=ai → บังคับ draft + TRAIN_LOG action=ai-draft (D-72b เปิดเขียนแล้ว)", async () => {
     seedBotLib({ knowRows: v3KnowRows([{ say: "x", keyword: "x", fact: "y" }]) });
     sheetsCalls.appends.length = 0;
-    await expect(appendRow("Knowledge", { คำถาม: "ส่งเสาร์ไหม", keywords: "เสาร์", action: "answer", คำตอบ: "ส่งค่ะ" }, "ai"))
-      .rejects.toThrow(/ยังเขียนชีต v3 ไม่ได้/);
-    expect(lastTrainLog(), "ไม่แตะ TRAIN_LOG").toBeUndefined();
+    const res = await appendRow("Knowledge", { "ลูกค้าพูดยังไง": "ส่งเสาร์ไหม", keyword: "เสาร์", "ข้อเท็จจริง/สิ่งที่อยากให้รู้": "ส่งค่ะ" }, "ai");
+    expect(res.status).toBe("ok");
+    expect(lastTrainLog()?.[6], "origin=ai → action=ai-draft").toBe("ai-draft");
   });
-  it("writeCell origin=ai → ผ่าน guard แล้วติด write-disabled (ไม่แตะชีต)", async () => {
+  it("writeCell origin=ai → เขียนจริง + TRAIN_LOG action=ai-edit (D-72b · คอลัมน์ดิบ `แนวตอบ`)", async () => {
     seedStep();
     sheetsCalls.batchUpdates.length = 0;
     sheetsCalls.appends.length = 0;
-    await expect(writeCell("Steps", "S1", "ตัวอย่างคำตอบ", "สวัสดีจ้า", "สวัสดีค่ะ", "ai"))
-      .rejects.toThrow(/ยังเขียนชีต v3 ไม่ได้/);
-    expect([...sheetsCalls.batchUpdates, ...sheetsCalls.appends], "ห้ามแตะชีต/TRAIN_LOG").toHaveLength(0);
+    const res = await writeCell("Steps", "S1", "แนวตอบ", "สวัสดีจ้า", "สวัสดีค่ะ", "ai");
+    expect(res.status).toBe("ok");
+    expect(lastTrainLog()?.[6], "origin=ai → action=ai-edit").toBe("ai-edit");
   });
   it("🔴 Config เขียนไม่ได้จริง (assertEditable) — AI สั่งก็ไม่ผ่าน", async () => {
     await expect(appendRow("Config", { key: "x" }, "ai")).rejects.toThrow(/เขียนไม่ได้|Config/);
@@ -148,7 +146,8 @@ describe("D-59 · เขียน origin=ai → TRAIN_LOG ai-draft/ai-edit", () 
     // 🔴 D-72a: เดิมมีบรรทัด seed `botLibReturn.CSV_FAQ` ทับ — ตายมาตั้งแต่ D-61.B (ชื่อไม่ตรงแท็บจริง)
     //    ลบทิ้ง → ใช้ Knowledge จาก seedBotLib() เหมือนที่เคยทำงานจริง (เคสนี้วัด lint ไม่ได้วัดแถวเดิม)
     seedBotLib();
-    const res = await appendRow("Knowledge", { คำถาม: "แพ้กุ้งทานได้ไหม", keywords: "แพ้กุ้ง", action: "answer", คำตอบ: "ทานได้ค่ะ ไม่เป็นไร" }, "ai");
+    // 🔴 D-72b: เกณฑ์ H1 = "ห้ามคำรับรอง" (ทานได้/ไม่เป็นไร) — ตัวจับเดียวกับ assurance guard
+    const res = await appendRow("Knowledge", { "ลูกค้าพูดยังไง": "แพ้กุ้งทานได้ไหม", keyword: "แพ้กุ้ง", แนวตอบ: "ทานได้ค่ะ ไม่เป็นไร" }, "ai");
     expect(res.status).toBe("lint");
   });
 });
