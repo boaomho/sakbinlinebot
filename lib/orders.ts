@@ -296,11 +296,45 @@ export function __resetOrdersDashboardCache(): void {
 // ---- แก้ออเดอร์ที่เขียนแล้ว (D-31 · Plan B) — แก้แถวเดิมด้วย order_id ห้ามเขียนแถวใหม่ ----
 
 export interface OrderEditResult {
-  /** updated=แก้แล้ว · confirmed=M=TRUE ห้ามแก้ · not_found=หา order_id ไม่เจอ · no_change=ไม่มีค่าใหม่ต่างจริง */
-  status: "updated" | "confirmed" | "not_found" | "no_change";
+  /**
+   * updated=แก้แล้ว · confirmed=M=TRUE ห้ามแก้ · not_found=หา order_id ไม่เจอ · no_change=ไม่มีค่าใหม่ต่างจริง
+   * 🔴 D-77: money_locked = การแก้ที่แตะเงิน/ยกเลิก ติด guard "เงินเคลื่อนแล้ว/ของกำลังเดินทาง = คน"
+   *   (โอนแล้ว · มี tracking · แถวถูกยกเลิกไปแล้ว) — ผู้เรียกต้อง handoff ห้ามเขียน
+   * cancelled = ติ๊ก N สำเร็จ (เส้นยกเลิก D-77)
+   */
+  status: "updated" | "confirmed" | "not_found" | "no_change" | "money_locked" | "cancelled";
   changed?: { label: string; from: string; to: string }[];
   /** field ที่ "ไม่ทับ" เพราะค่าใหม่ผิดปกติ (เช่น ที่อยู่สั้นเกินไปมาก) → ผู้เรียกให้บอทถามยืนยัน (D-32) */
   suspect?: string[];
+  /** money_locked: เหตุที่ล็อก (โชว์ใน log/🔔) */
+  lockReason?: string;
+  /** cancelled/money_locked: ค่าปัจจุบันของแถว (รายการ+ยอด) — ประกอบข้อความแจ้งแอดมิน */
+  row?: { items: string; total: string; payment: string };
+}
+
+/** คอลัมน์ที่ "แตะเงิน" — แก้พวกนี้ต้องผ่าน money guard (D-77) */
+const MONEY_COLS = new Set(["สินค้า+จำนวน", "ยอดเงิน", "ค่าส่ง", "items_json"]);
+
+/**
+ * 🔴 D-77 money guard — อ่านจาก "แถวชีตจริง" ไม่ใช่ state ในแชท (ความจริงอยู่ที่ชีต):
+ * แก้เงิน/ยกเลิก อัตโนมัติได้เฉพาะ **COD ที่ยังไม่มี tracking และยังไม่ถูกยกเลิก**
+ * นอกนั้น = เงินเคลื่อนแล้ว (โอน = เก็บเพิ่ม/คืนเงิน) หรือของกำลังเดินทาง → งานคน (handoff)
+ */
+function moneyGuardReason(row: string[], cols: Record<string, number>): string | null {
+  const payment = cell(row, cols, "การชำระเงิน").trim();
+  if (payment !== "COD") return `การชำระเงินเป็น "${payment || "(ว่าง)"}" ไม่ใช่ COD — เงินอาจเคลื่อนแล้ว (เก็บเพิ่ม/คืนเงิน = งานคน)`;
+  if (cell(row, cols, "เลขTracking").trim() !== "") return "มีเลข Tracking แล้ว — ของกำลังเดินทาง";
+  if (isTrue(cell(row, cols, "ยกเลิก"))) return "แถวนี้ถูกยกเลิกไปแล้ว";
+  return null;
+}
+
+/** สรุปค่าปัจจุบันของแถว (ประกอบข้อความ 🔔 เดิม → ใหม่) */
+function rowSnapshot(row: string[], cols: Record<string, number>): { items: string; total: string; payment: string } {
+  return {
+    items: cell(row, cols, "สินค้า+จำนวน").trim(),
+    total: cell(row, cols, "ยอดเงิน").trim(),
+    payment: cell(row, cols, "การชำระเงิน").trim(),
+  };
 }
 
 /** label ที่โชว์ใน Y/แจ้งแอดมิน (คอลัมน์ที่ไม่มีใน map = internal เช่น items_json — อัปเดตเงียบ ไม่โชว์) */
@@ -336,6 +370,12 @@ export async function updateOrderRow(orderId: string, changes: Record<string, st
     const row = rows[rowNum];
     const rowIndex = rowNum + 2; // +2: header อยู่แถว 1, data เริ่มแถว 2
     if (isTrue(cell(row, cols, "คอนเฟิร์ม"))) return { status: "confirmed" };
+
+    // 🔴 D-77: การแก้ที่แตะเงิน → ต้องผ่าน money guard จากแถวจริง (ชื่อ/ที่อยู่/เบอร์ ไม่เกี่ยว — พฤติกรรมเดิม)
+    if (Object.keys(changes).some((c) => MONEY_COLS.has(c))) {
+      const reason = moneyGuardReason(row, cols);
+      if (reason) return { status: "money_locked", lockReason: reason, row: rowSnapshot(row, cols) };
+    }
 
     // diff เฉพาะที่ "มีค่าใหม่ต่างจริง" (ค่าว่าง/เท่าเดิม = ไม่นับแก้ · กัน "ถูกต้องครับ" เพิ่ม Y/Z)
     const changed: { label: string; from: string; to: string; col: number }[] = [];
@@ -375,7 +415,53 @@ export async function updateOrderRow(orderId: string, changes: Record<string, st
       spreadsheetId: ordersSheetId(),
       requestBody: { valueInputOption: "USER_ENTERED", data },
     });
-    return { status: "updated", changed: changed.map((c) => ({ label: c.label || "รายการ", from: c.from, to: c.to })), suspect };
+    // D-77: แนบค่า "ก่อนแก้" ของแถว — ผู้เรียกใช้ประกอบข้อความ 🔔 เดิม → ใหม่
+    return { status: "updated", changed: changed.map((c) => ({ label: c.label || "รายการ", from: c.from, to: c.to })), suspect, row: rowSnapshot(row, cols) };
+  });
+}
+
+/**
+ * 🔴 D-77 · ยกเลิกออเดอร์ (COD ก่อนส่งเท่านั้น) — ติ๊กคอลัมน์ "ยกเลิก" = TRUE · **ห้ามลบแถว**
+ * guard เดียวกับแก้เงิน (อ่านจากแถวจริง): M=TRUE → confirmed · โอน/มี tracking/ยกเลิกแล้ว → money_locked
+ * สำเร็จ → ต่อประวัติ Y + นับ Z เหมือนการแก้อื่น (รอยเท้าครบ)
+ */
+export async function cancelOrderRow(orderId: string, now: Date): Promise<OrderEditResult> {
+  if (!process.env.SHEET_ORDERS_ID || !orderId) return { status: "not_found" };
+
+  return withOrdersColumns(async (cols) => {
+    const lastCol = columnLetter(Math.max(...Object.values(cols)));
+    const res = await getSheets().spreadsheets.values.get({
+      spreadsheetId: ordersSheetId(),
+      range: `${SHEET_NAME}!A2:${lastCol}`,
+    });
+    const rows = (res.data.values as string[][] | undefined) ?? [];
+    const qIdx = cols["order_id"];
+    const rowNum = rows.findIndex((r) => (r[qIdx] ?? "").trim() === orderId);
+    if (rowNum === -1) return { status: "not_found" };
+
+    const row = rows[rowNum];
+    const rowIndex = rowNum + 2;
+    if (isTrue(cell(row, cols, "คอนเฟิร์ม"))) return { status: "confirmed" };
+    const reason = moneyGuardReason(row, cols);
+    if (reason) return { status: "money_locked", lockReason: reason, row: rowSnapshot(row, cols) };
+
+    const entry = `${bangkokDateTime(now)} · ยกเลิกออเดอร์ (ลูกค้ายืนยันผ่านบอท)`;
+    const yIdx = cols["แก้ไขล่าสุด"];
+    const zIdx = cols["แก้ไขกี่ครั้ง"];
+    const oldY = (row[yIdx] ?? "").trim();
+    const oldZ = Number((row[zIdx] ?? "").trim()) || 0;
+    await getSheets().spreadsheets.values.batchUpdate({
+      spreadsheetId: ordersSheetId(),
+      requestBody: {
+        valueInputOption: "USER_ENTERED",
+        data: [
+          { range: `${SHEET_NAME}!${columnLetter(cols["ยกเลิก"])}${rowIndex}:${columnLetter(cols["ยกเลิก"])}${rowIndex}`, values: [["TRUE"]] },
+          { range: `${SHEET_NAME}!${columnLetter(yIdx)}${rowIndex}:${columnLetter(yIdx)}${rowIndex}`, values: [[oldY ? `${oldY}\n${entry}` : entry]] },
+          { range: `${SHEET_NAME}!${columnLetter(zIdx)}${rowIndex}:${columnLetter(zIdx)}${rowIndex}`, values: [[String(oldZ + 1)]] },
+        ],
+      },
+    });
+    return { status: "cancelled", row: rowSnapshot(row, cols) };
   });
 }
 

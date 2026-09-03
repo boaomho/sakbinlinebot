@@ -26,6 +26,7 @@ import {
   isOrderWritten,
   markOrderWritten,
   setLastOrder,
+  clearLastOrder,
   setLastOrderLocked,
   setHasWrittenOrder,
   setPaidNoAddressNotified,
@@ -75,8 +76,8 @@ import {
   PENDING_CHOICES_TTL_MS,
 } from "@/lib/admin-commands";
 import { uploadSlip, getSlipSignedUrl } from "@/lib/blob";
-import { appendOrderRow, updateOrderRow } from "@/lib/orders";
-import { evaluateOrderGate, buildNewOrderAdminText, buildBrokenOrderAdminText, buildPriceStuckAdminText, buildOrderStateWarning, buildOrderEditAdminText, generateOrderId, sanitizePhone, itemsEqual, normalizeItems, PendingOrder } from "@/lib/core/orders";
+import { appendOrderRow, updateOrderRow, cancelOrderRow } from "@/lib/orders";
+import { evaluateOrderGate, buildNewOrderAdminText, buildBrokenOrderAdminText, buildPriceStuckAdminText, buildOrderStateWarning, buildOrderEditAdminText, buildOrderMoneyEditAdminText, buildOrderCancelAdminText, hasCancelEvidence, generateOrderId, sanitizePhone, itemsEqual, normalizeItems, PendingOrder } from "@/lib/core/orders";
 import { resolveRuntimeVars, formatLinesForSheet, formatOrderSummary, buildProductNameMap, resolveAiItems, buildAllowedPriceStrings, RuntimeVarContext, PriceResult } from "@/lib/core/pricing";
 import { resolveGeminiTimeouts } from "@/lib/gemini";
 import { computeQuote, unresolvedTransferVars, resolveOrderVars, findBannedClaims, parseClaimsList, findBadPrices, extractBahtNumbers, extractPriceNumbers, dropUnresolvedVarBubbles, resolveAllVars, AllVarsContext } from "@/lib/agent/quote";
@@ -670,7 +671,7 @@ export async function processMessage(
   // 🔴 สัญญาณสำหรับ "เข้าเมื่อ" ในชีต (เจ้าของคุมประตู) — order_editable (M≠TRUE) / order_confirmed_locked (M=TRUE)
   const orderSignals: string[] = lastOrder ? [orderLocked ? "order_confirmed_locked" : "order_editable"] : [];
   const lastOrderLine = lastOrder
-    ? `ออเดอร์ที่บันทึกแล้ว ${lastOrder.order_id}: ชื่อ ${lastOrder["ชื่อ"] ?? "-"} · ที่อยู่ ${lastOrder["ที่อยู่"] ?? "-"} · เบอร์ ${lastOrder["เบอร์"] ?? "-"} · ${lastOrderItemsText || "-"} · ยอด ${lastOrder.total ?? "-"} บาท · สถานะ: ${orderLocked ? "คอนเฟิร์มแล้ว (ของอาจแพ็คแล้ว · แก้เองไม่ได้ ส่งต่อแอดมิน)" : "ยังแก้ได้ (ลูกค้าขอแก้ field ไหน → ส่ง order_data ของ field นั้น 'เต็มก้อน' ที่แก้แล้ว ไม่ใช่เศษ)"}`
+    ? `ออเดอร์ที่บันทึกแล้ว ${lastOrder.order_id}: ชื่อ ${lastOrder["ชื่อ"] ?? "-"} · ที่อยู่ ${lastOrder["ที่อยู่"] ?? "-"} · เบอร์ ${lastOrder["เบอร์"] ?? "-"} · ${lastOrderItemsText || "-"} · ยอด ${lastOrder.total ?? "-"} บาท · สถานะ: ${orderLocked ? "คอนเฟิร์มแล้ว (ของอาจแพ็คแล้ว · แก้เองไม่ได้ ส่งต่อแอดมิน)" : "ยังแก้ได้ (ลูกค้าขอแก้ field ไหน → ส่ง order_data ของ field นั้น 'เต็มก้อน' ที่แก้แล้ว ไม่ใช่เศษ · 🔴 D-77 ขอเปลี่ยนจำนวน/รายการ: สรุปยอดใหม่จากตารางราคาให้ลูกค้าดู ขอยืนยัน 1 ครั้ง เมื่อลูกค้ายืนยันแล้วค่อยส่ง order_edit_request=true + items ใหม่ทั้งชุด + payment_method · ขอยกเลิกออเดอร์: ถามยืนยัน 1 ครั้ง เมื่อยืนยันแล้วส่ง order_edit_request=true + tags_add [\"ยกเลิกออเดอร์\"] · ทั้งสองเคสห้ามพูดว่าสำเร็จเด็ดขาด ให้พูดแนว 'กำลังดำเนินการให้' — ระบบจะยืนยันผลเอง)"}`
     : null;
 
   const stepTextRaw =
@@ -809,48 +810,121 @@ export async function processMessage(
   // damage = เคลม/ของเสียหาย → จัดการเป็น handoff ผ่าน image-intent handler (กันยิงซ้ำกับ handoff ทั่วไป)
   const damageHandled = Boolean(imageContent && !imageFallback && geminiOutput.imageIntent === "damage");
 
-  // ลูกค้าขอแก้ออเดอร์ที่ "บันทึกลงชีตแล้ว" (D-31 Plan B): M≠TRUE → แก้แถวเดิมด้วย order_id (ไม่ handoff) · M=TRUE/หาไม่เจอ → handoff
+  // ลูกค้าขอแก้/ยกเลิกออเดอร์ที่ "บันทึกลงชีตแล้ว" (D-31 Plan B → ขยาย D-77)
+  //   ผู้รับ (ชื่อ/ที่อยู่/เบอร์): พฤติกรรมเดิมเป๊ะ · จำนวน/รายการ + ยกเลิก: 🔴 เฉพาะ COD ก่อนมี tracking
+  //   (money guard อ่านจาก "แถวชีตจริง" ใน lib/orders.ts — เงินเคลื่อนแล้ว/ของเดินทางแล้ว = งานคน)
   let editHandled = false;
-  if (geminiOutput.orderEditRequest && customer?.hasWrittenOrder) {
+  // 🔴 D-77: เขียนพลาด/ติด guard → ห้ามให้คำพูด "เรียบร้อย/แก้แล้ว" ของ AI หลุดถึงลูกค้า — ทับด้วยข้อความนี้
+  let editReplyOverride: string | null = null;
+  // 🔴 D-77 สัญญาณยกเลิก: อ่าน tags ดิบจากโมเดล (ไม่ผูกสวิตช์ tagging) — เป็นแค่พยานชั้น 1
+  const cancelTagged = geminiOutput.tagsAdd.includes("ยกเลิกออเดอร์");
+  if ((geminiOutput.orderEditRequest || cancelTagged) && customer?.hasWrittenOrder) {
     editHandled = true; // ข้าม order flow (ห้ามเขียนแถวใหม่) + ข้าม AI-semantic handoff ท้ายเทิร์น
     const adminGroupId = process.env.ADMIN_GROUP_ID;
     const orderId = customer.lastOrderId ?? "";
     const name = await transport.getProfileName();
+    const who = `${channelLabel(userId)} ${name}`;
+    const warmHandoffReply = `ขอโทษด้วยนะคะ เรื่องนี้${config.botName}ขอส่งต่อให้ทีมแอดมินช่วยดูแลให้ถูกต้องที่สุดค่ะ เดี๋ยวทีมงานรีบติดต่อกลับนะคะ`;
 
-    // ค่าใหม่ที่ลูกค้าแก้เทิร์นนี้ (เฉพาะที่ AI ส่งมา) → keyed ด้วยชื่อคอลัมน์ Orders
-    const { items: aiEditItems, ...editReceiver } = geminiOutput.orderData;
-    const changes: Record<string, string> = {};
-    if (editReceiver["ชื่อ"]?.trim()) changes["ชื่อ-นามสกุล"] = editReceiver["ชื่อ"].trim();
-    if (editReceiver["ที่อยู่"]?.trim()) changes["ที่อยู่"] = editReceiver["ที่อยู่"].trim();
-    if (editReceiver["เบอร์"]?.trim()) changes["เบอร์โทร"] = sanitizePhone(editReceiver["เบอร์"]);
-    const editItems = resolveAiItems(aiEditItems, lib?.Products ?? []);
-    if (editItems.length > 0 && geminiOutput.paymentMethod) {
-      const q = computeQuote({ items: editItems, การชำระเงิน: geminiOutput.paymentMethod }, lib, config, nowDate);
-      if (q?.ok) {
-        changes["สินค้า+จำนวน"] = formatLinesForSheet(q.price.lines);
-        changes["ยอดเงิน"] = String(q.price.total);
-        changes["ค่าส่ง"] = String(q.price.shippingFee);
-        changes["items_json"] = JSON.stringify(normalizeItems(editItems));
+    try {
+      if (cancelTagged) {
+        // ---- เส้นยกเลิก (D-77) — พยาน 2 ชั้นก่อนแตะชีต (N=TRUE คือ action ทำลายล้างเดียวในชุดนี้) ----
+        // ชั้น 2: คำตระกูลยกเลิกต้องอยู่ในข้อความลูกค้าจริง 1-2 เทิร์นล่าสุด (Config `คำ_ยกเลิกออเดอร์`)
+        const history = switches.memory ? await getRecentHistory(userId, 6) : [];
+        const prevUserMsg = [...history].reverse().find((h) => h.role === "user")?.text ?? "";
+        const evidence = hasCancelEvidence([userMessage, prevUserMsg], config.orderCancelKeywords);
+        if (!evidence) {
+          // tag มาแต่ไม่มีหลักฐานในข้อความ → ห้ามยกเลิก · fallback = คน (ไม่เงียบ — เคสจริงที่คำไม่อยู่ใน list คนจะเป็นผู้จัดการ)
+          console.warn(JSON.stringify({ scope: "orders", event: "cancel-no-evidence", orderId }));
+          editReplyOverride = warmHandoffReply;
+          await handoff(userId, switches, { reason: `AI ชี้ว่าลูกค้าขอยกเลิก ${orderId} แต่ไม่พบคำยกเลิกในข้อความ — ให้คนยืนยันเจตนา`, userMessage }, transport);
+        } else {
+          const result = await cancelOrderRow(orderId, nowDate);
+          console.log(JSON.stringify({ scope: "orders", event: "order-cancel", orderId, status: result.status, lockReason: result.lockReason }));
+          if (result.status === "cancelled") {
+            // สำเร็จ: 🔔 (ไม่ปิดบอท — บอทจัดการเองจบ) + ล้าง snapshot ในแชท (ชีตคือความจริง · ข้อ 7)
+            if (adminGroupId) await pushRawText(adminGroupId, buildOrderCancelAdminText(orderId, result.row ?? { items: "", total: "", payment: "" }, who));
+            if (switches.memory) await clearLastOrder(userId);
+          } else if (result.status === "confirmed") {
+            if (switches.memory) await setLastOrderLocked(userId);
+            editReplyOverride = warmHandoffReply;
+            await handoff(userId, switches, { reason: `ขอยกเลิกออเดอร์ที่คอนเฟิร์มแล้ว ${orderId} (ของอาจแพ็คแล้ว)`, userMessage }, transport);
+          } else if (result.status === "money_locked") {
+            editReplyOverride = warmHandoffReply;
+            await handoff(userId, switches, { reason: `ขอยกเลิก ${orderId} แต่${result.lockReason ?? "ติดเงื่อนไขเงิน/จัดส่ง"}`, userMessage }, transport);
+          } else {
+            editReplyOverride = warmHandoffReply;
+            await handoff(userId, switches, { reason: `ขอยกเลิก ${orderId || "(ไม่มี id)"} แต่หาแถวในชีตไม่เจอ`, userMessage }, transport);
+          }
+        }
+      } else {
+        // ---- เส้นแก้ field (D-31 เดิม + D-77 เส้นเงิน) ----
+        // ค่าใหม่ที่ลูกค้าแก้เทิร์นนี้ (เฉพาะที่ AI ส่งมา) → keyed ด้วยชื่อคอลัมน์ Orders
+        const { items: aiEditItems, ...editReceiver } = geminiOutput.orderData;
+        const changes: Record<string, string> = {};
+        if (editReceiver["ชื่อ"]?.trim()) changes["ชื่อ-นามสกุล"] = editReceiver["ชื่อ"].trim();
+        if (editReceiver["ที่อยู่"]?.trim()) changes["ที่อยู่"] = editReceiver["ที่อยู่"].trim();
+        if (editReceiver["เบอร์"]?.trim()) changes["เบอร์โทร"] = sanitizePhone(editReceiver["เบอร์"]);
+        const editItems = resolveAiItems(aiEditItems, lib?.Products ?? []);
+        let editQuote: ReturnType<typeof computeQuote> = null;
+        if (editItems.length > 0) {
+          // 🔴 D-77: ราคาใหม่มาจาก computeQuote (ตารางโปรจริง — เครื่องเดียวกับตอนสั่ง) ห้ามใช้เลขจากโมเดล
+          //   วิธีจ่ายใช้ของแถวจริงเป็นหลัก (COD — guard ใน updateOrderRow ยืนยันอีกชั้น) · AI ส่งมาก็ต้องตรง
+          const payMethod = geminiOutput.paymentMethod || customer.lastOrder?.payment || "COD";
+          editQuote = computeQuote({ items: editItems, การชำระเงิน: payMethod }, lib, config, nowDate);
+          if (editQuote?.ok) {
+            changes["สินค้า+จำนวน"] = formatLinesForSheet(editQuote.price.lines);
+            changes["ยอดเงิน"] = String(editQuote.price.total);
+            changes["ค่าส่ง"] = String(editQuote.price.shippingFee);
+            changes["items_json"] = JSON.stringify(normalizeItems(editItems));
+          }
+        }
+
+        const moneyEdit = editItems.length > 0;
+        const result = await updateOrderRow(orderId, changes, nowDate);
+        console.log(JSON.stringify({ scope: "orders", event: "order-edit", orderId, status: result.status, changedFields: Object.keys(changes), suspect: result.suspect ?? [], lockReason: result.lockReason }));
+        if (result.status === "updated") {
+          // 🔔 เส้นเงินใช้ข้อความเตือนดัง (ยอด COD บนกล่องเปลี่ยน) · เส้นผู้รับใช้ข้อความเดิม (template จาก Config)
+          if (adminGroupId) {
+            const text = moneyEdit && editQuote?.ok && result.row
+              ? buildOrderMoneyEditAdminText(orderId, result.row, { items: changes["สินค้า+จำนวน"] ?? "", total: changes["ยอดเงิน"] ?? "" }, who)
+              : buildOrderEditAdminText(orderId, result.changed ?? [], who, config.notifyAdminOrderEditTemplate);
+            await pushRawText(adminGroupId, text);
+          }
+          // 🔴 ข้อ 7: state ในแชทตามชีตเสมอ — sync snapshot (เดิมไม่ทำ → {ออเดอร์_ยอด}/ทวน พูดค่าเก่า)
+          if (switches.memory && customer.lastOrder) {
+            await setLastOrder(userId, {
+              ...customer.lastOrder,
+              ชื่อ: changes["ชื่อ-นามสกุล"] ?? customer.lastOrder["ชื่อ"],
+              ที่อยู่: changes["ที่อยู่"] ?? customer.lastOrder["ที่อยู่"],
+              เบอร์: changes["เบอร์โทร"] ?? customer.lastOrder["เบอร์"],
+              ...(moneyEdit && editQuote?.ok ? { items: normalizeItems(editItems), total: editQuote.price.total } : {}),
+            });
+          }
+        } else if (result.status === "money_locked") {
+          // 🔴 D-77: เงินเคลื่อนแล้ว/ของเดินทางแล้ว → คนเท่านั้น (ข้อความอบอุ่น ไม่รับปากผล)
+          editReplyOverride = warmHandoffReply;
+          await handoff(userId, switches, { reason: `ขอแก้จำนวน/รายการ ${orderId} แต่${result.lockReason ?? "ติดเงื่อนไขเงิน/จัดส่ง"}`, userMessage }, transport);
+        } else if (result.status === "confirmed") {
+          // แอดมินคอนเฟิร์มแล้ว (M=TRUE · ของไปแพ็ค) → ล็อก + ส่งต่อคน (X2) ผ่านประตูรวม
+          if (switches.memory) await setLastOrderLocked(userId);
+          await handoff(userId, switches, { reason: `ขอแก้ออเดอร์ที่คอนเฟิร์มแล้ว ${orderId} (ของอาจแพ็คแล้ว)`, userMessage }, transport);
+        } else if (result.status === "not_found") {
+          console.error(JSON.stringify({ scope: "orders", event: "order-edit-not-found", orderId }));
+          await handoff(userId, switches, { reason: `ขอแก้ออเดอร์ ${orderId || "(ไม่มี id)"} แต่หาแถวในชีตไม่เจอ`, userMessage }, transport);
+        }
+        // 🔴 ที่อยู่ใหม่สั้นผิดปกติ → ไม่ทับ (กันเขียนที่อยู่ผิด) + แจ้งแอดมิน (บอทควรถามลูกค้ายืนยันที่อยู่เต็ม — เทรนใน S_EDIT)
+        if ((result.suspect?.length ?? 0) > 0 && adminGroupId) {
+          await pushRawText(adminGroupId, `⚠️ ลูกค้าแก้ ${result.suspect!.join("/")} ของ ${orderId} แต่ค่าที่ได้สั้นผิดปกติ — ไม่เขียนลงชีต ช่วยยืนยันกับลูกค้าด้วยค่ะ\n———\nLineOA: ${who}`);
+        }
+        // no_change (ไม่มี suspect) → ลูกค้ายืนยัน/ขอบคุณเฉยๆ → ไม่แก้ ไม่ push ไม่ handoff (Bug 2 หาย)
       }
+    } catch (error) {
+      // 🔴 D-77: เขียนชีตพลาด — ห้ามพูด "เรียบร้อย" เด็ดขาด → ข้อความอบอุ่น + 🔔 + ปิดบอท (คนรับช่วง)
+      console.error(JSON.stringify({ scope: "orders", event: "order-edit-failed", orderId, error: String(error).slice(0, 160) }));
+      editReplyOverride = `ขอโทษด้วยนะคะ ระบบบันทึกการแก้ไขไม่สำเร็จ ${config.botName}ส่งเรื่องให้ทีมแอดมินดูแลต่อทันทีเลยค่ะ`;
+      await handoff(userId, switches, { reason: `แก้/ยกเลิกออเดอร์ ${orderId} แล้วเขียนชีตพลาด — ต้องมีคนตรวจ`, userMessage }, transport);
     }
-
-    const result = await updateOrderRow(orderId, changes, nowDate);
-    console.log(JSON.stringify({ scope: "orders", event: "order-edit", orderId, status: result.status, changedFields: Object.keys(changes), suspect: result.suspect ?? [] }));
-    if (result.status === "updated") {
-      if (adminGroupId) await pushRawText(adminGroupId, buildOrderEditAdminText(orderId, result.changed ?? [], `${channelLabel(userId)} ${name}`));
-    } else if (result.status === "confirmed") {
-      // แอดมินคอนเฟิร์มแล้ว (M=TRUE · ของไปแพ็ค) → ล็อก + ส่งต่อคน (X2) ผ่านประตูรวม
-      if (switches.memory) await setLastOrderLocked(userId);
-      await handoff(userId, switches, { reason: `ขอแก้ออเดอร์ที่คอนเฟิร์มแล้ว ${orderId} (ของอาจแพ็คแล้ว)`, userMessage }, transport);
-    } else if (result.status === "not_found") {
-      console.error(JSON.stringify({ scope: "orders", event: "order-edit-not-found", orderId }));
-      await handoff(userId, switches, { reason: `ขอแก้ออเดอร์ ${orderId || "(ไม่มี id)"} แต่หาแถวในชีตไม่เจอ`, userMessage }, transport);
-    }
-    // 🔴 ที่อยู่ใหม่สั้นผิดปกติ → ไม่ทับ (กันเขียนที่อยู่ผิด) + แจ้งแอดมิน (บอทควรถามลูกค้ายืนยันที่อยู่เต็ม — เทรนใน S_EDIT)
-    if ((result.suspect?.length ?? 0) > 0 && adminGroupId) {
-      await pushRawText(adminGroupId, `⚠️ ลูกค้าแก้ ${result.suspect!.join("/")} ของ ${orderId} แต่ค่าที่ได้สั้นผิดปกติ — ไม่เขียนลงชีต รบกวนยืนยันกับลูกค้า\n———\nLineOA: ${channelLabel(userId)} ${name}`);
-    }
-    // no_change (ไม่มี suspect) → ลูกค้ายืนยัน/ขอบคุณเฉยๆ → ไม่แก้ ไม่ push ไม่ handoff (Bug 2 หาย)
   }
 
   // ---- order flow (1-pass · AI เป็นเจ้าของบทสนทนา · โค้ดเป็นเจ้าของเงิน) ----
@@ -943,6 +1017,11 @@ export async function processMessage(
     pending, products: lib?.Products ?? [], promo: lib?.Promo ?? [], varsRows: lib?.Vars ?? [], now: nowDate,
   };
   let outReply = resolveAllVars(baseReply, varCtx);
+  // 🔴 D-77: เทิร์นแก้/ยกเลิกที่พลาดหรือติด guard → ทับคำตอบ AI (ที่อาจพูด "แก้ให้แล้ว" ล่วงหน้า) ด้วยความจริง
+  if (editReplyOverride) {
+    outReply = editReplyOverride;
+    deliverMarksStep = false;
+  }
   // 🔴 guard ร้ายแรง (ต่างจากราคา): ตัวแปรโอนเงิน resolve ไม่ได้ → ห้ามส่งข้อความจริง (ลูกค้าโอนไม่ได้ + เสียเครดิต)
   //    → ส่งข้อความพักสายปลอดภัยแทน + push แจ้งแอดมินให้แก้ Config
   const unresolvedTransfer = unresolvedTransferVars(outReply);

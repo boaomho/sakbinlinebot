@@ -276,15 +276,56 @@ export function buildPriceStuckAdminText(
 }
 
 /** แจ้งแอดมินเมื่อลูกค้าแก้ออเดอร์ที่เขียนแล้ว (M≠TRUE · แก้ในชีตอัตโนมัติ · D-31) */
-export function buildOrderEditAdminText(orderId: string, changed: { label: string; from: string; to: string }[], lineName: string): string {
+/** D-77: template = บรรทัดท้าย (จาก Config `ข้อความ_แจ้งแอดมิน_แก้ออเดอร์` · 🔴 default ห้ามมี "รบกวน" — กฎเหล็ก D-61) */
+export function buildOrderEditAdminText(orderId: string, changed: { label: string; from: string; to: string }[], lineName: string, template: string): string {
   const lines = changed.map((c) => `${c.label}: ${c.from || "-"} → ${c.to}`).join(" · ");
   return [
     `✏️ ลูกค้าแก้ออเดอร์ ${orderId}`,
     lines,
-    `แก้ในชีตแล้ว — รบกวนเช็คความถูกต้องในแถว ${orderId}`,
+    template,
     "———",
     `LineOA: ${lineName}`,
   ].join("\n");
+}
+
+/**
+ * 🔴 D-77: การแก้ที่ "ยอดเก็บเงิน COD เปลี่ยน" — เตือนดัง ๆ เพราะถ้าทีมแพ็ค/จ่าหน้าไปแล้ว ยอดบนกล่องจะผิด
+ * before = ค่าจากแถวชีตก่อนแก้ (rowSnapshot) · ไม่ปิดบอท (บอทจัดการเองสำเร็จแล้ว)
+ */
+export function buildOrderMoneyEditAdminText(
+  orderId: string,
+  before: { items: string; total: string },
+  after: { items: string; total: string },
+  lineName: string,
+): string {
+  return [
+    `✏️💰 ยอดเก็บเงิน COD เปลี่ยน — ออเดอร์ ${orderId}`,
+    `รายการ: ${before.items || "-"} → ${after.items}`,
+    `ยอด: ${before.total || "-"} → ${after.total} บาท`,
+    "🔴 ถ้าแพ็ค/จ่าหน้ากล่องไปแล้ว ต้องแก้ยอดเก็บเงินปลายทางด้วย",
+    "———",
+    `LineOA: ${lineName}`,
+  ].join("\n");
+}
+
+/** 🔴 D-77: แจ้งยกเลิกออเดอร์ (COD ก่อนส่ง · บอทติ๊กคอลัมน์ยกเลิกให้แล้ว — แถวยังอยู่ ไม่ลบ) */
+export function buildOrderCancelAdminText(orderId: string, row: { items: string; total: string }, lineName: string): string {
+  return [
+    `🚫 ลูกค้ายกเลิกออเดอร์ ${orderId}`,
+    `รายการเดิม: ${row.items || "-"} · ยอด ${row.total || "-"} บาท`,
+    "ติ๊กช่อง ยกเลิก ในชีตให้แล้ว (แถวยังอยู่ ไม่ได้ลบ) — ถ้าเริ่มแพ็คไปแล้วช่วยหยุดด้วยค่ะ",
+    "———",
+    `LineOA: ${lineName}`,
+  ].join("\n");
+}
+
+/**
+ * 🔴 D-77: พยานชั้น 2 ของการยกเลิก — คำตระกูลยกเลิกต้องอยู่ในข้อความลูกค้าจริง (1-2 เทิร์นล่าสุด)
+ * tag จาก AI อย่างเดียว = โมเดลฝ่ายเดียว ห้ามใช้ทำ action ทำลายล้าง (หลัก C5: สัญญาณต้องมาจากข้อมูล)
+ */
+export function hasCancelEvidence(recentUserMessages: string[], keywords: string[]): boolean {
+  const texts = recentUserMessages.filter(Boolean);
+  return texts.some((t) => keywords.some((k) => k.trim() && t.includes(k.trim())));
 }
 
 /**

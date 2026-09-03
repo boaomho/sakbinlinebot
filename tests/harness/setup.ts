@@ -126,6 +126,7 @@ vi.mock("googleapis", async () => {
     },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     batchUpdate: async (p: any) => {
+      if (sheetsCalls.failBatchUpdate) throw new Error("simulated Sheets batchUpdate failure (403/quota)");
       for (const d of p.requestBody.data) sheetsCalls.batchUpdates.push({ range: d.range, values: d.values });
       return { data: {} };
     },

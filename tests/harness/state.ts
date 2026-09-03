@@ -44,6 +44,8 @@ export const sheetsCalls = {
   lastBatchGetRanges: [] as string[],
   /** จำลอง append ล้ม (403/network/quota) — เทส idempotency: append ล้ม → retry เขียนใหม่ (D-29) */
   failAppend: false,
+  /** D-77: จำลอง batchUpdate ล้ม (เทสเส้น "เขียนพลาดห้ามพูดเรียบร้อย") */
+  failBatchUpdate: false,
 };
 
 /** สลิปที่อัปโหลด (mock lib/blob) */
@@ -104,6 +106,7 @@ export function resetState(): void {
   sheetsCalls.botLibReturn = {};
   sheetsCalls.lastBatchGetRanges = [];
   sheetsCalls.failAppend = false;
+  sheetsCalls.failBatchUpdate = false;
   blobState.uploaded.length = 0;
   blobState.seq = 0;
   geminiState.script = [];

@@ -971,3 +971,13 @@ export async function aiUsageDailyCustomers(start: Date): Promise<{ day: string;
   `;
   return (rows as Array<Record<string, unknown>>).map((r) => ({ day: r.day as string, customers: Number(r.customers ?? 0) }));
 }
+
+/**
+ * 🔴 D-77: ล้าง snapshot ออเดอร์หลัง "ยกเลิกสำเร็จ" — ชีตคือความจริง (แถวยังอยู่ N=TRUE · แชทไม่ควรทวน/แก้ต่อ)
+ * ล้างเฉพาะ snapshot + ธง lock — history/orders_written คงเดิม (รอยเท้าครบ) · ขอแก้อีกครั้ง = หาไม่เจอ → handoff (ทิศปลอดภัย)
+ */
+export async function clearLastOrder(userId: string): Promise<void> {
+  await ensureSchema();
+  const sql = getSql();
+  await sql`UPDATE customers SET last_order = NULL, last_order_locked = false WHERE user_id = ${userId}`;
+}

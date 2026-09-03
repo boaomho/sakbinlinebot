@@ -61,6 +61,8 @@ export function testConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     // 🔴 D-73c: ค่าตรงกับ default ใน config.ts — ต่างเมื่อไหร่ = tripwire ว่า default เปลี่ยน
     notifyAdminIntakeTemplate:
       "บอทกำลังเก็บข้อมูลให้อยู่ ยังไม่ต้องเข้ามาค่ะ — ถ้าเก็บครบหรือชนเพดานเทิร์น จะแจ้งอีกครั้งพร้อม 📋 สรุปข้อมูลค่ะ",
+    notifyAdminOrderEditTemplate: "แก้ในชีตแล้ว — ช่วยเช็คความถูกต้องของแถวนี้ด้วยค่ะ",
+    orderCancelKeywords: ["ยกเลิก", "ไม่เอาแล้ว", "ไม่สั่งแล้ว", "ขอเลิก"],
     promptVisibleKeys: null, // D-61.B: v2 ไม่มีคอลัมน์ "เข้า prompt" = ดัมพ์หมดเดิม
     adminSilenceReturnMinutes: 45,
     botResumeMessage: "ปลาทูมาดูแลต่อเองนะคะ",
